@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "hayai",
+  "project_id": "898720e4-51f4-4fa6-b0d8-e49599b82754"
+}
