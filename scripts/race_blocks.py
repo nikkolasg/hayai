@@ -3,7 +3,8 @@
 
 Usage:
     scripts/race_blocks.py --hayai-traces DIR [--zakura-traces DIR --zakura-log FILE]
-        [--zakura-series FILE ...] [--from-height N] --out-csv blocks.csv --out-md blocks.md
+        [--zakura-series FILE ...] [--hayai-caller FILE] [--zakura-caller FILE]
+        [--from-height N] --out-csv blocks.csv --out-md blocks.md
 
 Inputs (docs/sync-race.md, Compared quantities):
 
@@ -17,6 +18,8 @@ Inputs (docs/sync-race.md, Compared quantities):
   --zakura-series  Answers of the Prometheus query_range API for the three series of
                    zakurad: state_contextual_total_duration_seconds_sum, _count and
                    zcash_chain_verified_block_height, with the scrape interval as step.
+  --hayai-caller, --zakura-caller
+                   The JSON lines of scripts/race_rpc_caller.py of each node machine.
 
 Zakura, "received to committed": the row block_request_finish (result available) is the
 start, and the log line `downloaded and verified gossiped block` of the same hash is the
@@ -35,6 +38,15 @@ Zakura, "contextual commit": between two samples in which the count increased by
 increase of the sum is the value of one block. The height of that block is the height
 gauge at the next sample without a commit minus the blocks after it. An interval with
 two or more blocks gives no value.
+
+"Template served" (`hayai_template_served_s`, `zakura_template_served_s`): the time of
+the first `getblocktemplate` answer of the caller with the block as `previousblockhash`,
+minus the commit time of the block on the same machine. Both times are on the wall clock
+of that machine. hayaid: the commit time is `unix_us` of the row commit_finish. zakurad:
+the time of the log line `downloaded and verified gossiped block`, so only a gossiped
+block has a value, and the node can answer some µs before it writes the line (a value
+below 0). Without the long poll of the caller the value has an error between 0 and the
+call interval. The summary states which mode gave the first answer.
 
 A height is in the table when hayaid committed a block at it, from --from-height on
 (default: the first height of a gossiped block in the log of zakurad, else each height).
@@ -69,6 +81,8 @@ COLUMNS = [
     "diff_contextual_commit_s",
     "hayai_received_to_template_empty_s",
     "hayai_received_to_template_full_s",
+    "hayai_template_served_s",
+    "zakura_template_served_s",
     "note",
 ]
 
@@ -130,6 +144,7 @@ def hayai_blocks(directory):
                 "received_to_validated": seconds(v.get("since_received_us")),
                 "contextual_commit": seconds(v.get("contextual_commit_us")),
                 "received_to_committed": seconds(r.get("received_to_commit_us")),
+                "committed_unix_us": r.get("unix_us"),
             }
     by_hash = {b["hash"]: b for b in blocks.values()}
     for r in read_rows(os.path.join(directory, "template.jsonl")):
@@ -162,6 +177,25 @@ def best_range(intervals, low, high):
     return best
 
 
+def zakura_log(log_path, since=0):
+    """(times of the sync rounds, hash -> (height, commit time)) from the log lines of
+    zakurad at or after `since`. Each time is in µs since the Unix epoch."""
+    rounds, committed = [], {}
+    with open(log_path, errors="replace") as f:
+        for line in f:
+            line = ANSI.sub("", line)
+            at = log_micros(line)
+            if at is None or at < since:
+                continue
+            if ROUND in line:
+                rounds.append(at)
+            else:
+                match = GOSSIPED.search(line)
+                if match:
+                    committed.setdefault(match.group(1), (int(match.group(2)), at))
+    return rounds, committed
+
+
 def zakura_received_to_committed(trace_dir, log_path):
     """(hash -> (height, seconds), calibration). The calibration is a dict for the
     summary; its key `error_s` is None when the clocks have no calibration."""
@@ -175,21 +209,8 @@ def zakura_received_to_committed(trace_dir, log_path):
     process = peer_rows[-1]["process_trace_id"]
     peer_rows = [r for r in peer_rows if r["process_trace_id"] == process]
     sync_rows = [r for r in sync_rows if r["process_trace_id"] == process]
-    started = int(process.split("-")[1]) // 1000
-    rounds, committed = [], {}
-    with open(log_path, errors="replace") as f:
-        for line in f:
-            line = ANSI.sub("", line)
-            at = log_micros(line)
-            # The first row of the process and its log line can be some µs apart.
-            if at is None or at < started - 1_000_000:
-                continue
-            if ROUND in line:
-                rounds.append(at)
-            else:
-                match = GOSSIPED.search(line)
-                if match:
-                    committed.setdefault(match.group(1), (int(match.group(2)), at))
+    # The first row of the process and its log line can be some µs apart.
+    rounds, committed = zakura_log(log_path, int(process.split("-")[1]) // 1000 - 1_000_000)
     starts = [r["ts"] for r in sync_rows if r["event"] == "round_start"]
     pairs = min(len(starts), len(rounds))
     if pairs == 0:
@@ -280,12 +301,50 @@ def zakura_contextual_commit(paths):
     return values, stats
 
 
+def caller_answers(path):
+    """(previousblockhash -> (time, mode) of the first answer, statistics) from the JSON
+    lines of scripts/race_rpc_caller.py."""
+    first, durations = {}, []
+    stats = {"polls": 0, "long_polls": 0, "errors": 0, "mean_poll_s": None}
+    for r in read_rows(path):
+        if not r.get("ok"):
+            stats["errors"] += 1
+            continue
+        if r.get("mode") == "poll":
+            stats["polls"] += 1
+            durations.append(r["duration_us"])
+        else:
+            stats["long_polls"] += 1
+        known = first.get(r["previousblockhash"])
+        if known is None or r["unix_us"] < known[0]:
+            first[r["previousblockhash"]] = (r["unix_us"], r.get("mode"))
+    if durations:
+        stats["mean_poll_s"] = statistics.fmean(durations) / 1e6
+    return first, stats
+
+
+def template_served(answers, block_hash, committed_unix_us, stats):
+    """Seconds from the commit of a block to the first answer of the caller on it."""
+    answer = answers.get(block_hash)
+    if answer is None or committed_unix_us is None:
+        return None
+    key = "first_by_long_poll" if answer[1] == "longpoll" else "first_by_poll"
+    stats[key] = stats.get(key, 0) + 1
+    return (answer[0] - committed_unix_us) / 1e6
+
+
 def difference(a, b):
     return None if a is None or b is None else a - b
 
 
-def build_rows(hayai, zakura_commit, zakura_contextual, from_height):
+def build_rows(hayai, zakura_commit, zakura_contextual, from_height, callers=None, zakura_committed=None):
+    """`callers`: node -> (answers, statistics) of caller_answers. `zakura_committed`:
+    hash -> (height, commit time) of zakura_log."""
     rows = []
+    callers = callers or {}
+    hayai_answers, hayai_stats = callers.get("hayai", ({}, {}))
+    zakura_answers, zakura_stats = callers.get("zakura", ({}, {}))
+    zakura_committed = zakura_committed or {}
     by_height = {height: h for h, (height, _) in zakura_commit.items()}
     for height in sorted(hayai):
         if from_height is not None and height < from_height:
@@ -312,6 +371,12 @@ def build_rows(hayai, zakura_commit, zakura_contextual, from_height):
                 "diff_contextual_commit_s": difference(b["contextual_commit"], contextual),
                 "hayai_received_to_template_empty_s": b.get("template_empty"),
                 "hayai_received_to_template_full_s": b.get("template_full"),
+                "hayai_template_served_s": template_served(
+                    hayai_answers, b["hash"], b["committed_unix_us"], hayai_stats
+                ),
+                "zakura_template_served_s": template_served(
+                    zakura_answers, b["hash"], zakura_committed.get(b["hash"], (None, None))[1], zakura_stats
+                ),
                 "note": note,
             }
         )
@@ -334,7 +399,7 @@ def quantiles(values):
     return f"{len(values)} | {statistics.median(values):.6f} | {p90:.6f} | {values[-1]:.6f}"
 
 
-def summary(rows, calibration, contextual_stats, from_height):
+def summary(rows, calibration, contextual_stats, from_height, callers=None):
     lines = ["# Blocks of the race at the tip", ""]
     if rows:
         lines.append(f"Heights {rows[0]['height']} to {rows[-1]['height']}: {len(rows)} blocks of hayaid.")
@@ -344,7 +409,7 @@ def summary(rows, calibration, contextual_stats, from_height):
         lines.append(f"First height of the table: {from_height}.")
     lines += ["", "Each value is in seconds. A difference is hayaid minus zakurad.", ""]
     lines += ["| Quantity | Blocks | Median | 90 % | Largest |", "|---|---|---|---|---|"]
-    for column in COLUMNS[5:14]:
+    for column in COLUMNS[5:-1]:
         values = [r[column] for r in rows if r[column] is not None]
         lines.append(f"| `{column}` | {quantiles(values)} |")
     lines += ["", "## Zakura clock of \"received to committed\"", ""]
@@ -371,6 +436,29 @@ def summary(rows, calibration, contextual_stats, from_height):
             f"- Scrape intervals with 2 or more blocks (no value): {contextual_stats['shared_intervals']}.",
             f"- Blocks without a certain height (no value): {contextual_stats['no_height']}.",
         ]
+    lines += ["", "## getblocktemplate caller", ""]
+    if not callers:
+        lines.append("No file of the caller: the columns `*_template_served_s` are empty.")
+    else:
+        lines += [
+            "Mean time of a call without `longpollid`, on the client side, for the whole file."
+            " \"First answer\": the mode of the first answer on a block of the table. An answer"
+            " by a call without `longpollid` is late by 0 to the call interval.",
+            "",
+            "| Node | Calls without `longpollid` | Mean time, s | Long poll answers | Errors"
+            " | First answer by long poll | First answer by call without `longpollid` |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for node, name in (("hayai", "hayaid"), ("zakura", "zakurad")):
+            if node not in callers:
+                lines.append(f"| {name} | no file | | | | | |")
+                continue
+            stats = callers[node][1]
+            lines.append(
+                f"| {name} | {stats['polls']} | {cell(stats['mean_poll_s'])} | {stats['long_polls']}"
+                f" | {stats['errors']} | {stats.get('first_by_long_poll', 0)}"
+                f" | {stats.get('first_by_poll', 0)} |"
+            )
     lines += ["", "## First rows", "", "| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
     for row in rows[:20]:
         lines.append("| " + " | ".join(cell(row[c]) for c in COLUMNS) + " |")
@@ -383,6 +471,8 @@ def main():
     parser.add_argument("--zakura-traces")
     parser.add_argument("--zakura-log")
     parser.add_argument("--zakura-series", nargs="*", default=[])
+    parser.add_argument("--hayai-caller")
+    parser.add_argument("--zakura-caller")
     parser.add_argument("--from-height", type=int)
     parser.add_argument("--out-csv", required=True)
     parser.add_argument("--out-md", required=True)
@@ -402,14 +492,21 @@ def main():
     from_height = args.from_height
     if from_height is None and zakura_commit:
         from_height = min(height for height, _ in zakura_commit.values())
-    rows = build_rows(hayai, zakura_commit, zakura_contextual, from_height)
+    callers = {}
+    for node, path in (("hayai", args.hayai_caller), ("zakura", args.zakura_caller)):
+        if path and os.path.exists(path) and os.path.getsize(path) > 0:
+            callers[node] = caller_answers(path)
+    zakura_committed = {}
+    if "zakura" in callers and args.zakura_log and os.path.exists(args.zakura_log):
+        zakura_committed = zakura_log(args.zakura_log)[1]
+    rows = build_rows(hayai, zakura_commit, zakura_contextual, from_height, callers, zakura_committed)
     with open(args.out_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(COLUMNS)
         for row in rows:
             writer.writerow([cell(row[c]) for c in COLUMNS])
     with open(args.out_md, "w") as f:
-        f.write(summary(rows, calibration, contextual_stats, from_height))
+        f.write(summary(rows, calibration, contextual_stats, from_height, callers))
     print(f"race_blocks: {len(rows)} rows in {args.out_csv}, summary in {args.out_md}")
     return 0
 

@@ -14,11 +14,14 @@
 # Commands:
 #   build    Build the two images on this machine. It needs no host.
 #   start    Copy the files and the images, start the monitoring on C, then start both
-#            nodes at the same minute. It stops when a node host has data of a race.
-#   status   Containers, resources, height, peers and last log line of each node.
-#   stop     Stop both nodes. The data and the monitoring stay.
+#            nodes at the same minute, each one with its RPC caller
+#            (scripts/race_rpc_caller.py). It stops when a node host has data of a race.
+#   status   Containers, resources, height, peers and last log line of each node, and
+#            the last line of each RPC caller.
+#   stop     Stop both nodes and both RPC callers. The data and the monitoring stay.
 #   collect  Fetch the versions, the node logs, the metrics, the trace files of both
-#            nodes and the series of the race into race-results/<UTC time>/, and write
+#            nodes, the files of both RPC callers and the series of the race into
+#            race-results/<UTC time>/, and write
 #            the table of blocks at the tip (blocks.csv, blocks.md) with
 #            scripts/race_blocks.py. It needs python3 on this machine.
 #   swap     `clean`, then `start` with the roles of A and B exchanged.
@@ -40,6 +43,11 @@
 #   RACE_CPUS         CPU limit of both node containers (default 0: no limit).
 #   RACE_MEMORY       Memory limit of both node containers (default 0: no limit).
 #   RACE_LOG_LINES    Lines of each node log that `collect` fetches (default 20000).
+#   RACE_CALLER       1 (default): `start` starts an RPC caller beside each node, which
+#                     sends one `getblocktemplate` call each RACE_CALLER_INTERVAL
+#                     seconds. 0: no RPC caller.
+#   RACE_CALLER_INTERVAL  Seconds between two calls of an RPC caller (default 5).
+#   RACE_CALLER_LONGPOLL  1: each RPC caller also holds one long poll. 0 (default).
 #   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT, RACE_PROMETHEUS_ADDR
 #                     Other ports than 9999, 19101 and 127.0.0.1:9090, as in
 #                     docker/race/compose.monitor.yml (the dry run).
@@ -68,6 +76,11 @@ RACE_FIREWALL="${RACE_FIREWALL:-1}"
 RACE_CPUS="${RACE_CPUS:-0}"
 RACE_MEMORY="${RACE_MEMORY:-0}"
 RACE_LOG_LINES="${RACE_LOG_LINES:-20000}"
+RACE_CALLER="${RACE_CALLER:-1}"
+RACE_CALLER_INTERVAL="${RACE_CALLER_INTERVAL:-5}"
+RACE_CALLER_LONGPOLL="${RACE_CALLER_LONGPOLL:-0}"
+# The file of an RPC caller in its container (docker/race/compose.node.yml).
+CALLER_FILE="/var/lib/race-caller/getblocktemplate.jsonl"
 ZAKURAD_METRICS_PORT="${RACE_ZAKURAD_METRICS_PORT:-9999}"
 HAYAID_METRICS_PORT="${RACE_HAYAID_METRICS_PORT:-19101}"
 EXPORTER_PORT=9100
@@ -157,11 +170,13 @@ check_hosts() {
   done
 }
 
-# Copies docker/race to a host. The secrets and the .env file of a host stay.
+# Copies docker/race and the program of the RPC caller to a host. The secrets and the
+# .env file of a host stay.
 copy_files() { # HOST
   remote "$1" "mkdir -p '${RACE_DIR}'"
   tar -C "${REPO}/docker/race" --exclude=./secrets --exclude=./.env -cf - . |
     remote "$1" "tar -C '${RACE_DIR}' -xf -"
+  tar -C "${REPO}/scripts" -cf - race_rpc_caller.py | remote "$1" "tar -C '${RACE_DIR}' -xf -"
 }
 
 # Copies a local image to a host that does not have it.
@@ -215,9 +230,11 @@ unfirewall() { # HOST
   done
 }
 
-# Schedules the start of the node of a host at an epoch second, in the background of the
-# host, and records the start in race-info.txt.
+# Schedules the start of the node of a host and of its RPC caller at an epoch second, in
+# the background of the host, and records the start in race-info.txt.
 schedule() { # HOST PROFILE IMAGE EPOCH
+  local services=$2
+  [[ "${RACE_CALLER}" != 1 ]] || services="$2 $2-caller"
   remote "$1" "cd '${RACE_DIR}' && {
     echo 'profile=$2'
     echo 'planned_start_epoch=$4'
@@ -228,7 +245,7 @@ schedule() { # HOST PROFILE IMAGE EPOCH
     wait=\$(( $4 - \$(date +%s) ))
     [ \"\$wait\" -gt 0 ] && sleep \"\$wait\"
     echo \"actual_start_epoch=\$(date +%s)\" >>race-info.txt
-    docker compose -f compose.node.yml --profile $2 up -d $2
+    docker compose -f compose.node.yml --profile $2 up -d ${services}
   ' >race-start.log 2>&1 </dev/null &"
 }
 
@@ -262,8 +279,17 @@ start() {
   for host in "${A}" "${B}"; do
     remote "${host}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
       'RACE_ZAKURA_IMAGE=${ZAKURA_IMAGE}' 'RACE_HAYAI_IMAGE=${HAYAI_IMAGE}' \
-      'RACE_CPUS=${RACE_CPUS}' 'RACE_MEMORY=${RACE_MEMORY}' >.env"
+      'RACE_CPUS=${RACE_CPUS}' 'RACE_MEMORY=${RACE_MEMORY}' \
+      'RACE_CALLER_SCRIPT=./race_rpc_caller.py' 'RACE_CALLER_INTERVAL=${RACE_CALLER_INTERVAL}' \
+      'RACE_CALLER_LONGPOLL=${RACE_CALLER_LONGPOLL}' >.env"
   done
+  # The image of the RPC caller is on each host before the start time.
+  if [[ "${RACE_CALLER}" == 1 ]]; then
+    node_compose "${A}" "--profile zakurad pull -q zakurad-caller"
+    node_compose "${B}" "--profile hayaid pull -q hayaid-caller"
+  else
+    log "RACE_CALLER=0: no RPC caller; the getblocktemplate panels and the template_served columns stay empty"
+  fi
 
   log "starting Prometheus and Grafana on ${C}"
   remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
@@ -298,8 +324,10 @@ node_status() { # HOST PROFILE CONTAINER METRICS_PORT
     docker exec race-node-exporter wget -qO- http://127.0.0.1:$4/metrics 2>/dev/null |
       grep -E '^(zcash_chain_verified_block_height|state_finalized_block_height|zcash_net_peers) '
     # zakurad writes its log to a file of its data volume (docker/race/config).
-    docker exec $3 tail -n 1 /home/zebra/.cache/zakura/zakurad.log 2>/dev/null ||
-      docker logs --tail 1 $3 2>&1" || log "warning: no status of $1"
+    { docker exec $3 tail -n 1 /home/zebra/.cache/zakura/zakurad.log 2>/dev/null ||
+      docker logs --tail 1 $3 2>&1; }
+    docker exec $3-caller tail -n 1 '${CALLER_FILE}' 2>/dev/null ||
+      echo 'no line of the RPC caller'" || log "warning: no status of $1"
 }
 
 status() {
@@ -310,9 +338,9 @@ status() {
 }
 
 stop() {
-  node_compose "${A}" "--profile zakurad stop zakurad"
-  node_compose "${B}" "--profile hayaid stop hayaid"
-  log "both nodes are stopped; the data and the monitoring stay"
+  node_compose "${A}" "--profile zakurad stop zakurad-caller zakurad"
+  node_compose "${B}" "--profile hayaid stop hayaid-caller hayaid"
+  log "both nodes and both RPC callers are stopped; the data and the monitoring stay"
 }
 
 # A file of a container, also of a stopped one, on the standard output of the host.
@@ -384,6 +412,12 @@ collect() {
   prometheus_get "/api/v1/query_range?query=%7B__name__%3D~%22race%3A.%2B%22%7D&start=${first}&end=${now}&step=${step}" \
     >"${out}/race-series.json" || log "warning: no series from Prometheus on ${C}"
 
+  # The file of each RPC caller: one line for each getblocktemplate call.
+  remote "${A}" "$(container_file race-zakurad-caller "${CALLER_FILE}")" \
+    >"${out}/race-zakurad-getblocktemplate.jsonl" || log "no file of the RPC caller of zakurad"
+  remote "${B}" "$(container_file race-hayaid-caller "${CALLER_FILE}")" \
+    >"${out}/race-hayaid-getblocktemplate.jsonl" || log "no file of the RPC caller of hayaid"
+
   # The tip phase starts when the second node reaches the tip. The table of blocks
   # starts at the block after the lowest height of that moment. Without that moment
   # (a Regtest dry run has no tip of a network) the table starts at the first block
@@ -415,6 +449,8 @@ collect() {
     --zakura-traces "${out}/race-zakurad-traces" \
     --zakura-log "${out}/race-zakurad-block-lines.log" \
     --zakura-series "${series[@]}" "${from_height[@]}" \
+    --hayai-caller "${out}/race-hayaid-getblocktemplate.jsonl" \
+    --zakura-caller "${out}/race-zakurad-getblocktemplate.jsonl" \
     --out-csv "${out}/blocks.csv" --out-md "${out}/blocks.md" ||
     log "warning: no table of blocks"
   log "results in ${out}"

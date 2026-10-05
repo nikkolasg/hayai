@@ -217,18 +217,21 @@ resource "aws_instance" "node" {
   user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/cloud-init.node.yaml.tftpl", {
-    role           = each.key
-    image          = each.value.image
-    data_volume_id = replace(aws_ebs_volume.data[each.key].id, "-", "")
-    hayai_repo     = var.hayai_repo
-    hayai_ref      = var.hayai_ref
-    zakura_repo    = var.zakura_repo
-    zakura_ref     = var.zakura_ref
-    start_at       = local.start_time
-    node_cpus      = var.node_cpus
-    node_memory    = var.node_memory
-    network        = var.network
-    hayai_backend  = local.network.hayai_backend
+    role                 = each.key
+    image                = each.value.image
+    data_volume_id       = replace(aws_ebs_volume.data[each.key].id, "-", "")
+    hayai_repo           = var.hayai_repo
+    hayai_ref            = var.hayai_ref
+    zakura_repo          = var.zakura_repo
+    zakura_ref           = var.zakura_ref
+    start_at             = local.start_time
+    node_cpus            = var.node_cpus
+    node_memory          = var.node_memory
+    rpc_caller           = var.rpc_caller
+    rpc_caller_interval  = var.rpc_caller_interval
+    rpc_caller_long_poll = var.rpc_caller_long_poll
+    network              = var.network
+    hayai_backend        = local.network.hayai_backend
   })
 
   root_block_device {

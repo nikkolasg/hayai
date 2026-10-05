@@ -121,6 +121,24 @@ variable "node_memory" {
   default     = "0"
 }
 
+variable "rpc_caller" {
+  description = "true: an RPC caller (scripts/race_rpc_caller.py) runs beside each node and calls getblocktemplate. false: no RPC caller."
+  type        = bool
+  default     = true
+}
+
+variable "rpc_caller_interval" {
+  description = "Seconds between two getblocktemplate calls of each RPC caller."
+  type        = number
+  default     = 5
+}
+
+variable "rpc_caller_long_poll" {
+  description = "true: each RPC caller also holds one getblocktemplate long poll. The mean of rpc_request_duration_seconds then contains the wait of the long poll."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Extra tags of every resource."
   type        = map(string)

@@ -8,6 +8,13 @@ the same hashes, and another block at the height 104. The clock of legacy_sync s
 100,000 µs before the first row, and the clock of legacy_peer_request 250,000 µs after
 that. The true "received to committed" times of zakurad are 4,000 µs, 6,000 µs and
 20,000 µs. The rows of the fixture leave a range of 150 µs for the second clock.
+
+The files of the caller (scripts/race_rpc_caller.py): hayaid answers on the block 101 by
+long poll 400 µs after its commit and on the block 102 by a call without `longpollid`
+1.995 s after its commit, and has no answer on the blocks 103 and 104. zakurad answers
+on the block 101 by long poll 1,500 µs after its log line, on the block 102 100 µs before
+its log line, and on the block 103 by a call without `longpollid` 1.98 s after its log
+line. Each file has one error line.
 """
 
 import csv
@@ -85,6 +92,10 @@ class RaceBlocks(unittest.TestCase):
                     str(FIXTURE / "zakurad-block-lines.log"),
                     "--zakura-series",
                     str(FIXTURE / "zakurad-series-0.json"),
+                    "--hayai-caller",
+                    str(FIXTURE / "hayaid-getblocktemplate.jsonl"),
+                    "--zakura-caller",
+                    str(FIXTURE / "zakurad-getblocktemplate.jsonl"),
                     "--out-csv",
                     str(out / "blocks.csv"),
                     "--out-md",
@@ -115,8 +126,35 @@ class RaceBlocks(unittest.TestCase):
         # zakurad has another block at the height 104.
         self.assertEqual(rows[3]["zakura_received_to_committed_s"], "")
         self.assertEqual(rows[3]["note"], "zakurad has another block at this height")
+        # The first answer of each caller on the block, minus the commit on that machine.
+        self.assertEqual(
+            [row["hayai_template_served_s"] for row in rows], ["0.000400", "1.995000", "", ""]
+        )
+        self.assertEqual(
+            [row["zakura_template_served_s"] for row in rows], ["0.001500", "-0.000100", "1.980000", ""]
+        )
         self.assertIn("Error of each Zakura value from the clock calibration: 0.000075 s", summary)
+        # Calls without `longpollid`, their mean time, long poll answers, errors, and the
+        # mode of the first answer on a block of the table.
+        self.assertIn("| hayaid | 3 | 0.000400 | 2 | 1 | 1 | 1 |", summary)
+        self.assertIn("| zakurad | 2 | 0.002000 | 2 | 1 | 2 | 1 |", summary)
         self.assertIn("Scrape intervals with 2 or more blocks (no value): 1.", summary)
+
+    def test_the_caller_file_gives_the_first_answer_on_each_block(self):
+        answers, stats = race_blocks.caller_answers(FIXTURE / "hayaid-getblocktemplate.jsonl")
+        # The later answers on the block 101 (a template change, a call) do not count.
+        self.assertEqual(answers["65" * 32], (1700000075003400, "longpoll"))
+        self.assertEqual(answers["66" * 32], (1700000152000000, "poll"))
+        self.assertEqual(
+            stats, {"polls": 3, "long_polls": 2, "errors": 1, "mean_poll_s": 0.0004}
+        )
+
+    def test_no_template_served_value_without_a_caller_file(self):
+        hayai = race_blocks.hayai_blocks(FIXTURE / "hayaid-traces")
+        rows = race_blocks.build_rows(hayai, {}, {}, None)
+        self.assertTrue(all(row["hayai_template_served_s"] is None for row in rows))
+        self.assertTrue(all(row["zakura_template_served_s"] is None for row in rows))
+        self.assertIn("No file of the caller", race_blocks.summary(rows, None, None, None))
 
     def test_from_height_selects_the_tip_phase(self):
         hayai = race_blocks.hayai_blocks(FIXTURE / "hayaid-traces")

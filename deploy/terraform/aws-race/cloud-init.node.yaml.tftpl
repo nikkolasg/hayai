@@ -2,8 +2,8 @@
 # Rendered by main.tf for machine A (role zakurad) and machine B (role hayaid). First
 # boot: install Docker, then race-bootstrap.service mounts the data volume on
 # /var/lib/docker, clones the sources, builds the image of the role and starts
-# node-exporter. race-start.service starts the node at the start time, with
-# docker/race/compose.node.yml.
+# node-exporter. race-start.service starts the node and its RPC caller
+# (scripts/race_rpc_caller.py) at the start time, with docker/race/compose.node.yml.
 
 package_update: true
 packages:
@@ -65,8 +65,14 @@ write_files:
       cd /opt/race/hayai/docker/race
       printf '%s\n' 'RACE_NETWORK=${network}' \
         'RACE_ZAKURA_IMAGE=zakurad:race' 'RACE_HAYAI_IMAGE=hayaid:race' \
-        'RACE_CPUS=${node_cpus}' 'RACE_MEMORY=${node_memory}' >.env
+        'RACE_CPUS=${node_cpus}' 'RACE_MEMORY=${node_memory}' \
+        'RACE_CALLER_INTERVAL=${rpc_caller_interval}' \
+        'RACE_CALLER_LONGPOLL=${rpc_caller_long_poll ? 1 : 0}' >.env
       docker compose -f compose.node.yml up -d node-exporter
+      # The image of the RPC caller is on the machine before the start time.
+      if [ '${rpc_caller}' = true ]; then
+        docker compose -f compose.node.yml --profile '${role}' pull -q '${role}-caller'
+      fi
       touch /var/lib/race-bootstrap.done
 
   - path: /usr/local/sbin/race-start
@@ -90,7 +96,11 @@ write_files:
         echo "image_id=$(docker image inspect -f '{{.Id}}' '${image}')"
         echo "image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' '${image}')"
       } >/var/log/race-start.log
-      docker compose -f compose.node.yml --profile '${role}' up -d '${role}'
+      if [ '${rpc_caller}' = true ]; then
+        docker compose -f compose.node.yml --profile '${role}' up -d '${role}' '${role}-caller'
+      else
+        docker compose -f compose.node.yml --profile '${role}' up -d '${role}'
+      fi
       touch /var/lib/race-start.done
 
   - path: /etc/systemd/system/race-bootstrap.service

@@ -1,0 +1,5 @@
+{"unix_us": 1700000010005500, "mode": "longpoll", "duration_us": 8005500, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 0}
+{"unix_us": 1700000012000000, "mode": "poll", "duration_us": 1500, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 0}
+{"unix_us": 1700000017000000, "mode": "poll", "duration_us": 300, "ok": false, "error": "connection", "message": "RemoteDisconnected: Remote end closed connection without response"}
+{"unix_us": 1700000085005900, "mode": "longpoll", "duration_us": 60005900, "ok": true, "height": 103, "previousblockhash": "6666666666666666666666666666666666666666666666666666666666666666", "transactions": 0}
+{"unix_us": 1700000162000000, "mode": "poll", "duration_us": 2500, "ok": true, "height": 104, "previousblockhash": "6767676767676767676767676767676767676767676767676767676767676767", "transactions": 0}

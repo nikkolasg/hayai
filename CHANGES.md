@@ -1273,3 +1273,22 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
     then group by the height).
   - zakurad with `[tracing] log_file` writes no log to the output of its container.
 
+## 2026-10-05 — RPC caller of the race (`scripts/race_rpc_caller.py`)
+
+- One Python program (standard library) runs beside each node in a pinned public image:
+  no node image has Python, and a second compose service needs no image build. It reads
+  the RPC address from the configuration of the node and the cookie for each call.
+- The long poll is off by default. Both nodes count the wait of a long poll in
+  `rpc_request_duration_seconds`, so a held long poll makes the dashboard mean useless.
+  `blocks.md` has the client-side mean of the calls without `longpollid` in each case.
+- "Template served" uses the commit time of each machine (trace row of hayaid, log line
+  of zakurad) and the wall clock of that machine. No value crosses two machines.
+- Lessons:
+  - hayaid holds a `getblocktemplate` call only with the capability `longpoll`. With the
+    `longpollid` alone it answers at once: the first caller made 190,000 calls in 50 s.
+    A client loop on a long poll needs a wait when the answer comes back at once.
+  - A wrong cookie: hayaid answers 401, zakurad closes the connection. hayaid removes the
+    cookie file at its stop, zakurad keeps it.
+  - A container that reads a file of mode 0600 of another user needs root with
+    `DAC_READ_SEARCH` only (`cap_drop: ALL`).
+  - Python as process 1 of a container ignores SIGTERM without a handler.
