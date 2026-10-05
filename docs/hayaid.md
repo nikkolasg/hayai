@@ -80,7 +80,10 @@ A full node needs no upstream node. It reads the chain from its peers.
   blocks after the locator, or with the hash of its tip when it has none: a Zakura peer
   waits 6 s for an answer and sends no block announcement on that connection in this
   time. One `getdata` message has at most 16 blocks, and fewer for large blocks: these
-  peers answer at most 16 blocks and 1 MB for one message. The node sends `mempool` to
+  peers answer at most 16 blocks and 1 MB for one message. When large blocks follow small
+  blocks, a message of 16 blocks is in flight, and the peer answers only the blocks up
+  to 1 MB. The requests of the message after its answered blocks are free again without
+  a stall when the peer answers a later message. The node sends `mempool` to
   each legacy peer after the handshake and then each 60 s: these peers announce a
   transaction one time, to a part of their peers.
   When the one delivered block is the best header tip, the template moves to it at the
@@ -123,10 +126,14 @@ A full node needs no upstream node. It reads the chain from its peers.
   downloads its blocks. zcashd has the same result: it activates the chain with the most
   work among the chains whose blocks it has. Zakura keeps the header chain with the most
   work and raises an alarm. The headers stay valid. They come back into the fork choice
-  when a peer sends a header of the chain again, when the relay completes a block of it,
-  and after 30 s (the time doubles at each exclusion in a row, up to 16 min). The mark is
-  in memory only. The template and the blocks of the node are always on the committed
-  tip. `hayai_sync_bodies_withheld` is 1 while a chain is out of the fork choice.
+  when a peer that connected after the exclusion sends a header of the chain, when the
+  relay completes a block of it, and after 30 s (the time doubles at each exclusion in a
+  row, up to 16 min). The headers of a peer that was connected at the exclusion do not
+  end it: that peer did not send the block. The mark is in memory only, and the bound of
+  the side headers (65,536) does not count the excluded headers. The template and the
+  blocks of the node are always on the committed tip. `hayai_sync_bodies_withheld` is 1
+  while a chain is out of the fork choice. The log has one warning for an excluded block
+  (`no peer sends the block`), then at most one for each wait.
 - Templates during the synchronization. The node builds no template while its committed
   tip is more than 100 blocks below the best header tip (the distance at which Zakura
   refuses `getblocktemplate`): a block on such a tip is not a block of the chain of the
@@ -227,7 +234,7 @@ The node writes the files below:
 | `blocks/` | The block files and their index. |
 | `state.log` | One checksummed record per coins flush: frontiers, value pools, history tree, block times and `bits`, and the anchors and the Sprout treestates that are new. The first record is the start state (the genesis block or the shadow seed). The node writes record version 4. A record of version 3 has no Sprout state: the node resumes from it, and above the genesis block it then does not know the Sprout state and refuses a block with a JoinSplit. A record of version 1 or 2 does not hold the transparent and the deferred value pool. The node resumes from such a record only at the genesis block. Above the genesis block the node stops with an error: remove `cache_dir` and start the node again (a full node validates from the genesis block, a shadow node reads a new seed). |
 | `spent.log` | Shadow mode: the outpoints that hayai spent, as the coins store forgot them. |
-| `headers.log` | Full mode: every header that the header chain accepted, and the blocks that it found invalid. The node makes the log durable before each coins flush. |
+| `headers.log` | Full mode: every header that the header chain accepted, and the blocks that it found invalid. A header has one header record (1,508 bytes on Mainnet and Testnet: the Equihash solution has 1,344 bytes). A header that the chain removed and accepted again gets a mark of 53 bytes. The node makes the log durable before each coins flush. |
 | `peers.dat` | Full mode: the address book of the peer manager. |
 
 A restart takes these steps:
@@ -243,7 +250,10 @@ A restart takes these steps:
    validated in full. A full node applies a block at or below it with the checkpoint path.
 4. Full mode: open the header chain from `headers.log`, without a second run of the header
    rules. The node adds the headers of the committed blocks that the log does not hold,
-   from the block files. The committed blocks are valid bodies in the header chain.
+   from the block files. The committed blocks are valid bodies in the header chain. A log
+   of an earlier version can have a second header record of a header. The node uses the
+   first record and writes one warning with the number of such records. A record that
+   fails its checksum before the end of the log stops the start.
 5. Open the P2P port. A full node continues the header sync from its best header and the
    block download from its committed tip. The bodies that were in memory are requested
    again.
@@ -792,8 +802,9 @@ and a gauge of the same quantity have the value of one clock reading.
   height that the peer reported. A zcashd peer does not answer a `getdata` for a block
   that it does not have, so such a request can give that peer a stall.
 - State files: `state.log` and `headers.log` have no compaction. A start reads both files
-  from their first record. The header log keeps the record of a side header that left the
-  header chain. A start skips a header record that the checkpoint list or the finalized
+  from their first record. On Testnet at height 4,468,000 the header log has 6.7 GB, and
+  the start reads it in 9 s from a warm page cache (measured on 2026-10-05). The header
+  log keeps the record of a side header that left the header chain. A start skips a header record that the checkpoint list or the finalized
   height of the build refuses, with the records of its descendants.
 - A local fault stops the node. A restart resumes the synchronization and stops at the
   same block while the cause stays (Full mode: synchronization, the fault table).

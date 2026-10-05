@@ -540,6 +540,13 @@ pub(super) fn open_header_chain(
     let (mut chain, report) = HeaderChain::open(ChainConfig::new(params.kind), path)
         .map_err(|e| fatal("header log", e))?;
     tracing::info!(?report, best = ?chain.best_tip(), "header chain opened");
+    match chain.duplicate_records() {
+        0 => {}
+        records => tracing::warn!(
+            records,
+            "the header log has records that repeat a header: the start used the first record of each"
+        ),
+    }
     let mut missing: Vec<BlockHeader> = Vec::new();
     let (mut height, mut hash) = (tip.height, tip.hash);
     while !matches!(chain.entry(&hash), Some(_entry)) {

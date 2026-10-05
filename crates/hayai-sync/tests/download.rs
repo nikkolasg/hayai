@@ -1511,3 +1511,40 @@ fn the_answer_limits_of_a_zakura_peer_give_no_stall() {
         );
     }
 }
+
+/// The first sync of Testnet, 2026-10-05: a row of blocks of 2 MB follows small blocks, so
+/// a `getdata` message of 16 blocks is in flight when the mean size is small. A Zakura peer
+/// answers the first of these blocks, which reaches its limit of 1 MB, and never the
+/// others, and it answers the next message. The requests without an answer are free again
+/// without a stall, and no peer leaves.
+#[test]
+fn large_blocks_after_small_blocks_give_a_zakura_peer_no_stall() {
+    let mut sim = Sim::regtest(DownloadConfig::default(), SMALL, 22);
+    sim.main_chain(3_000);
+    for (height, size) in sim.blocks.values_mut() {
+        if (1_000..1_200).contains(height) {
+            *size = 2_000_000;
+        }
+    }
+    let profiles = [
+        (20, 12_500_000),
+        (40, 10_000_000),
+        (60, 8_000_000),
+        (80, 6_000_000),
+        (120, 5_000_000),
+        (150, 4_000_000),
+        (200, 3_000_000),
+        (300, 1_500_000),
+    ];
+    for (id, (rtt_ms, rate)) in profiles.into_iter().enumerate() {
+        sim.connect(
+            id as u32,
+            Profile::honest(rtt_ms, rate).with(Behaviour::AnswerLimits),
+        );
+    }
+    sim.run();
+    sim.assert_delivered_once_in_order();
+    assert_eq!(sim.delivered.len(), 3_000);
+    assert!(sim.penalties.is_empty(), "{:?}", sim.penalties);
+    assert!(sim.disconnects.is_empty(), "{:?}", sim.disconnects);
+}

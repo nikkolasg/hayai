@@ -235,6 +235,8 @@ struct Script {
     repeat_headers: bool,
     /// The height of the `version` message. `None`: the length of the chain.
     start_height: Option<u32>,
+    /// Answers each `getdata` for a block with `notfound`.
+    notfound: bool,
 }
 
 impl Default for Script {
@@ -244,6 +246,7 @@ impl Default for Script {
             blocks: usize::MAX,
             repeat_headers: false,
             start_height: None,
+            notfound: false,
         }
     }
 }
@@ -298,6 +301,10 @@ impl ScriptedPeer {
                                 .map(|(header, _)| header.clone())
                                 .collect();
                             Some(LegacyMessage::Headers(headers))
+                        }
+                        LegacyMessage::GetData(items) if script.notfound => {
+                            counter.fetch_add(items.len(), Ordering::Relaxed);
+                            Some(LegacyMessage::NotFound(items))
                         }
                         LegacyMessage::GetData(items) => {
                             for item in items {
@@ -2975,6 +2982,54 @@ fn measure_the_sync_rate_of_2000_blocks() {
             2_000.0 / elapsed.as_secs_f64()
         );
     }
+    a.shutdown().expect("clean shutdown");
+}
+
+/// The first sync of Testnet, 2026-10-05: the only peer of the node sends the headers of
+/// the best chain and answers `notfound` for each block. The node takes the chain out of
+/// the fork choice one time and waits: the headers that the peer sends as the answer to
+/// the `getheaders` of the exclusion do not end it. A peer that connects later and sends
+/// the headers ends the exclusion at once, and the node gets the blocks from it.
+#[test]
+fn headers_of_the_peer_that_has_no_block_do_not_end_the_exclusion_of_its_chain() {
+    let dir = scratch();
+    let a = start(dir.path(), "a", true, false);
+    generate(&a, 20);
+    let tip = a.tip.tip();
+    let without_blocks = ScriptedPeer::serve(
+        [127, 0, 0, 16],
+        with_bodies(&fetch_chain(&a)),
+        Script {
+            notfound: true,
+            ..Script::default()
+        },
+    );
+    disconnect_all(&a);
+
+    let x = start_with(dir.path(), "x", false, false, METRICS);
+    x.relay
+        .connect(without_blocks.addr)
+        .expect("x dials the peer without blocks");
+    wait_for("the exclusion", || {
+        metric(&x, "hayai_sync_bodies_withheld") == 1.0
+    });
+    // The peer answers a request in less than 10 ms: without the rule the node repeats
+    // the exclusion many times in this time.
+    thread::sleep(Duration::from_secs(2));
+    assert_eq!(metric(&x, "hayai_sync_bodies_withheld"), 1.0);
+    assert_eq!(metric(&x, "hayai_sync_withheld_chains_total"), 1.0);
+    // At most one request for each of the 20 blocks.
+    let requested = without_blocks.requested.load(Ordering::Relaxed);
+    assert!(requested <= 20, "{requested} requests");
+    assert_eq!(x.tip.tip().0, 0);
+
+    // The first wait of the exclusion is 30 s. The new peer ends it before.
+    let connected = Instant::now();
+    x.relay.connect(addr(&a)).expect("x dials a");
+    wait_tip(&x, tip);
+    assert!(connected.elapsed() < Duration::from_secs(15));
+    assert_eq!(metric(&x, "hayai_sync_bodies_withheld"), 0.0);
+    x.shutdown().expect("clean shutdown");
     a.shutdown().expect("clean shutdown");
 }
 
