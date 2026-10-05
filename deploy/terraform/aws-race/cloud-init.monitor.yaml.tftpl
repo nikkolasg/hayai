@@ -20,7 +20,8 @@ write_files:
       fi
       git -C /opt/race/hayai checkout --detach '${hayai_ref}'
       cd /opt/race/hayai/docker/race
-      printf '%s\n' 'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env
+      printf '%s\n' 'RACE_NETWORK=${network}' \
+        'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env
       # Grafana admin password, generated once.
       install -d -m 0755 secrets
       if [ ! -f secrets/grafana_admin_password ]; then

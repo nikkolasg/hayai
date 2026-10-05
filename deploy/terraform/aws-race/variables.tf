@@ -9,6 +9,17 @@ variable "name" {
   default     = "hayai-race"
 }
 
+variable "network" {
+  description = "Zcash network of both nodes: mainnet or testnet. It selects the node configurations (docker/race/config), the P2P port (8233 or 18233), the crypto backend of the hayaid image (mainnet: the default build; testnet: zakura) and the default size of the data volume."
+  type        = string
+  default     = "mainnet"
+
+  validation {
+    condition     = contains(["mainnet", "testnet"], var.network)
+    error_message = "network must be mainnet or testnet."
+  }
+}
+
 variable "subnet_id" {
   description = "Subnet of the three instances (with a route to the internet). It gives the availability zone, which is the same for the two node machines. null: the first default subnet of the default VPC."
   type        = string
@@ -34,9 +45,9 @@ variable "root_volume_gb" {
 }
 
 variable "data_volume_gb" {
-  description = "Size of the gp3 data volume of each node machine in GiB. It holds /var/lib/docker: the image build and the node data. The two machines always have the same size. docs/sync-race.md (Machine size) gives the source of the default."
+  description = "Size of the gp3 data volume of each node machine in GiB. It holds /var/lib/docker: the image build and the node data. The two machines always have the same size. null: 400 for mainnet and 200 for testnet. docs/sync-race.md (Machine size) gives the source of these values."
   type        = number
-  default     = 200
+  default     = null
 }
 
 variable "data_volume_iops" {

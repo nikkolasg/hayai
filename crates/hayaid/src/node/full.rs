@@ -32,7 +32,7 @@ use hayai_wire::{RawBlock, WtxId};
 use rayon::prelude::*;
 
 use super::fault::{check_body, fault_of, local_fault, Fault};
-use super::{fatal, publish, CommitCtx, Driver, NodeError, TipChange};
+use super::{fatal, publish, CommitCtx, Driver, NodeError, TipChange, TipEvent};
 use crate::sync::{NetEvent, Refusal};
 
 /// Blocks between the committed tip and the best header tip above which the node builds
@@ -53,6 +53,8 @@ struct Job {
     /// The header chain reached a checkpoint at or above the block.
     checkpointed: bool,
     origin: &'static str,
+    /// The reception of the block (`metrics::LastBlock`).
+    received: Instant,
 }
 
 /// A block whose layer is on the speculative tip.
@@ -98,9 +100,10 @@ impl Driver {
         &mut self,
         block: Arc<RawBlock>,
         source: Source,
+        received: Instant,
     ) -> Result<(), NodeError> {
         let hash = block.hash();
-        if let Err(reason) = self.sync_mut().relayed(block, source)? {
+        if let Err(reason) = self.sync_mut().relayed(block, source, received)? {
             tracing::info!(%hash, %reason, "block of the relay refused by the header chain");
             self.remember_rejection(hash, reason);
         }
@@ -186,17 +189,21 @@ impl Driver {
             if !checkpointed && height <= mandatory {
                 break;
             }
-            let (raw, origin) = match sync.body(&hash) {
+            let (raw, origin, received) = match sync.body(&hash) {
                 Some(body) => (
                     body.block.clone(),
                     match body.relayed {
                         true => super::origin(&body.supplier),
                         false => "download",
                     },
+                    body.received,
                 ),
                 // A block that the node committed before and that is on the best chain
                 // again.
-                None => (Arc::new(self.stored_block(height, &hash)?), "stored"),
+                None => {
+                    let raw = Arc::new(self.stored_block(height, &hash)?);
+                    (raw, "stored", Instant::now())
+                }
             };
             jobs.push(Job {
                 height,
@@ -204,6 +211,7 @@ impl Driver {
                 raw,
                 checkpointed,
                 origin,
+                received,
             });
         }
         let Some(first) = jobs.first() else {
@@ -234,7 +242,7 @@ impl Driver {
             if job.checkpointed || self.prebuilt.class_of(&job.raw) != "full" {
                 // The checkpoint path gets the hash that the header chain has at the height.
                 let checkpoint = job.checkpointed.then_some(job.hash);
-                match self.commit_on_tip(&job.raw, job.origin, checkpoint)? {
+                match self.commit_on_tip(&job.raw, job.origin, job.received, checkpoint)? {
                     Ok(change) => {
                         changes.mined.extend(change.mined);
                         changes.dropped.extend(change.dropped);
@@ -306,7 +314,14 @@ impl Driver {
         let mut local: Option<NodeError> = None;
         for (k, job) in jobs.iter().enumerate() {
             let view = self.chain.view_speculative();
-            let ctx = self.begin_commit(&job.raw, job.height, job.origin, "full", &view);
+            let mut ctx = self.begin_commit(
+                &job.raw,
+                job.height,
+                job.origin,
+                job.received,
+                "full",
+                &view,
+            );
             let checked = check_body(&job.raw, &view, &cfgs[k], true);
             if let Ok(()) = checked {
                 self.sync_mut().body_checked(&job.hash)?;
@@ -315,10 +330,12 @@ impl Driver {
                 .and_then(|()| build_layer((*job.raw).clone(), &self.store, &view, &cfgs[k]));
             match layer {
                 Ok((layer, verification, timings)) => {
+                    let pushing = Instant::now();
                     let id = self
                         .chain
                         .push_speculative(layer)
                         .map_err(|e| fatal("speculative push", e))?;
+                    ctx.push = pushing.elapsed();
                     built.push(Built {
                         job: k,
                         id,
@@ -347,7 +364,8 @@ impl Driver {
             _ => false,
         };
         let previous_tip = self.template_tip;
-        if at_tip {
+        if let (true, [job]) = (at_tip, jobs) {
+            self.note_received(job.hash, job.received);
             self.speculative_template()?;
         }
 
@@ -363,7 +381,8 @@ impl Driver {
 
         let mut committed = 0;
         let mut rejected: Option<BlockHash> = None;
-        for ((id, (k, ctx, mut timings)), verdict) in ids.into_iter().zip(pending).zip(verdicts) {
+        for ((id, (k, mut ctx, mut timings)), verdict) in ids.into_iter().zip(pending).zip(verdicts)
+        {
             let job = &jobs[k];
             if let Some(ancestor) = rejected {
                 // The layer left the chain with its ancestor.
@@ -380,10 +399,12 @@ impl Driver {
                     timings.scripts = verified.scripts;
                     timings.shielded = verified.shielded;
                     timings.total += verified.total;
+                    let confirming = Instant::now();
                     let layers = self
                         .chain
                         .confirm(id)
                         .map_err(|e| fatal("speculative confirm", e))?;
+                    ctx.push += confirming.elapsed();
                     let [layer] = &layers[..] else {
                         return Err(NodeError(format!(
                             "the confirmation of {} committed {} layers",
@@ -457,11 +478,15 @@ impl Driver {
         conflicting.dedup();
         let tip = self.template_tip(&self.chain.view_speculative())?;
         let started = Instant::now();
+        let timed = Some(TipEvent {
+            started,
+            received: self.take_received(&tip.parent_hash),
+        });
         let (feed, tracer, metrics) = (&self.feed, &self.tracer, &self.metrics);
         let mut updates = Vec::new();
         self.live
             .on_speculative_tip(tip, &mined, &conflicting, |update| {
-                publish(feed, tracer, metrics, &update, Some(started));
+                publish(feed, tracer, metrics, &update, timed);
                 updates.push(update);
             })
             .map_err(|e| fatal("template", e))?;

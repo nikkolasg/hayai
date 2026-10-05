@@ -363,11 +363,23 @@ pub struct Body {
     pub block: Arc<RawBlock>,
     /// The peer that sent the block, or the local source.
     pub supplier: Source,
+    /// The reception of the block: the arrival of the `block` message of the download
+    /// before its parse, or the arrival of a block of the relay at the driver queue.
+    pub received: Instant,
     /// The relay completed the body. The scheduler did not request it.
     pub relayed: bool,
     /// The block was the best header tip when its body arrived: it goes on to the peers
     /// when the driver checked the body.
     forward: bool,
+}
+
+/// A `block` message of the download.
+struct Arrived {
+    hash: BlockHash,
+    supplier: Source,
+    /// The arrival of the message, before its parse.
+    received: Instant,
+    body: Result<Arc<RawBlock>, BodyError>,
 }
 
 /// A block that the scheduler gave to the validator.
@@ -571,7 +583,7 @@ impl Sync {
     fn step_with(
         &mut self,
         event: Event<PeerId>,
-        mut arrived: Option<(BlockHash, Source, Result<Arc<RawBlock>, BodyError>)>,
+        mut arrived: Option<Arrived>,
     ) -> Result<(), NodeError> {
         let (actions, best, block_height) = {
             let chain = self.headers.lock();
@@ -581,7 +593,7 @@ impl Sync {
                 .map_err(|e| fatal("block download", e))?;
             let height = arrived
                 .as_ref()
-                .and_then(|(hash, ..)| chain.entry(hash))
+                .and_then(|arrived| chain.entry(&arrived.hash))
                 .map(|entry| entry.height);
             (actions, chain.best_tip(), height)
         };
@@ -594,7 +606,13 @@ impl Sync {
                     self.relay.request_blocks(peer, &hashes);
                 }
                 Action::Store { hash } => {
-                    let Some((arrived_hash, supplier, body)) = arrived.take() else {
+                    let Some(Arrived {
+                        hash: arrived_hash,
+                        supplier,
+                        received,
+                        body,
+                    }) = arrived.take()
+                    else {
                         return Err(NodeError(format!(
                             "the block download stores {hash} and no block arrived"
                         )));
@@ -618,8 +636,10 @@ impl Sync {
                                         "hash": hash.to_string(),
                                         "bytes": block.bytes.len(),
                                         "source": "download",
+                                        "received_unix_us": crate::node::received_unix_micros(received),
                                     })
                                 });
+                            self.metrics.sync_downloaded_blocks.inc();
                             // A new block at the tip goes on to the peers before its
                             // validation, after the driver checked that the body is the
                             // body of the header ([`Sync::body_checked`]).
@@ -628,6 +648,7 @@ impl Sync {
                                 Body {
                                     block,
                                     supplier,
+                                    received,
                                     relayed: false,
                                     forward: best.hash == hash,
                                 },
@@ -944,7 +965,12 @@ impl Sync {
                         hash,
                         bytes_len,
                     },
-                    Some((hash, peer, body)),
+                    Some(Arrived {
+                        hash,
+                        supplier: peer,
+                        received: at,
+                        body,
+                    }),
                 )
             }
             NetEvent::Garbage { peer } => {
@@ -1153,7 +1179,7 @@ impl Sync {
             .set(f64::from(progress.in_flight));
         self.metrics
             .sync_downloads_in_flight
-            .set(f64::from(progress.in_flight));
+            .set(f64::from(progress.in_flight) + self.bodies.len() as f64);
         self.metrics.sync_held_bytes.set(progress.held_bytes as f64);
         // One row for each second in which a value changed.
         let recent = match self.progress {
@@ -1184,6 +1210,7 @@ impl Sync {
         &mut self,
         block: Arc<RawBlock>,
         source: Source,
+        received: Instant,
     ) -> Result<Result<(), String>, NodeError> {
         self.settle_clock();
         let hash = block.hash();
@@ -1223,6 +1250,7 @@ impl Sync {
             Body {
                 block,
                 supplier: source,
+                received,
                 relayed: true,
                 forward: false,
             },

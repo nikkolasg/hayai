@@ -1,6 +1,6 @@
 # zakurad for the local dry run of the race files (docs/sync-race.md, Dry run). Regtest,
-# loopback addresses only, no seeder, no bootstrap peer and no peer cache: the node has
-# no peer.
+# loopback addresses only, no seeder, no bootstrap peer and no peer cache. The only peer
+# is the hayaid of hayaid.regtest.toml, which connects to this node.
 
 [network]
 network = "Regtest"
@@ -10,9 +10,21 @@ cache_dir = false
 initial_mainnet_peers = []
 initial_testnet_peers = []
 
+# The same heights as in hayaid.regtest.toml. The chain of the dry run stays in NU6.1.
+[network.testnet_parameters.activation_heights]
+NU5 = 1
+NU6 = 50
+"NU6.1" = 100
+
+# NU6.1 needs a disbursement entry on Regtest.
+[[network.testnet_parameters.lockbox_disbursements]]
+address = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh"
+amount = 0
+
 [network.zakura]
 bootstrap_peers = []
 listen_addr = "127.0.0.1:38234"
+trace_dir = "/home/zebra/.cache/zakura/traces"
 
 [state]
 cache_dir = "/home/zebra/.cache/zakura"
@@ -26,7 +38,12 @@ cookie_dir = "/home/zebra/.cache/zakura"
 endpoint_addr = "127.0.0.1:39999"
 
 [mining]
-miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+# The pay-to-script-hash address of the script OP_TRUE: a test transaction spends such a
+# coin without a key.
+miner_address = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh"
 
 [tracing]
+# The log goes to this file, as in the race.
+log_file = "/home/zebra/.cache/zakura/zakurad.log"
+filter = "info"
 use_color = false

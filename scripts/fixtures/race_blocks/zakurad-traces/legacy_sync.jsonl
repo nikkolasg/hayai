@@ -1,0 +1,12 @@
+{"ts":100000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_start","state_tip":100}
+{"ts":130000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"tips_obtained","reserve":0,"prospective_tips":0}
+{"ts":130050,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_finish","reason":"exhausted","state_tip":100}
+{"ts":60100000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_start","state_tip":101}
+{"ts":60130000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"tips_obtained","reserve":0,"prospective_tips":0}
+{"ts":60130050,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_finish","reason":"exhausted","state_tip":101}
+{"ts":120100000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_start","state_tip":102}
+{"ts":120130000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"tips_obtained","reserve":0,"prospective_tips":0}
+{"ts":120130050,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_finish","reason":"exhausted","state_tip":102}
+{"ts":180100000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_start","state_tip":103}
+{"ts":180130000,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"tips_obtained","reserve":0,"prospective_tips":0}
+{"ts":180130050,"node":"zakurad","process_trace_id":"100-1700000000000000000","event":"round_finish","reason":"exhausted","state_tip":103}

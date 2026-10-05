@@ -11,9 +11,16 @@ Three checks. Exit status 1 lists every unknown name.
    registers: a `hayai_` name of the sources, or a name of ZAKURA_NAMES. A metric name is
    a token that starts with one of PREFIXES. The suffixes _bucket, _sum and _count of a
    histogram map to the histogram name.
-3. Each metric in an expression of the sync race (docker/race) is a name that hayaid
-   registers, a name of ZAKURA_ONLY, a name of NODE_EXPORTER, `up`, or a series that
-   docker/race/prometheus/rules/race.yml records.
+3. Each metric in an expression of the race (docker/race) is a known name:
+   - the recording rules and the dashboard comparison.json: a name that hayaid
+     registers, a name of zakurad, a name of NODE_EXPORTER, `up`, or a series that the
+     rules record (race.yml, and the rule that compose.monitor.yml writes);
+   - the dashboard hayai-node.json: a name that hayaid registers, or a name of
+     NODE_EXPORTER;
+   - the dashboard zakura-node.json: a name of zakurad, or a name of NODE_EXPORTER.
+   The names of zakurad are the families of scripts/zakura_metric_names.txt: the
+   `/metrics` text of a running zakurad. zakurad exports summaries, so a `_bucket`
+   series of a name of zakurad is not a known name.
 """
 
 import json
@@ -31,7 +38,8 @@ USERS = [
     *sorted((REPO / "docker/observability/grafana/dashboards").glob("*.json")),
 ]
 RACE_RULES = REPO / "docker/race/prometheus/rules/race.yml"
-RACE_DASHBOARD = REPO / "docker/race/grafana/dashboards/sync-race.json"
+RACE_DASHBOARDS = REPO / "docker/race/grafana/dashboards"
+ZAKURA_RUNNING = REPO / "scripts/zakura_metric_names.txt"
 
 # The metrics that hayaid exports with the name, the labels and the unit of Zakura
 # (docs/zakura-compat.md, Metrics).
@@ -43,9 +51,11 @@ ZAKURA_NAMES = {
     "sync_block_verify_duration_seconds",
     "sync_downloads_in_flight",
     "zcash_net_peers",
+    "zcash_net_in_bytes_total",
+    "zcash_net_out_bytes_total",
+    "sync_downloaded_block_count",
     "zcash_mempool_size_transactions",
     "zcash_mempool_size_bytes",
-    "mining_template_rebuilt",
     "rpc_requests_total",
     "rpc_request_duration_seconds",
     "rpc_errors_total",
@@ -53,8 +63,6 @@ ZAKURA_NAMES = {
     "process_resident_memory_bytes",
     "process_cpu_seconds_total",
 }
-# Metrics of zakurad that hayaid does not export and that the sync race reads.
-ZAKURA_ONLY = {"sync_block_best_header_tip_height", "sync_estimated_network_tip_height"}
 # Metrics of node-exporter that the sync race reads.
 NODE_EXPORTER = {
     "node_cpu_seconds_total",
@@ -71,7 +79,18 @@ NODE_EXPORTER = {
 PREFIXES = ("hayai_", "zcash_", "state_", "sync_", "mining_", "process_", "rpc_")
 TOKEN = re.compile(r"\b(?:%s)[a-z0-9_]+" % "|".join(PREFIXES))
 # PromQL words that are not metric names.
-KEYWORDS = {"or", "and", "unless", "by", "on", "without", "bool", "group_left", "group_right"}
+KEYWORDS = {
+    "or",
+    "and",
+    "unless",
+    "by",
+    "on",
+    "without",
+    "bool",
+    "group_left",
+    "group_right",
+    "offset",
+}
 IDENTIFIER = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*")
 
 
@@ -85,6 +104,7 @@ def metrics_of(expr: str) -> set:
     expr = re.sub(r'"[^"]*"', "", expr)
     expr = re.sub(r"\{[^}]*\}", "", expr)
     expr = re.sub(r"\[[^\]]*\]", "", expr)
+    expr = re.sub(r"\boffset\s+[0-9]+[a-z]+", "", expr)
     expr = re.sub(r"\b(by|on|without|group_left|group_right)\s*\([^)]*\)", "", expr)
     names = set()
     for match in IDENTIFIER.finditer(expr):
@@ -129,19 +149,54 @@ def main() -> int:
                 errors.append(f"unknown metric {path.relative_to(REPO)}: {name}")
 
     rules = RACE_RULES.read_text()
-    recorded = set(re.findall(r"^ *- record: *(\S+)$", rules, flags=re.M))
-    known = registered | ZAKURA_ONLY | NODE_EXPORTER | recorded | {"up"}
-    race = {
-        RACE_RULES: rule_expressions(rules),
-        RACE_DASHBOARD: dashboard_expressions(json.loads(RACE_DASHBOARD.read_text())),
+    # The Prometheus container writes one more rule at its start (compose.monitor.yml).
+    monitor = (REPO / "docker/race/compose.monitor.yml").read_text()
+    recorded = set(re.findall(r"^ *- record: *(\S+)$", rules + monitor, flags=re.M))
+    zakura = {
+        line.strip()
+        for line in ZAKURA_RUNNING.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
     }
-    for path, expressions in race.items():
+
+    def of_hayai(name):
+        return name in registered or base(name) in registered
+
+    def of_zakura(name):
+        return name in zakura or re.sub(r"_(sum|count)$", "", name) in zakura
+
+    def of_machine(name):
+        return name in NODE_EXPORTER
+
+    def of_race(name):
+        return name in recorded or name == "up" or of_hayai(name) or of_zakura(name) or of_machine(name)
+
+    def dashboard(name):
+        return dashboard_expressions(json.loads((RACE_DASHBOARDS / name).read_text()))
+
+    race = [
+        (RACE_RULES, rule_expressions(rules), of_race),
+        (RACE_DASHBOARDS / "comparison.json", dashboard("comparison.json"), of_race),
+        (
+            RACE_DASHBOARDS / "hayai-node.json",
+            dashboard("hayai-node.json"),
+            lambda name: of_hayai(name) or of_machine(name),
+        ),
+        (
+            RACE_DASHBOARDS / "zakura-node.json",
+            dashboard("zakura-node.json"),
+            lambda name: of_zakura(name) or of_machine(name),
+        ),
+    ]
+    for path, expressions, known in race:
         if not expressions:
             errors.append(f"{path.relative_to(REPO)} has no expression")
         names = set().union(*(metrics_of(e) for e in expressions))
         for name in sorted(names):
-            if name not in known and base(name) not in known:
+            if not known(name):
                 errors.append(f"unknown metric {path.relative_to(REPO)}: {name}")
+    others = sorted(p.name for p in RACE_DASHBOARDS.glob("*.json") if p not in [r[0] for r in race])
+    for name in others:
+        errors.append(f"docker/race/grafana/dashboards/{name} is not a dashboard that this script checks")
 
     for line in errors:
         print(line, file=sys.stderr)

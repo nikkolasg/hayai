@@ -145,19 +145,21 @@ The other metrics of hayaid start with `hayai_`.
 | `zcash_chain_verified_block_height` | none | yes | Height of the newest committed block |
 | `zcash_chain_verified_block_total` | none | yes | Blocks committed since the start. `zakurad` also counts the genesis block of an empty state |
 | `state_memory_best_committed_block_height` | none | yes | Height of the tip of the best chain |
-| `state_finalized_block_height` | none | yes | Height of the base: the newest block below the 1,000 layers of the reorganization depth |
-| `sync_downloads_in_flight` | none | yes | Block requests without an answer |
-| `sync_block_verify_duration_seconds` | `result` | yes | Validation time of a block. hayaid exports a histogram (`_bucket`, `_sum`, `_count`); `zakurad` exports a summary (`quantile`, `_sum`, `_count`) |
-| `zcash_net_peers` | none | yes | Connected peers |
+| `state_finalized_block_height` | none | yes | Height of the newest block whose coins are in the coins store on disk (the last flush). `hayai_base_height` is the base in memory: the newest block below the 1,000 layers of the reorganization depth |
+| `sync_downloads_in_flight` | none | yes | Block requests without an answer plus downloaded blocks that wait for the validator. `hayai_sync_requests_in_flight` has the requests only |
+| `sync_block_verify_duration_seconds` | `result` | yes | Reception of a block to its commit (`success`) or to its rejection (`failure`), with the wait for the parent blocks, as in `zakurad`. hayaid exports a histogram (`_bucket`, `_sum`, `_count`); `zakurad` exports a summary (`quantile`, `_sum`, `_count`). The validation time alone is `hayai_validate_stage_duration_seconds{stage="total"}` |
+| `zcash_net_peers` | none | yes | Connected peers after the handshake |
+| `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | none | yes | Bytes of the P2P messages, received and sent |
+| `sync_downloaded_block_count` | none | yes | Blocks that the block download received and stored |
 | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | none | yes | Transactions of the mempool and their bytes |
 | `rpc_requests_total` | `method`, `status` (`success`, `error`) | yes | RPC requests. A method that hayaid does not have has the label value `unknown`, so the number of series has a bound |
 | `rpc_request_duration_seconds` | `method` | yes | Time of a request. Histogram in hayaid, summary in `zakurad` |
 | `rpc_errors_total` | `method`, `error_code` | yes | RPC errors by JSON-RPC error code |
 | `rpc_active_requests` | none | yes | Requests in progress |
-| `mining_template_rebuilt` | none | yes | Template rebuilds |
+| `mining_template_rebuilt` | none | no | `zakurad` counts a template that a new tip replaced during its build. hayaid has no such event: `hayai_template_updates_total` counts each full or changed template |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total` | none | yes | Memory and CPU time of the process. The Docker build of Zakura 1.6.0 does not export them |
 | `sync_estimated_distance_to_tip`, `sync_estimated_network_tip_height` | none | no | hayaid makes no estimate of the network tip from the time. `hayai_sync_header_height` is the height of its best header chain |
-| `sync_downloaded_block_count`, `sync_verified_block_count` | none | no | hayaid has no separate count of the blocks of the sync. `zcash_chain_verified_block_total` counts each committed block |
+| `sync_verified_block_count` | none | no | hayaid has no separate count of the verified blocks of the sync. `zcash_chain_verified_block_total` counts each committed block |
 | `sync_block_download_duration_seconds`, `sync_stage_duration_seconds`, `sync_*_hash_count`, `sync_prospective_tips_len`, `sync_cancelled_*` | several | no | Stages of the sync pipeline of Zakura. The sync of hayaid has other stages (`hayai_sync_*`) |
 | `sync_block_best_header_tip_height` | none | no | Metric of the Zakura P2P stack. hayaid has `hayai_sync_header_height` |
 | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | none | no | hayai-net does not count the bytes of the connections |

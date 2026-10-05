@@ -659,14 +659,14 @@ when the queue is full (`hayai_trace_dropped_rows_total`), and flushes and fsync
 | File | Event | Fields |
 |---|---|---|
 | `block_sync.jsonl` | `block_header_checked` | `hash`, `height`, `result` (`ok`, `rejected`), `reason`, `elapsed_us` |
-| | `block_received` | `peer`, `height`, `hash`, `bytes`, `source` (`legacy`, `compact`, `local`, `download`, `upstream_rpc`) |
+| | `block_received` | `peer`, `height`, `hash`, `bytes`, `source` (`legacy`, `compact`, `local`, `download`, `upstream_rpc`), `received_unix_us` (the reception of the block on the wall clock, see Block clock) |
 | | `sync_progress` | full mode, at most one row each second, when a value changed: `headers_height`, `blocks_height`, `peers`, `in_flight`, `held_bytes` |
 | `commit_state.jsonl` | `commit_start` | `source` (`hayaid`), `apply_class` (expected: `full`, `prebuilt_own`, `prebuilt_candidate`, `checkpoint`), `origin` (`local`, `legacy`, `compact`, `download`, `stored`, `upstream_rpc`), `height`, `hash` |
-| | `block_validated` | `height`, `hash`, `result` (`valid`, `invalid`, `wrong_body`, `not_validated` for a local fault), `class` (`empty`, `transparent`, `shielded`), `txs`, `known`, `unknown`, `<stage>_us` for each stage of `hayai_validate::Timings`, `block_commitments_checked`, `trusted_coins`, `trusted_nullifiers`, `trusted_anchors`, `reason` |
-| | `commit_finish` | `source`, `apply_class` (taken: `full`, `prebuilt_own`, `prebuilt_candidate`, or `prebuilt` for a block a prebuilt body rejected), `height`, `hash`, `result` (`committed`, `rejected`, `stopped` for a local fault), `reason`, `elapsed_ms` |
+| | `block_validated` | `height`, `hash`, `result` (`valid`, `invalid`, `wrong_body`, `not_validated` for a local fault), `class` (`empty`, `transparent`, `shielded`), `txs`, `known`, `unknown`, `<stage>_us` for each stage of `hayai_validate::Timings`, `block_commitments_checked`, `trusted_coins`, `trusted_nullifiers`, `trusted_anchors`, `reason`; for a valid block also `bytes`, `since_received_us`, `validation_us`, `contextual_commit_us` (Block clock) |
+| | `commit_finish` | `source`, `apply_class` (taken: `full`, `prebuilt_own`, `prebuilt_candidate`, or `prebuilt` for a block a prebuilt body rejected), `height`, `hash`, `result` (`committed`, `rejected`, `stopped` for a local fault), `reason`, `elapsed_ms`; for a committed block also `received_to_commit_us`, `commit_us` (Block clock) |
 | | `block_disconnected` | a reorg: `height`, `hash` |
 | | `upstream_verdict` | shadow mode: `height`, `hash`, `hayai` (`valid`, `invalid`, `not_validated`), `upstream`, `agree` (`null` when hayai has no verdict), `level`, `reason` |
-| `template.jsonl` | `template_empty`, `template_full` | `height`, `parent`, `template_id`, `txs`, `fees`, `since_tip_us` |
+| `template.jsonl` | `template_empty`, `template_full` | `height`, `parent`, `template_id`, `txs`, `fees`, `since_tip_us`, `since_received_us` (the first empty and the first full template on a block only, else `null`) |
 
 `commit_start` and `commit_finish` have Zakura's names and fields. The relay emits
 `block_received` when the complete body reaches the driver's queue: after the header
@@ -676,20 +676,61 @@ The relay of hayai-net has no observer interface, so hayaid emits no
 `block_reconstructed` and no `block_forwarded` rows. The counters of
 `Relay::metrics()` are in `/metrics`.
 
+### Block clock
+
+Each committed block has these points on the monotonic clock of the node. A trace row
+and a gauge of the same quantity have the value of one clock reading.
+
+| Point | Definition |
+|---|---|
+| received | The node has each byte of the block. `download`: the arrival of the `block` message on the reader thread of the peer, before the parse. `compact`, `legacy`, `local`: the arrival of the complete block at the driver queue, after the reconstruction and the header check. `stored`, `upstream_rpc`: the read of the block by the driver |
+| start | The driver takes the block (`commit_start`) |
+| validated | The block passed each consensus check and its layer is on the chain (`block_validated`, `result` = `valid`) |
+| committed | The block is the tip (`TipWatch::set`): it is in the block file, the prepared store has the new tip (`commit_finish`) |
+| template ready | `TemplateFeed::publish` returned for the first empty (coinbase only) or the first full template on the block. From that moment `getblocktemplate`, a long poll and the push protocol give this template |
+
+| Quantity | Trace field | Gauge of the last block | Histogram |
+|---|---|---|---|
+| received to validated | `block_validated.since_received_us` | `hayai_last_block_received_to_validated_seconds` | `hayai_block_received_to_validated_seconds` |
+| start to validated | `block_validated.validation_us` | `hayai_last_block_validation_seconds` | none |
+| contextual commit: stages `context`, `trees`, `history` plus the push of the layer on the chain | `block_validated.contextual_commit_us` | `hayai_last_block_contextual_commit_seconds` | `hayai_contextual_commit_duration_seconds` |
+| validated to committed | `commit_finish.commit_us` | `hayai_last_block_commit_seconds` | none |
+| received to committed | `commit_finish.received_to_commit_us` | `hayai_last_block_received_to_committed_seconds` | `hayai_block_receive_to_commit_seconds`, `sync_block_verify_duration_seconds{result="success"}` |
+| received to template ready | `template_empty.since_received_us`, `template_full.since_received_us` | `hayai_last_template_received_to_ready_seconds{template}` | `hayai_block_received_to_template_seconds{template}` |
+| each validation stage | `block_validated.<stage>_us` | `hayai_last_block_validate_stage_seconds{stage}` | `hayai_validate_stage_duration_seconds{stage}` |
+
+- During the first synchronization a block waits for its parent blocks: "received to
+  validated" and "received to committed" contain that wait. At the tip the wait is the
+  queue of the driver only.
+- At the tip the template moves to a block before the verification of its proofs
+  (speculative tip). "received to template ready" can then be smaller than "received
+  to validated". The node replaces the template when the block is not valid.
+- The stages of the validation split: `prepare_unknown` (the transactions that the
+  prepared store did not have), `scripts` and `shielded` (signatures and proofs),
+  `lookup`, `context`, `trees`, `history` (the checks against the state).
+- A scrape reads the gauges one after the other. A scrape during a commit can mix the
+  values of two blocks. The trace rows are the reference for a table of blocks.
+
 ## Metrics
 
 | Name | Type | Meaning |
 |---|---|---|
 | `zcash_chain_verified_block_height` | gauge | Height of the newest validated block on the best chain (Zakura name) |
 | `state_memory_best_committed_block_height` | gauge | Height of the committed tip (Zakura name) |
-| `sync_block_verify_duration_seconds{result}` | histogram | Validation time, `success` or `failure` (Zakura name) |
+| `sync_block_verify_duration_seconds{result}` | histogram | Reception of a block to its commit (`success`) or to its rejection (`failure`) (Zakura name) |
+| `state_finalized_block_height` | gauge | Height of the newest block whose coins are in the coins store on disk (Zakura name) |
+| `hayai_base_height` | gauge | Height of the base in memory: the newest block below the layers of the reorganization depth |
+| `sync_downloads_in_flight` | gauge | Full mode: block requests without an answer plus downloaded blocks that wait for the validator (Zakura name) |
+| `sync_downloaded_block_count` | counter | Full mode: blocks that the block download received and stored (Zakura name) |
+| `zcash_net_peers` | gauge | Connected peers after the handshake (Zakura name) |
+| `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | counter | Bytes of the P2P messages, received and sent, updated every second (Zakura names) |
 | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | gauge | Prepared store (Zakura names) |
-| `mining_template_rebuilt` | counter | Full and changed templates (Zakura name) |
+| `hayai_template_updates_total` | counter | Full and changed templates |
 | `hayai_validate_stage_duration_seconds{stage}` | histogram | Each stage of `hayai_validate::Timings` |
 | `hayai_commit_duration_seconds` | histogram | `commit_start` to `commit_finish` |
 | `hayai_prepared_store_hits_total`, `hayai_prepared_store_misses_total` | counter | Block transactions from the store, or prepared during validation |
 | `hayai_blocks_rejected_total` | counter | Blocks that failed validation: invalid blocks and wrong bodies |
-| `hayai_peers` | gauge | Connected peers |
+| `hayai_peers` | gauge | Connections of the relay, also before the end of the handshake |
 | `hayai_sync_header_height` | gauge | Full mode: height of the best header chain |
 | `hayai_sync_peers` | gauge | Full mode: peers that the block download can ask |
 | `hayai_sync_requests_in_flight` | gauge | Full mode: block requests without an answer |
@@ -712,6 +753,15 @@ The relay of hayai-net has no observer interface, so hayaid emits no
 | `hayai_coins_cache_entries`, `hayai_coins_cache_bytes` | gauge | Entries and memory of the coins cache of the finalized state |
 | `hayai_coins_store_coins` | gauge | Coins in the memory backing (memory backend) |
 | `hayai_build_info{version,chain,mode,crypto_backend,coins_backend}` | gauge | Always 1; the labels name the build and the configuration |
+| `hayai_last_block_height` | gauge | Height of the last committed block. Each `hayai_last_block_*` gauge is of this block (Block clock) |
+| `hayai_last_block_hash_suffix` | gauge | The last 12 hexadecimal digits of the hash of that block, as an integer |
+| `hayai_last_block_source{source}` | gauge | 1 for the `origin` of that block (`download`, `compact`, `legacy`, `local`, `stored`, `upstream_rpc`), 0 for each other value |
+| `hayai_last_block_size_bytes`, `hayai_last_block_transactions` | gauge | Wire bytes and transactions (with the coinbase) of that block |
+| `hayai_last_block_prepared_transactions{state}` | gauge | Transactions of that block that the prepared store had (`known`) and that the node prepared at block time (`unknown`). The coinbase is `unknown` |
+| `hayai_last_block_received_to_validated_seconds`, `hayai_last_block_validation_seconds`, `hayai_last_block_contextual_commit_seconds`, `hayai_last_block_commit_seconds`, `hayai_last_block_received_to_committed_seconds` | gauge | Durations of that block (Block clock) |
+| `hayai_last_block_validate_stage_seconds{stage}` | gauge | Each stage of `hayai_validate::Timings` for that block |
+| `hayai_last_template_tip_height{template}`, `hayai_last_template_received_to_ready_seconds{template}` | gauge | Height of a tip block, and the time from its reception to the first `empty` or `full` template on it |
+| `hayai_block_received_to_validated_seconds`, `hayai_block_receive_to_commit_seconds`, `hayai_contextual_commit_duration_seconds`, `hayai_block_received_to_template_seconds{template}` | histogram | The same durations for each block (Block clock) |
 
 ## Limits
 

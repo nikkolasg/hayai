@@ -642,6 +642,8 @@ pub struct Relay {
     /// The time of the last `mempool` request to each legacy peer.
     mempool_polls: Mutex<HashMap<PeerId, Instant>>,
     metrics: Metrics,
+    /// Bytes of the frames of all peers.
+    bytes: Arc<crate::transport::ByteCounters>,
     peer_manager: Arc<PeerManager>,
     min_peer_version: AtomicU32,
     listen_addr: Mutex<Option<SocketAddr>>,
@@ -743,6 +745,7 @@ impl Relay {
             unannounced: Mutex::new(VecDeque::new()),
             mempool_polls: Mutex::new(HashMap::new()),
             metrics: Metrics::default(),
+            bytes: Arc::default(),
             listen_addr: Mutex::new(None),
             stopped: AtomicBool::new(false),
         });
@@ -766,6 +769,14 @@ impl Relay {
 
     pub fn config(&self) -> &RelayConfig {
         &self.config
+    }
+
+    /// Bytes of the frames of all peers since the start: received, sent.
+    pub fn bytes(&self) -> (u64, u64) {
+        (
+            self.bytes.received.load(Ordering::Relaxed),
+            self.bytes.sent.load(Ordering::Relaxed),
+        )
     }
 
     pub fn metrics(&self) -> RelayCounters {
@@ -845,7 +856,12 @@ impl Relay {
 
     fn add_peer(self: &Arc<Self>, stream: TcpStream, direction: Direction) -> io::Result<PeerId> {
         let id = PeerId(self.next_peer.fetch_add(1, Ordering::Relaxed));
-        let transport = TcpTransport::new(stream, self.config.network, self.config.outbound_queue)?;
+        let transport = TcpTransport::new(
+            stream,
+            self.config.network,
+            self.config.outbound_queue,
+            self.bytes.clone(),
+        )?;
         let addr = transport.peer_addr();
         let mut session_config = self.session_config.clone();
         session_config.min_peer_version = self.min_peer_version.load(Ordering::Acquire);

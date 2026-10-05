@@ -83,7 +83,10 @@ use crate::backing::{SpentLog, UpstreamBacking};
 use crate::config::{Backend, Config, LanePublication, Mode};
 use crate::headers::{HeaderIndex, NodeHeaderCheck, SeedBlock};
 use crate::mempool::{Mempool, PublicTxs};
-use crate::metrics::{register_build_info, stage_durations, NodeMetrics, STAGES};
+use crate::metrics::{
+    hash_suffix, micros, register_build_info, stage_durations, LastBlock, NodeMetrics,
+    TemplateKind, STAGES,
+};
 use crate::mining::{miner_script, Producer};
 use crate::params::{NetParams, NetworkKind, REGTEST_POW_LIMIT_BITS};
 use crate::persist::{StateLog, StateRecord};
@@ -139,6 +142,8 @@ pub enum Event {
         block: Arc<RawBlock>,
         origin: &'static str,
         source: Source,
+        /// The arrival of the complete block at the queue of the driver.
+        received: Instant,
     },
     /// Full mode: a message of the block synchronization and its arrival time.
     Net {
@@ -163,8 +168,10 @@ fn now_secs() -> u32 {
     u32::try_from(secs).unwrap_or(u32::MAX)
 }
 
-fn micros(d: Duration) -> u64 {
-    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+/// The wall clock of `received` in microseconds since the Unix epoch: the field
+/// `received_unix_us` of a `block_received` row.
+pub(crate) fn received_unix_micros(received: Instant) -> u64 {
+    hayai_trace::unix_micros().saturating_sub(micros(received.elapsed()))
 }
 
 fn millis(d: Duration) -> u64 {
@@ -300,6 +307,7 @@ impl BlockSink for BlockInbox {
     fn accept_block(&self, incoming: IncomingBlock) {
         let IncomingBlock { block, source } = incoming;
         let origin = origin(&source);
+        let received = Instant::now();
         self.tracer
             .emit(Table::BlockSync, event::BLOCK_RECEIVED, || {
                 let peer = match source {
@@ -312,12 +320,14 @@ impl BlockSink for BlockInbox {
                     "hash": block.hash().to_string(),
                     "bytes": block.bytes.len(),
                     "source": origin,
+                    "received_unix_us": received_unix_micros(received),
                 })
             });
         let event = Event::Block {
             block,
             origin,
             source,
+            received,
         };
         if self.events.send(event).is_err() {
             tracing::debug!("driver stopped; block dropped");
@@ -515,7 +525,7 @@ struct Driver {
     rejected: HashMap<BlockHash, String>,
     rejected_order: VecDeque<BlockHash>,
     /// Blocks whose parent is a pending header, by parent hash.
-    waiting: HashMap<BlockHash, Vec<(Arc<RawBlock>, &'static str)>>,
+    waiting: HashMap<BlockHash, Vec<Waiting>>,
     relay: Arc<Relay>,
     /// Full mode: the block synchronization.
     sync: Option<Sync>,
@@ -536,10 +546,30 @@ struct Driver {
     /// since the last template.
     template_deferred: bool,
     deferred_changes: TipChange,
+    /// The reception of the newest block that the driver validated, for the time from
+    /// the reception to the first template on that block.
+    tip_received: Option<TipReceived>,
 }
+
+/// The reception time of a block, until the first template on that block has it.
+struct TipReceived {
+    hash: BlockHash,
+    at: Instant,
+    /// A template on the block took the time.
+    used: bool,
+}
+
+/// A block of shadow mode that waits for its parent: the block, its origin and its
+/// reception.
+type Waiting = (Arc<RawBlock>, &'static str, Instant);
 
 /// What the trace rows of one commit share.
 struct CommitCtx {
+    /// The reception of the block (`metrics::LastBlock`).
+    received: Instant,
+    origin: &'static str,
+    /// The time of the push of the layer on the chain. The commit path sets it.
+    push: Duration,
     started: Instant,
     height: u32,
     hash: BlockHash,
@@ -686,9 +716,9 @@ impl Driver {
             }
             select! {
                 recv(events) -> ev => match ev {
-                    Ok(Event::Block { block, origin, source }) => match self.mode {
-                        Mode::Full => self.on_relayed(block, source)?,
-                        Mode::Shadow => self.on_block(block, origin)?,
+                    Ok(Event::Block { block, origin, source, received }) => match self.mode {
+                        Mode::Full => self.on_relayed(block, source, received)?,
+                        Mode::Shadow => self.on_block(block, origin, received)?,
                     },
                     Ok(Event::Net { event, at }) => self.on_net(event, at)?,
                     Ok(Event::Upstream { fork, blocks }) => self.on_upstream(fork, blocks)?,
@@ -834,6 +864,7 @@ impl Driver {
             .sync()
             .map_err(|e| fatal("block store sync", e))?;
         self.chain.flush().map_err(|e| fatal(context, e))?;
+        self.metrics.finalized_height.set(f64::from(height));
         Ok(())
     }
 
@@ -868,9 +899,14 @@ impl Driver {
     /// Shadow mode: validates a block of the relay on the tip. A block whose parent is a
     /// pending header (still in the queue, or still validating on another path) waits for
     /// its parent's commit.
-    fn on_block(&mut self, block: Arc<RawBlock>, origin: &'static str) -> Result<(), NodeError> {
-        let mut queue = vec![(block, origin)];
-        while let Some((block, origin)) = queue.pop() {
+    fn on_block(
+        &mut self,
+        block: Arc<RawBlock>,
+        origin: &'static str,
+        received: Instant,
+    ) -> Result<(), NodeError> {
+        let mut queue = vec![(block, origin, received)];
+        while let Some((block, origin, received)) = queue.pop() {
             let hash = block.hash();
             if self.index.contains(&hash) {
                 continue;
@@ -883,13 +919,13 @@ impl Driver {
                     self.waiting
                         .entry(parent)
                         .or_default()
-                        .push((block, origin));
+                        .push((block, origin, received));
                 } else {
                     tracing::info!(%hash, %parent, %tip, "block does not extend the tip; not validated");
                 }
                 continue;
             }
-            match self.commit(block, origin)? {
+            match self.commit(block, origin, received)? {
                 Ok(()) => {
                     if let Some(children) = self.waiting.remove(&hash) {
                         queue.extend(children);
@@ -951,7 +987,8 @@ impl Driver {
         &self,
         raw: &RawBlock,
         height: u32,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
         expected_class: &str,
         view: &ChainView,
     ) -> CommitCtx {
@@ -980,6 +1017,9 @@ impl Driver {
             }
         };
         CommitCtx {
+            received,
+            origin,
+            push: Duration::ZERO,
             started,
             height,
             hash,
@@ -1003,7 +1043,9 @@ impl Driver {
             Fault::Local => ("not_validated", "stopped"),
         };
         if fault != Fault::Local {
-            self.metrics.verify_failure.observe_duration(elapsed);
+            self.metrics
+                .verify_failure
+                .observe_duration(ctx.received.elapsed());
             self.metrics.blocks_rejected.inc();
         }
         tracing::warn!(%hash, height, error = %reason, result = validated, "block not committed");
@@ -1049,16 +1091,24 @@ impl Driver {
         changes: &mut TipChange,
     ) -> Result<(), NodeError> {
         let (height, hash) = (ctx.height, ctx.hash);
-        self.metrics.verify_success.observe_duration(timings.total);
         self.metrics.record_stages(timings);
+        let contextual_commit_us =
+            micros(timings.context + timings.trees + timings.history + ctx.push);
         self.metrics.store_hits.add(timings.known as u64);
         self.metrics.store_misses.add(timings.unknown as u64);
+        let validated = Instant::now();
+        let received_to_validated_us = micros(validated.duration_since(ctx.received));
+        let validation_us = micros(validated.duration_since(ctx.started));
         self.tracer
             .emit(Table::CommitState, event::BLOCK_VALIDATED, || {
                 let mut row = json!({
                     "height": height,
                     "hash": ctx.hash_hex,
                     "result": "valid",
+                    "since_received_us": received_to_validated_us,
+                    "validation_us": validation_us,
+                    "contextual_commit_us": contextual_commit_us,
+                    "bytes": raw.bytes.len(),
                     "class": block_class(raw),
                     "txs": raw.txs.len(),
                     "known": timings.known,
@@ -1093,7 +1143,7 @@ impl Driver {
             .map_err(|e| fatal("finalize", e))?;
         self.since_snapshot += finalized as u32;
         self.metrics
-            .finalized_height
+            .base_height
             .set(f64::from(self.chain.base().read().height));
         self.since_flush += 1;
         if self.since_flush >= self.flush_interval {
@@ -1126,8 +1176,27 @@ impl Driver {
         mempool.forget_private(&changes.dropped);
         drop(tip_change);
         self.tip.set(height, hash);
+        self.note_received(hash, ctx.received);
 
-        let elapsed = ctx.started.elapsed();
+        let committed = Instant::now();
+        let elapsed = committed.duration_since(ctx.started);
+        let received_to_committed_us = micros(committed.duration_since(ctx.received));
+        let commit_us = micros(committed.duration_since(validated));
+        self.metrics.record_last_block(
+            &LastBlock {
+                height,
+                hash_suffix: hash_suffix(&ctx.hash_hex),
+                source: ctx.origin,
+                size_bytes: raw.bytes.len(),
+                transactions: raw.txs.len(),
+                received_to_validated_us,
+                validation_us,
+                commit_us,
+                received_to_committed_us,
+                contextual_commit_us,
+            },
+            timings,
+        );
         self.metrics.verified_height.set(f64::from(height));
         self.metrics.committed_height.set(f64::from(height));
         self.metrics.verified_blocks.inc();
@@ -1147,9 +1216,36 @@ impl Driver {
                     "hash": ctx.hash_hex,
                     "result": "committed",
                     "elapsed_ms": millis(elapsed),
+                    "received_to_commit_us": received_to_committed_us,
+                    "commit_us": commit_us,
                 })
             });
         Ok(())
+    }
+
+    /// Records the reception time of the block `hash` for the first template on it. A
+    /// block that already has the record keeps it: the template of a speculative block
+    /// comes before its commit.
+    pub(super) fn note_received(&mut self, hash: BlockHash, at: Instant) {
+        if !matches!(&self.tip_received, Some(known) if known.hash == hash) {
+            self.tip_received = Some(TipReceived {
+                hash,
+                at,
+                used: false,
+            });
+        }
+    }
+
+    /// The reception time of the block `parent` for a template on it, one time for each
+    /// block: a later template on the same block is not the first one.
+    pub(super) fn take_received(&mut self, parent: &BlockHash) -> Option<Instant> {
+        match &mut self.tip_received {
+            Some(known) if known.hash == *parent && !known.used => {
+                known.used = true;
+                Some(known.at)
+            }
+            _ => None,
+        }
     }
 
     /// Validates `raw` on the committed tip and commits it, in one step: a prebuilt body
@@ -1161,7 +1257,8 @@ impl Driver {
     fn commit_on_tip(
         &mut self,
         raw: &Arc<RawBlock>,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
         checkpoint: Option<BlockHash>,
     ) -> Result<Result<TipChange, BlockError>, NodeError> {
         let view = self.chain.view();
@@ -1170,7 +1267,7 @@ impl Driver {
             Some(_) => "checkpoint",
             None => self.prebuilt.class_of(raw),
         };
-        let ctx = self.begin_commit(raw, height, origin, expected_class, &view);
+        let mut ctx = self.begin_commit(raw, height, origin, received, expected_class, &view);
         let cfg = self.validate_config(height)?;
         // A body that the header does not commit to never reaches a commit path.
         let checked = match checkpoint {
@@ -1198,7 +1295,9 @@ impl Driver {
                 return Ok(Err(e));
             }
         };
+        let pushing = Instant::now();
         let layer = self.chain.push(layer).map_err(|e| fatal("chain push", e))?;
+        ctx.push = pushing.elapsed();
         let mut changes = TipChange::default();
         self.finish_commit(&ctx, raw, &layer, &timings, apply_class, &mut changes)?;
         Ok(Ok(changes))
@@ -1209,10 +1308,11 @@ impl Driver {
     fn commit(
         &mut self,
         raw: Arc<RawBlock>,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
     ) -> Result<Result<(), String>, NodeError> {
         let (height, hash) = (self.chain.tip().height + 1, raw.hash());
-        match self.commit_on_tip(&raw, origin, None)? {
+        match self.commit_on_tip(&raw, origin, received, None)? {
             Ok(changes) => {
                 self.on_tip(&changes)?;
                 Ok(Ok(()))
@@ -1332,11 +1432,15 @@ impl Driver {
     fn on_tip(&mut self, changes: &TipChange) -> Result<(), NodeError> {
         let tip = self.template_tip(&self.chain.view())?;
         let started = Instant::now();
+        let timed = Some(TipEvent {
+            started,
+            received: self.take_received(&tip.parent_hash),
+        });
         let (feed, tracer, metrics) = (&self.feed, &self.tracer, &self.metrics);
         let mut updates = Vec::new();
         self.live
             .on_tip(tip, &changes.mined, &changes.dropped, |update| {
-                publish(feed, tracer, metrics, &update, Some(started));
+                publish(feed, tracer, metrics, &update, timed);
                 updates.push(update);
             })
             .map_err(|e| fatal("template", e))?;
@@ -1515,9 +1619,10 @@ impl Driver {
                                     "hash": hash.to_string(),
                                     "bytes": b.raw.bytes.len(),
                                     "source": "upstream_rpc",
+                                    "received_unix_us": hayai_trace::unix_micros(),
                                 })
                             });
-                        self.commit(b.raw.clone(), "upstream_rpc")?
+                        self.commit(b.raw.clone(), "upstream_rpc", Instant::now())?
                     }
                 }
             };
@@ -1531,16 +1636,32 @@ impl Driver {
     }
 }
 
+/// The clock of a template update that follows a tip change.
+#[derive(Clone, Copy)]
+struct TipEvent {
+    /// The start of the template build on the new tip.
+    started: Instant,
+    /// The reception of the tip block, for the first template on that block only.
+    received: Option<Instant>,
+}
+
+/// Gives `update` to the template feed, which serves `getblocktemplate`, the long poll
+/// and the push protocol, then writes the trace row and the metrics. The stop point of
+/// "template ready" is the reading of the clock after `TemplateFeed::publish` returns.
 fn publish(
     feed: &TemplateFeed,
     tracer: &Tracer,
     metrics: &NodeMetrics,
     update: &TemplateUpdate,
-    tip_event: Option<Instant>,
+    tip_event: Option<TipEvent>,
 ) {
     feed.publish(update);
+    let ready = Instant::now();
     let t = update.template();
-    let elapsed_us = tip_event.map(|s| micros(s.elapsed()));
+    let since_tip = tip_event.map(|e| ready.duration_since(e.started));
+    let since_received_us = tip_event
+        .and_then(|e| e.received)
+        .map(|at| micros(ready.duration_since(at)));
     let fields = || {
         json!({
             "height": t.tip.height,
@@ -1548,25 +1669,29 @@ fn publish(
             "template_id": t.id,
             "txs": t.txs.len(),
             "fees": t.fees_total,
-            "since_tip_us": elapsed_us,
+            "since_tip_us": since_tip.map(micros),
+            "since_received_us": since_received_us,
         })
+    };
+    let record = |kind| {
+        if let Some(us) = since_received_us {
+            metrics.record_last_template(kind, t.tip.height.saturating_sub(1), us);
+        }
     };
     match update {
         TemplateUpdate::Empty(_) => {
-            if let Some(started) = tip_event {
-                metrics
-                    .template_empty_latency
-                    .observe_duration(started.elapsed());
+            if let Some(elapsed) = since_tip {
+                metrics.template_empty_latency.observe_duration(elapsed);
             }
+            record(TemplateKind::Empty);
             tracer.emit(Table::Template, event::TEMPLATE_EMPTY, fields)
         }
         // A revert is the full template on the parent of a rejected speculative block.
         TemplateUpdate::Full(_) | TemplateUpdate::Reverted { .. } => {
-            if let Some(started) = tip_event {
-                metrics
-                    .template_full_latency
-                    .observe_duration(started.elapsed());
+            if let Some(elapsed) = since_tip {
+                metrics.template_full_latency.observe_duration(elapsed);
             }
+            record(TemplateKind::Full);
             metrics.template_rebuilt.inc();
             tracer.emit(Table::Template, event::TEMPLATE_FULL, fields);
         }
@@ -2391,9 +2516,11 @@ impl Node {
         };
         metrics.verified_height.set(f64::from(tip_height));
         metrics.committed_height.set(f64::from(tip_height));
+        // The base of a start is the base of the last flush.
         metrics
             .finalized_height
             .set(f64::from(chain_base.read().height));
+        metrics.base_height.set(f64::from(chain_base.read().height));
 
         let mut driver = Driver {
             params,
@@ -2450,6 +2577,7 @@ impl Node {
             last_tick: Instant::now(),
             more_delivered: false,
             template_deferred: false,
+            tip_received: None,
             deferred_changes: TipChange::default(),
             lane: match (
                 config.network.mode,
@@ -2654,10 +2782,15 @@ fn spawn_ticker(t: Ticker, stop: Arc<AtomicBool>) -> Result<JoinHandle<()>, Node
                         relay.disconnect(p.id);
                     }
                 }
-                let peer_count = relay.peers().len() as f64;
-                metrics.peers.set(peer_count);
-                metrics.net_peers.set(peer_count);
+                let current = relay.peers();
+                metrics.peers.set(current.len() as f64);
+                metrics
+                    .net_peers
+                    .set(current.iter().filter(|p| p.established).count() as f64);
                 metrics.record_relay(relay.metrics());
+                let (received, sent) = relay.bytes();
+                metrics.net_in_bytes.set(received);
+                metrics.net_out_bytes.set(sent);
                 metrics.mempool_transactions.set(store.len() as f64);
                 metrics.mempool_bytes.set(store.cost_bytes() as f64);
                 metrics.record_trace_drops(&tracer);

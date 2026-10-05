@@ -307,8 +307,16 @@ fn a_node_resumes_after_a_clean_stop_and_after_a_crash_on_both_backends() {
         let node = Node::start(&cfg).expect("first start");
         let tip = generate(&node, 1_030);
         assert_eq!(tip.0, 1_030);
+        // The base in memory is at block 30. The last flush of the coins (each 4 blocks)
+        // was at block 1,028, with the base at block 28.
+        let text = metrics_text(&node);
+        assert!(text.contains("\nhayai_base_height 30\n"), "{backend}");
+        assert!(
+            text.contains("\nstate_finalized_block_height 28\n"),
+            "{backend}"
+        );
+        // The clean stop flushes the coins of the base.
         let finalized = "\nstate_finalized_block_height 30\n";
-        assert!(metrics_text(&node).contains(finalized), "{backend}");
         node.shutdown().expect("clean stop");
 
         let node = Node::start(&cfg).expect("restart");
@@ -431,7 +439,7 @@ fn the_metrics_with_the_names_of_zakura_have_the_values_of_the_node() {
     for name in [
         "process_resident_memory_bytes gauge",
         "process_cpu_seconds_total counter",
-        "mining_template_rebuilt counter",
+        "hayai_template_updates_total counter",
     ] {
         assert!(text.contains(&format!("\n# TYPE {name}\n")), "{name}");
     }

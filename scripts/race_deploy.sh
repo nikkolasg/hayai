@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploys the sync race of one zakurad and one hayaid (docs/sync-race.md) on three hosts
+# Deploys the race of one zakurad and one hayaid (docs/sync-race.md) on three hosts
 # that have Docker with the compose plugin and SSH access. The files are those of
 # docker/race.
 #
@@ -8,6 +8,8 @@
 #   A  SSH target of the machine of zakurad, for example user@a.example
 #   B  SSH target of the machine of hayaid
 #   C  SSH target of the monitoring machine (Prometheus and Grafana)
+#   The target `local` runs the commands of that host on this machine, without SSH
+#   (the dry run of docs/sync-race.md).
 #
 # Commands:
 #   build    Build the two images on this machine. It needs no host.
@@ -15,13 +17,18 @@
 #            nodes at the same minute. It stops when a node host has data of a race.
 #   status   Containers, resources, height, peers and last log line of each node.
 #   stop     Stop both nodes. The data and the monitoring stay.
-#   collect  Fetch the versions, the node logs, the metrics, the trace files of hayaid
-#            and the series of the race into race-results/<UTC time>/.
+#   collect  Fetch the versions, the node logs, the metrics, the trace files of both
+#            nodes and the series of the race into race-results/<UTC time>/, and write
+#            the table of blocks at the tip (blocks.csv, blocks.md) with
+#            scripts/race_blocks.py. It needs python3 on this machine.
 #   swap     `clean`, then `start` with the roles of A and B exchanged.
 #   clean    Remove the containers, the volumes (node data, Prometheus data) and the
 #            firewall rules of the race on the three hosts. It asks first.
 #
 # Shell variables:
+#   RACE_NETWORK      mainnet (default) or testnet. It selects the node configurations
+#                     and the crypto backend of the hayaid image (mainnet: the default
+#                     build; testnet: zakura). Use the same value for each command.
 #   ZAKURA_SRC        Zakura checkout for `build`. Its HEAD must be ZAKURA_COMMIT.
 #   RACE_DIR          Directory on each host, below the home directory (hayai-race).
 #   RACE_ZAKURAD_HOST Address of A as C reaches it (default: the host part of A).
@@ -33,6 +40,9 @@
 #   RACE_CPUS         CPU limit of both node containers (default 0: no limit).
 #   RACE_MEMORY       Memory limit of both node containers (default 0: no limit).
 #   RACE_LOG_LINES    Lines of each node log that `collect` fetches (default 20000).
+#   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT, RACE_PROMETHEUS_ADDR
+#                     Other ports than 9999, 19101 and 127.0.0.1:9090, as in
+#                     docker/race/compose.monitor.yml (the dry run).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,15 +52,30 @@ ZAKURA_COMMIT="13779158253cfe315f73eadffb9b4c93c25e82a5"
 ZAKURA_IMAGE="zakurad:race"
 HAYAI_IMAGE="hayaid:race"
 
+RACE_NETWORK="${RACE_NETWORK:-mainnet}"
+# The crypto backend of the hayaid image: the NU7 rules of Testnet need the zakura
+# backend, and Mainnet uses the default build (the upstream Zcash crates).
+case "${RACE_NETWORK}" in
+  mainnet) HAYAI_BACKEND=upstream P2P_PORT=8233 ;;
+  testnet) HAYAI_BACKEND=zakura P2P_PORT=18233 ;;
+  *)
+    echo "[race_deploy] error: RACE_NETWORK must be mainnet or testnet" >&2
+    exit 1
+    ;;
+esac
 RACE_DIR="${RACE_DIR:-hayai-race}"
 RACE_FIREWALL="${RACE_FIREWALL:-1}"
 RACE_CPUS="${RACE_CPUS:-0}"
 RACE_MEMORY="${RACE_MEMORY:-0}"
 RACE_LOG_LINES="${RACE_LOG_LINES:-20000}"
-ZAKURAD_METRICS_PORT=9999
-HAYAID_METRICS_PORT=19101
+ZAKURAD_METRICS_PORT="${RACE_ZAKURAD_METRICS_PORT:-9999}"
+HAYAID_METRICS_PORT="${RACE_HAYAID_METRICS_PORT:-19101}"
 EXPORTER_PORT=9100
-PROMETHEUS_ADDR="127.0.0.1:9090"
+PROMETHEUS_ADDR="${RACE_PROMETHEUS_ADDR:-127.0.0.1:9090}"
+# The data directory of zakurad in its container (docker/race/config).
+ZAKURAD_DATA="/home/zebra/.cache/zakura"
+# The scrape interval of docker/race/prometheus/prometheus.yml, in seconds.
+SCRAPE_SECONDS=5
 
 log() { echo "[race_deploy] $*"; }
 die() {
@@ -67,6 +92,10 @@ usage() {
 remote() { # HOST COMMAND
   local host=$1
   shift
+  if [[ "${host}" == local ]]; then
+    bash -c "$*"
+    return
+  fi
   ssh -o BatchMode=yes -o ConnectTimeout=20 "${host}" "$@"
 }
 
@@ -111,10 +140,11 @@ build() {
   docker build -t "${ZAKURA_IMAGE}" -f "${ZAKURA_SRC}/docker/Dockerfile" --target runtime \
     --build-arg "SHORT_SHA=${ZAKURA_COMMIT:0:8}" \
     --label "org.opencontainers.image.revision=${ZAKURA_COMMIT}" "${ZAKURA_SRC}"
-  log "building ${HAYAI_IMAGE} from hayai ${revision} (zakura crypto backend)"
+  log "building ${HAYAI_IMAGE} from hayai ${revision} (${HAYAI_BACKEND} crypto backend, ${RACE_NETWORK})"
   docker build -t "${HAYAI_IMAGE}" -f "${REPO}/docker/Dockerfile" \
-    --build-arg CRYPTO_BACKEND=zakura \
-    --label "org.opencontainers.image.revision=${revision}" "${REPO}"
+    --build-arg "CRYPTO_BACKEND=${HAYAI_BACKEND}" \
+    --label "org.opencontainers.image.revision=${revision}" \
+    --label "org.hayai.race.crypto-backend=${HAYAI_BACKEND}" "${REPO}"
 }
 
 check_hosts() {
@@ -204,7 +234,12 @@ schedule() { # HOST PROFILE IMAGE EPOCH
 
 start() {
   check_hosts
-  local zakurad_host hayaid_host host volume
+  local zakurad_host hayaid_host host volume backend
+  # An image of the other network has the wrong crypto backend.
+  backend=$(docker image inspect -f '{{index .Config.Labels "org.hayai.race.crypto-backend"}}' "${HAYAI_IMAGE}" 2>/dev/null) ||
+    die "no local image ${HAYAI_IMAGE}: run the build command first"
+  [[ "${backend}" == "${HAYAI_BACKEND}" ]] ||
+    die "${HAYAI_IMAGE} has the crypto backend '${backend}'; ${RACE_NETWORK} needs ${HAYAI_BACKEND}: run the build command with RACE_NETWORK=${RACE_NETWORK}"
   zakurad_host="${RACE_ZAKURAD_HOST:-$(host_of "${A}")}"
   hayaid_host="${RACE_HAYAID_HOST:-$(host_of "${B}")}"
   # The race starts from empty data directories.
@@ -225,13 +260,13 @@ start() {
   push_image "${A}" "${ZAKURA_IMAGE}"
   push_image "${B}" "${HAYAI_IMAGE}"
   for host in "${A}" "${B}"; do
-    remote "${host}" "cd '${RACE_DIR}' && printf '%s\n' \
+    remote "${host}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
       'RACE_ZAKURA_IMAGE=${ZAKURA_IMAGE}' 'RACE_HAYAI_IMAGE=${HAYAI_IMAGE}' \
       'RACE_CPUS=${RACE_CPUS}' 'RACE_MEMORY=${RACE_MEMORY}' >.env"
   done
 
   log "starting Prometheus and Grafana on ${C}"
-  remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' \
+  remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
     'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env &&
     mkdir -p secrets &&
     { [ -f secrets/grafana_admin_password ] ||
@@ -249,7 +284,8 @@ start() {
   epoch=$((($(date +%s) / 60 + 2) * 60))
   schedule "${A}" zakurad "${ZAKURA_IMAGE}" "${epoch}"
   schedule "${B}" hayaid "${HAYAI_IMAGE}" "${epoch}"
-  log "both nodes start at $(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) (epoch ${epoch})"
+  log "both nodes start on ${RACE_NETWORK} at $(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) (epoch ${epoch})"
+  log "the firewall of the provider must open TCP ${P2P_PORT} on ${A} and ${B}"
   log "Grafana: http://$(host_of "${C}"):3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
   log "run the status command after that time"
 }
@@ -261,7 +297,9 @@ node_status() { # HOST PROFILE CONTAINER METRICS_PORT
     docker stats --no-stream --format 'cpu={{.CPUPerc}} memory={{.MemUsage}}' $3 2>/dev/null
     docker exec race-node-exporter wget -qO- http://127.0.0.1:$4/metrics 2>/dev/null |
       grep -E '^(zcash_chain_verified_block_height|state_finalized_block_height|zcash_net_peers) '
-    docker logs --tail 1 $3 2>&1" || log "warning: no status of $1"
+    # zakurad writes its log to a file of its data volume (docker/race/config).
+    docker exec $3 tail -n 1 /home/zebra/.cache/zakura/zakurad.log 2>/dev/null ||
+      docker logs --tail 1 $3 2>&1" || log "warning: no status of $1"
 }
 
 status() {
@@ -277,41 +315,108 @@ stop() {
   log "both nodes are stopped; the data and the monitoring stay"
 }
 
+# A file of a container, also of a stopped one, on the standard output of the host.
+container_file() { # CONTAINER PATH
+  echo "docker cp '$1:$2' - | tar -xO"
+}
+
 collect_node() { # HOST CONTAINER IMAGE METRICS_PORT VERSION_COMMAND OUT
   local out=$6
   remote "$1" "cat '${RACE_DIR}/race-info.txt' '${RACE_DIR}/race-start.log' 2>/dev/null" >"${out}/$2-info.txt" || true
   remote "$1" "docker run --rm --network none '$3' $5 2>&1" >"${out}/$2-version.txt" || true
   remote "$1" "docker inspect '$2'" >"${out}/$2-inspect.json" || true
   remote "$1" "docker stats --no-stream '$2'" >"${out}/$2-stats.txt" || true
-  remote "$1" "docker logs --tail '${RACE_LOG_LINES}' '$2' 2>&1" >"${out}/$2.log" || true
   remote "$1" "docker exec race-node-exporter wget -qO- http://127.0.0.1:$4/metrics" >"${out}/$2-metrics.txt" ||
     log "$2 does not answer on its metrics port (the node is stopped)"
 }
 
+# The trace tables of a node into OUT/<container>-traces.
+collect_traces() { # HOST CONTAINER DIRECTORY OUT
+  local to="$4/$2-traces"
+  mkdir -p "${to}"
+  if remote "$1" "docker cp '$2:$3' -" >"$4/$2-traces.tar"; then
+    tar -C "${to}" --strip-components=1 -xf "$4/$2-traces.tar"
+    rm "$4/$2-traces.tar"
+  else
+    rm -f "$4/$2-traces.tar"
+    log "warning: no trace files of $2"
+  fi
+}
+
+# The value of an instant query of Prometheus, or nothing.
+prometheus_value() { # QUERY [TIME]
+  local query
+  query=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")
+  prometheus_get "/api/v1/query?query=${query}${2:+&time=$2}" |
+    sed -n 's/.*"value":\[[^,]*,"\([0-9]*\).*/\1/p' || true
+}
+
 collect() {
-  local out now first step
+  local out now first step tip from start end part
+  local -a series=() from_height=()
+  command -v python3 >/dev/null || die "collect needs python3 on this machine"
   out="${REPO}/race-results/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "${out}"
   collect_node "${A}" race-zakurad "${ZAKURA_IMAGE}" "${ZAKURAD_METRICS_PORT}" "zakurad --version" "${out}"
   collect_node "${B}" race-hayaid "${HAYAI_IMAGE}" "${HAYAID_METRICS_PORT}" "--version" "${out}"
 
-  # The trace tables of hayaid, and their rows of a block that the node did not accept.
-  if remote "${B}" "docker cp race-hayaid:/var/lib/hayai/traces -" >"${out}/hayaid-traces.tar"; then
-    tar -C "${out}" -xf "${out}/hayaid-traces.tar"
-    grep -h -E 'not_validated|"result":"invalid"|"fault"' "${out}"/traces/*.jsonl \
-      >"${out}/hayaid-fault-rows.jsonl" || true
-  else
-    log "warning: no trace files of hayaid"
-  fi
+  # hayaid writes its log to the output of the container. zakurad writes it to a file
+  # of its data volume: the last lines, and each line that the table of blocks reads.
+  remote "${B}" "docker logs --tail '${RACE_LOG_LINES}' race-hayaid 2>&1" >"${out}/race-hayaid.log" || true
+  remote "${A}" "$(container_file race-zakurad "${ZAKURAD_DATA}/zakurad.log") | tail -n '${RACE_LOG_LINES}'" \
+    >"${out}/race-zakurad.log" || log "warning: no log file of zakurad"
+  remote "${A}" "$(container_file race-zakurad "${ZAKURAD_DATA}/zakurad.log") |
+    grep -E 'downloaded and verified gossiped block|starting sync, obtaining new tips'" \
+    >"${out}/race-zakurad-block-lines.log" || log "warning: no block lines in the log of zakurad"
+
+  # The trace tables of both nodes, and the rows of hayaid of a block that it did not
+  # accept.
+  collect_traces "${B}" race-hayaid /var/lib/hayai/traces "${out}"
+  collect_traces "${A}" race-zakurad "${ZAKURAD_DATA}/traces" "${out}"
+  grep -h -E 'not_validated|"result":"invalid"|"fault"' "${out}"/race-hayaid-traces/*.jsonl \
+    >"${out}/hayaid-fault-rows.jsonl" 2>/dev/null || true
 
   # Each series of the race rules, from the first start to now, at most 5000 points.
   now=$(date +%s)
-  first=$(prometheus_get "/api/v1/query?query=min(race:start_timestamp_seconds)" |
-    sed -n 's/.*"value":\[[^,]*,"\([0-9]*\).*/\1/p') || true
+  first=$(prometheus_value "min(race:start_timestamp_seconds)")
   [[ -n "${first}" ]] || first=$((now - 86400))
-  step=$(((now - first) / 5000 + 15))
+  step=$(((now - first) / 5000 + SCRAPE_SECONDS))
   prometheus_get "/api/v1/query_range?query=%7B__name__%3D~%22race%3A.%2B%22%7D&start=${first}&end=${now}&step=${step}" \
     >"${out}/race-series.json" || log "warning: no series from Prometheus on ${C}"
+
+  # The tip phase starts when the second node reaches the tip. The table of blocks
+  # starts at the block after the lowest height of that moment. Without that moment
+  # (a Regtest dry run has no tip of a network) the table starts at the first block
+  # that zakurad got by gossip, and the series start 50000 s before now.
+  tip=$(prometheus_value "max(race:tip_timestamp_seconds) and on() (count(race:tip_timestamp_seconds) == 2)")
+  if [[ -n "${tip}" ]]; then
+    from=$(prometheus_value "min(race:block_height)" "${tip}")
+    [[ -z "${from}" ]] || from_height=(--from-height "$((from + 1))")
+    start=${tip}
+  else
+    log "the two nodes are not at the tip of a network: the table of blocks starts at the first gossiped block of zakurad"
+    start=$((now - 10000 * SCRAPE_SECONDS))
+    ((start > first)) || start=${first}
+  fi
+  # The three series of zakurad that give its contextual commit time for each block,
+  # with the scrape interval as step, at most 10000 points for each request.
+  part=0
+  while ((start < now)); do
+    end=$((start + 10000 * SCRAPE_SECONDS))
+    ((end < now)) || end=${now}
+    prometheus_get "/api/v1/query_range?query=%7B__name__%3D~%22state_contextual_total_duration_seconds_sum%7Cstate_contextual_total_duration_seconds_count%7Czcash_chain_verified_block_height%22%2Cjob%3D%22zakurad%22%7D&start=${start}&end=${end}&step=${SCRAPE_SECONDS}" \
+      >"${out}/zakurad-series-${part}.json" && series+=("${out}/zakurad-series-${part}.json")
+    start=${end}
+    part=$((part + 1))
+  done
+
+  python3 "${REPO}/scripts/race_blocks.py" \
+    --hayai-traces "${out}/race-hayaid-traces" \
+    --zakura-traces "${out}/race-zakurad-traces" \
+    --zakura-log "${out}/race-zakurad-block-lines.log" \
+    --zakura-series "${series[@]}" "${from_height[@]}" \
+    --out-csv "${out}/blocks.csv" --out-md "${out}/blocks.md" ||
+    log "warning: no table of blocks"
   log "results in ${out}"
 }
 

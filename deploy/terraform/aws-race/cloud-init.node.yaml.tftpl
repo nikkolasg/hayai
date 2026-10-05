@@ -58,12 +58,13 @@ write_files:
       else
         revision=$(git -C /opt/race/hayai rev-parse HEAD)
         docker build -t '${image}' -f /opt/race/hayai/docker/Dockerfile \
-          --build-arg CRYPTO_BACKEND=zakura \
+          --build-arg 'CRYPTO_BACKEND=${hayai_backend}' \
           --label "org.opencontainers.image.revision=$revision" /opt/race/hayai
       fi
 
       cd /opt/race/hayai/docker/race
-      printf '%s\n' 'RACE_ZAKURA_IMAGE=zakurad:race' 'RACE_HAYAI_IMAGE=hayaid:race' \
+      printf '%s\n' 'RACE_NETWORK=${network}' \
+        'RACE_ZAKURA_IMAGE=zakurad:race' 'RACE_HAYAI_IMAGE=hayaid:race' \
         'RACE_CPUS=${node_cpus}' 'RACE_MEMORY=${node_memory}' >.env
       docker compose -f compose.node.yml up -d node-exporter
       touch /var/lib/race-bootstrap.done

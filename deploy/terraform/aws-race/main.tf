@@ -24,6 +24,14 @@ locals {
   ]...)
 
   start_time = formatdate("YYYY-MM-DD hh:mm:ss", var.start_at)
+
+  # The values that follow the network.
+  network_settings = {
+    mainnet = { label = "Mainnet", p2p_port = 8233, data_volume_gb = 400, hayai_backend = "upstream" }
+    testnet = { label = "Testnet", p2p_port = 18233, data_volume_gb = 200, hayai_backend = "zakura" }
+  }
+  network        = local.network_settings[var.network]
+  data_volume_gb = coalesce(var.data_volume_gb, local.network.data_volume_gb)
 }
 
 data "aws_ami" "ubuntu" {
@@ -81,15 +89,16 @@ resource "aws_security_group" "monitor" {
   tags = { Name = "${var.name}-monitor" }
 }
 
-# Testnet P2P of both nodes (TCP 18233).
+# P2P of both nodes (TCP 8233 on Mainnet, 18233 on Testnet). zakurad runs its legacy
+# stack only (docker/race/config), which has no UDP port.
 resource "aws_vpc_security_group_ingress_rule" "p2p_ipv4" {
   for_each = local.nodes
 
   security_group_id = aws_security_group.node[each.key].id
-  description       = "Testnet P2P"
+  description       = "${local.network.label} P2P"
   ip_protocol       = "tcp"
-  from_port         = 18233
-  to_port           = 18233
+  from_port         = local.network.p2p_port
+  to_port           = local.network.p2p_port
   cidr_ipv4         = "0.0.0.0/0"
 }
 
@@ -97,22 +106,11 @@ resource "aws_vpc_security_group_ingress_rule" "p2p_ipv6" {
   for_each = local.nodes
 
   security_group_id = aws_security_group.node[each.key].id
-  description       = "Testnet P2P"
+  description       = "${local.network.label} P2P"
   ip_protocol       = "tcp"
-  from_port         = 18233
-  to_port           = 18233
+  from_port         = local.network.p2p_port
+  to_port           = local.network.p2p_port
   cidr_ipv6         = "::/0"
-}
-
-# The Zakura P2P stack of zakurad (QUIC, UDP 8234), which Testnet runs beside the legacy
-# stack. hayaid has no such port.
-resource "aws_vpc_security_group_ingress_rule" "zakura_stack" {
-  security_group_id = aws_security_group.node["zakurad"].id
-  description       = "Zakura P2P stack (QUIC)"
-  ip_protocol       = "udp"
-  from_port         = 8234
-  to_port           = 8234
-  cidr_ipv4         = "0.0.0.0/0"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "metrics" {
@@ -198,7 +196,7 @@ resource "aws_ebs_volume" "data" {
 
   availability_zone = data.aws_subnet.selected.availability_zone
   type              = "gp3"
-  size              = var.data_volume_gb
+  size              = local.data_volume_gb
   iops              = var.data_volume_iops
   throughput        = var.data_volume_throughput
   encrypted         = true
@@ -229,6 +227,8 @@ resource "aws_instance" "node" {
     start_at       = local.start_time
     node_cpus      = var.node_cpus
     node_memory    = var.node_memory
+    network        = var.network
+    hayai_backend  = local.network.hayai_backend
   })
 
   root_block_device {
@@ -268,6 +268,7 @@ resource "aws_instance" "monitor" {
     hayai_ref    = var.hayai_ref
     zakurad_host = aws_instance.node["zakurad"].private_ip
     hayaid_host  = aws_instance.node["hayaid"].private_ip
+    network      = var.network
   })
 
   root_block_device {

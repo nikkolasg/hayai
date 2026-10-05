@@ -1,18 +1,18 @@
-# zakurad of the race on Testnet (docker/race/compose.node.yml, profile zakurad).
+# zakurad of the race on Mainnet (docker/race/compose.node.yml, profile zakurad).
 # A full sync from the public network, from an empty data directory. The node only
 # observes: no miner uses it.
 #
 # Each key that is not in this file has the default of zakurad: the DNS seeders of
-# Testnet, checkpoint sync. The other node of the race is not a peer of this node.
+# Mainnet, checkpoint sync. The other node of the race is not a peer of this node.
 
 [network]
-network = "Testnet"
-listen_addr = "[::]:18233"
+network = "Mainnet"
+listen_addr = "[::]:8233"
 cache_dir = "/home/zebra/.cache/zakura"
 # The legacy stack only (the default of Mainnet). hayaid is a legacy node, and the
 # per-block rows of the comparison (legacy_peer_request.jsonl) come from this stack.
 p2p_stack = "legacy"
-# The same two limits as in hayaid.testnet.toml: 37 outbound and 75 inbound peers,
+# The same two limits as in hayaid.mainnet.toml: 37 outbound and 75 inbound peers,
 # 1 connection for each IP address.
 peerset_initial_target_size = 25
 max_connections_per_ip = 1
@@ -29,7 +29,7 @@ cache_dir = "/home/zebra/.cache/zakura"
 
 [rpc]
 # The loopback address of the host, with the cookie file.
-listen_addr = "127.0.0.1:18232"
+listen_addr = "127.0.0.1:8232"
 enable_cookie_auth = true
 cookie_dir = "/home/zebra/.cache/zakura"
 
@@ -39,8 +39,9 @@ endpoint_addr = "0.0.0.0:9999"
 
 [mining]
 # No miner uses this node. hayaid needs the key, so both files have it.
-# The address is the Regtest address of Zakura (docker/zakura-regtest-e2e/node1.toml).
-miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+# The address is the Mainnet test address of Zakura
+# (crates/zakura-rpc/src/config/mining.rs, MINER_ADDRESS).
+miner_address = "t1T92bmyoPM7PTSWUnaWnLGcxkF6Jp1AwMY"
 
 [tracing]
 # The log goes to this file and not to the output of the container: the line

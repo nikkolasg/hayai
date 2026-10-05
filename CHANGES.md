@@ -1243,3 +1243,33 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
     compares the files before and after showed it: no logger option is necessary.
   - `zakurad tip-height` writes its error to stdout and exits with the status 0, and it does
     not take `regtest` as a network. hayaid keeps stderr and the status 1.
+
+## 2026-10-05 — Comparison of zakurad and hayaid for each block (race package, version 2)
+
+- `docs/zakura-measurements.md` is the reference for what each node measures. A panel or
+  a table pairs two metrics only when that document gives the verdict CLOSE, and the
+  panel states the difference. A quantity that one node does not measure has no pair.
+- A metric with a name of Zakura must have the definition of Zakura. Three of them did
+  not (`state_finalized_block_height`, `sync_block_verify_duration_seconds`,
+  `sync_downloads_in_flight`), and `mining_template_rebuilt` counted another event.
+  Lesson: read the code point of the Zakura metric before the use of its name.
+- The block clock (`docs/hayaid.md`): one `Instant` for the reception of a block goes
+  with the block from the reader thread or the relay to the commit and to the first
+  template. A trace field and the gauge of the same quantity come from one clock reading,
+  so a test can compare them for equality.
+- Gauges of the last block have the height as a value, never as a label. Prometheus then
+  cannot join two nodes on the height: the dashboard has one panel for each node (Grafana
+  trend panel, X = height), and `scripts/race_blocks.py` makes the joined table.
+- zakurad exports summaries. Only `_sum` and `_count` are comparable with a histogram of
+  hayaid. A rule for "the value of the last block" reads the increase of both over 2
+  samples, one scrape after the commit (`race:contextual_commit_seconds:last`).
+- Lessons:
+  - Prometheus 3 has range windows that are open on the left: `[10s]` at a scrape
+    interval of 5 s has 2 samples, not 3.
+  - A series with one sample for each block needs `last_over_time(...[$__interval])` in a
+    panel. Without it a step above the scrape interval misses most samples.
+  - The Grafana xychart panel showed "Err" for each mapping in a headless browser. The
+    trend panel works with a frame that has one row for each height (join on the time,
+    then group by the height).
+  - zakurad with `[tracing] log_file` writes no log to the output of its container.
+

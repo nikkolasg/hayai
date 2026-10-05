@@ -1,11 +1,16 @@
 output "grafana_url" {
-  description = "Grafana on machine C (user admin). The dashboard is \"sync race\"."
+  description = "Grafana on machine C (user admin). docs/sync-race.md describes the dashboards."
   value       = "http://${aws_instance.monitor.public_ip}:3000"
 }
 
 output "grafana_password_command" {
   description = "Run in a shell on machine C: prints the Grafana admin password that the first boot generated."
   value       = "sudo cat /opt/race/hayai/docker/race/secrets/grafana_admin_password"
+}
+
+output "network" {
+  description = "Zcash network of both nodes."
+  value       = var.network
 }
 
 output "start_at" {

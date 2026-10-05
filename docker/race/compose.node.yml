@@ -1,4 +1,4 @@
-# One node machine of the sync race (docs/sync-race.md): one node and node-exporter.
+# One node machine of the race (docs/sync-race.md): one node and node-exporter.
 # Machine A runs the profile zakurad. Machine B runs the profile hayaid. The two nodes
 # never run on one machine.
 #
@@ -12,10 +12,12 @@
 # monitoring machine (deploy/terraform/aws-race and scripts/race_deploy.sh do it).
 #
 # Variables (a file .env beside this file, or the shell):
+#   RACE_NETWORK           mainnet (default) or testnet: the configuration of each node
 #   RACE_ZAKURA_IMAGE      zakurad image (default zakurad:race)
-#   RACE_HAYAI_IMAGE       hayaid image, zakura crypto backend (default hayaid:race)
-#   RACE_ZAKURAD_CONFIG    zakurad configuration (default config/zakurad.testnet.toml)
-#   RACE_HAYAID_CONFIG     hayaid configuration (default config/hayaid.testnet.toml)
+#   RACE_HAYAI_IMAGE       hayaid image (default hayaid:race). Mainnet: the default
+#                          build. Testnet: the zakura crypto backend (NU7 rules)
+#   RACE_ZAKURAD_CONFIG    zakurad configuration (default config/zakurad.<network>.toml)
+#   RACE_HAYAID_CONFIG     hayaid configuration (default config/hayaid.<network>.toml)
 #   RACE_CPUS              CPU limit of the node container, 0 = no limit (default 0)
 #   RACE_MEMORY            memory limit of the node container, 0 = no limit (default 0)
 #   RACE_NODE_EXPORTER_ADDR  listen address of node-exporter (default :9100)
@@ -45,8 +47,12 @@ services:
     container_name: race-zakurad
     image: ${RACE_ZAKURA_IMAGE:-zakurad:race}
     command: ["zakurad", "-c", "/etc/zakura/zakurad.toml", "start"]
+    # The label `node` of the trace rows of zakurad. With the network of the host the
+    # container has the host name of the machine without this variable.
+    environment:
+      HOSTNAME: zakurad
     volumes:
-      - ${RACE_ZAKURAD_CONFIG:-./config/zakurad.testnet.toml}:/etc/zakura/zakurad.toml:ro
+      - ${RACE_ZAKURAD_CONFIG:-./config/zakurad.${RACE_NETWORK:-mainnet}.toml}:/etc/zakura/zakurad.toml:ro
       - zakurad-data:/home/zebra/.cache/zakura
 
   hayaid:
@@ -61,7 +67,7 @@ services:
     healthcheck:
       disable: true
     volumes:
-      - ${RACE_HAYAID_CONFIG:-./config/hayaid.testnet.toml}:/etc/hayai/hayaid.toml:ro
+      - ${RACE_HAYAID_CONFIG:-./config/hayaid.${RACE_NETWORK:-mainnet}.toml}:/etc/hayai/hayaid.toml:ro
       - hayaid-data:/var/lib/hayai
 
   # CPU, memory, disk I/O and network interfaces of the machine, and the file system of

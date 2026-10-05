@@ -664,6 +664,230 @@ fn compact_relay_and_a_legacy_peer_follow_the_tip_together() {
     assert_eq!(sources("c"), ["download"; 5]);
 }
 
+/// The gauges of the last block have the values of the trace rows of that block, for a
+/// block of the node (`local`), a block of the compact relay and a downloaded block. The
+/// node writes each gauge from the clock reading of its row, so the values are equal.
+#[test]
+fn the_gauges_of_the_last_block_have_the_values_of_its_trace_rows() {
+    use crate::metrics::{hash_suffix, seconds, STAGES};
+
+    let dir = scratch();
+    let a = start_with(dir.path(), "a", true, true, METRICS);
+    let b = start_with(dir.path(), "b", false, true, METRICS);
+    let c = start_with(dir.path(), "c", false, false, METRICS);
+    b.relay.connect(addr(&a)).expect("b dials a");
+    c.relay.connect(addr(&b)).expect("c dials b");
+    wait_for("the sessions", || {
+        let established = |node: &Node| node.relay.peers().iter().any(|p| p.established);
+        established(&a) && established(&b) && established(&c)
+    });
+    for _ in 0..3 {
+        generate(&a, 1);
+        let tip = a.tip.tip();
+        wait_tip(&b, tip);
+        wait_tip(&c, tip);
+    }
+    let (height, hash) = a.tip.tip();
+    let hash = hash.to_string();
+
+    // The gauges of each node, read while it runs. The driver writes the gauges of the
+    // block at the commit, and the gauges of the template after it.
+    const BLOCK_GAUGES: [&str; 10] = [
+        "hayai_last_block_contextual_commit_seconds",
+        "hayai_last_block_hash_suffix",
+        "hayai_last_block_size_bytes",
+        "hayai_last_block_transactions",
+        "hayai_last_block_prepared_transactions{state=\"known\"}",
+        "hayai_last_block_prepared_transactions{state=\"unknown\"}",
+        "hayai_last_block_received_to_validated_seconds",
+        "hayai_last_block_validation_seconds",
+        "hayai_last_block_commit_seconds",
+        "hayai_last_block_received_to_committed_seconds",
+    ];
+    let mut read: Vec<(&str, &str, HashMap<String, f64>)> = Vec::new();
+    for (node, name, source) in [
+        (&a, "a", "local"),
+        (&b, "b", "compact"),
+        (&c, "c", "download"),
+    ] {
+        for template in ["empty", "full"] {
+            let gauge = format!("hayai_last_template_tip_height{{template=\"{template}\"}}");
+            wait_for(&format!("{gauge} of {name}"), || {
+                metric(node, &gauge) == f64::from(height)
+            });
+        }
+        assert_eq!(metric(node, "hayai_last_block_height"), f64::from(height));
+        let mut names: Vec<String> = BLOCK_GAUGES.iter().map(|g| g.to_string()).collect();
+        names.extend(
+            STAGES.iter().map(|stage| {
+                format!("hayai_last_block_validate_stage_seconds{{stage=\"{stage}\"}}")
+            }),
+        );
+        names.extend(
+            crate::metrics::SOURCES
+                .iter()
+                .map(|s| format!("hayai_last_block_source{{source=\"{s}\"}}")),
+        );
+        names.extend(
+            ["empty", "full"].iter().map(|t| {
+                format!("hayai_last_template_received_to_ready_seconds{{template=\"{t}\"}}")
+            }),
+        );
+        let values = names
+            .into_iter()
+            .map(|g| {
+                let value = metric(node, &g);
+                (g, value)
+            })
+            .collect();
+        read.push((name, source, values));
+        // The download of `c` stored each block, and the driver counted it.
+        let downloaded = if source == "download" { height } else { 0 };
+        assert_eq!(
+            metric(node, "sync_downloaded_block_count"),
+            f64::from(downloaded)
+        );
+        for histogram in [
+            "sync_block_verify_duration_seconds_count{result=\"success\"}",
+            "hayai_contextual_commit_duration_seconds_count",
+            "hayai_block_received_to_validated_seconds_count",
+            "hayai_block_receive_to_commit_seconds_count",
+        ] {
+            assert_eq!(
+                metric(node, histogram),
+                f64::from(height),
+                "{histogram} of {name}"
+            );
+        }
+    }
+    for node in [a, b, c] {
+        node.shutdown().expect("clean shutdown");
+    }
+
+    for (name, source, gauges) in read {
+        let gauge = |g: &str| gauges[g];
+        let commits = rows(dir.path(), name, "commit_state.jsonl");
+        let row = |event: &str| -> Value {
+            let found: Vec<&Value> = commits
+                .iter()
+                .filter(|row| row["event"] == event && row["hash"] == hash.as_str())
+                .collect();
+            let [row] = found[..] else {
+                panic!("{name}: {} {event} rows of the block", found.len());
+            };
+            row.clone()
+        };
+        let us = |row: &Value, field: &str| -> f64 {
+            seconds(
+                row[field]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{name}: no {field}")),
+            )
+        };
+        let (start, validated, finish) = (
+            row("commit_start"),
+            row("block_validated"),
+            row("commit_finish"),
+        );
+        assert_eq!(start["origin"], source, "{name}");
+        for s in crate::metrics::SOURCES {
+            let expected = if s == source { 1.0 } else { 0.0 };
+            assert_eq!(
+                gauge(&format!("hayai_last_block_source{{source=\"{s}\"}}")),
+                expected
+            );
+        }
+        assert_eq!(
+            gauge("hayai_last_block_hash_suffix"),
+            hash_suffix(&hash) as f64
+        );
+        assert_eq!(
+            hash_suffix(&hash),
+            u64::from_str_radix(&hash[52..], 16).expect("hex")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_size_bytes"),
+            validated["bytes"].as_f64().expect("bytes")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_transactions"),
+            validated["txs"].as_f64().expect("txs")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_prepared_transactions{state=\"known\"}"),
+            validated["known"].as_f64().expect("known")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_prepared_transactions{state=\"unknown\"}"),
+            validated["unknown"].as_f64().expect("unknown")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_received_to_validated_seconds"),
+            us(&validated, "since_received_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_validation_seconds"),
+            us(&validated, "validation_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_commit_seconds"),
+            us(&finish, "commit_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_received_to_committed_seconds"),
+            us(&finish, "received_to_commit_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_contextual_commit_seconds"),
+            us(&validated, "contextual_commit_us")
+        );
+        // The points of the clock are in order.
+        let (to_validated, to_committed) = (
+            validated["since_received_us"].as_u64().expect("an integer"),
+            finish["received_to_commit_us"]
+                .as_u64()
+                .expect("an integer"),
+        );
+        assert!(validated["validation_us"].as_u64().expect("an integer") <= to_validated);
+        // Each field is a whole number of microseconds, so the sum can be 1 below.
+        let parts = to_validated + finish["commit_us"].as_u64().expect("an integer");
+        assert!(parts <= to_committed && to_committed <= parts + 1);
+        for stage in STAGES {
+            assert_eq!(
+                gauge(&format!(
+                    "hayai_last_block_validate_stage_seconds{{stage=\"{stage}\"}}"
+                )),
+                us(&validated, &format!("{stage}_us")),
+                "{name}: stage {stage}"
+            );
+        }
+        // The first empty and the first full template on the block: the template of the
+        // next height that has the time since the reception.
+        let templates = rows(dir.path(), name, "template.jsonl");
+        for (template, event) in [("empty", "template_empty"), ("full", "template_full")] {
+            let found: Vec<&Value> = templates
+                .iter()
+                .filter(|row| {
+                    row["event"] == event
+                        && row["parent"] == hash.as_str()
+                        && !row["since_received_us"].is_null()
+                })
+                .collect();
+            let [row] = found[..] else {
+                panic!("{name}: {} timed {event} rows on the block", found.len());
+            };
+            assert_eq!(row["height"], height + 1);
+            assert_eq!(
+                gauge(&format!(
+                    "hayai_last_template_received_to_ready_seconds{{template=\"{template}\"}}"
+                )),
+                us(row, "since_received_us"),
+                "{name}: {event}"
+            );
+        }
+    }
+}
+
 /// The outpoint and the value of the coinbase output of `block`.
 fn coinbase_coin(block: &Bytes) -> (hayai_coins::OutPoint, u64) {
     let raw = parse(block);

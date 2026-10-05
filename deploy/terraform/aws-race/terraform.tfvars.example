@@ -1,5 +1,6 @@
 # Copy to terraform.tfvars and edit. Every variable is described in variables.tf.
 region      = "eu-central-1"
+network     = "mainnet" # or "testnet"
 hayai_repo  = "https://git.example/hayai.git"
 hayai_ref   = "0000000000000000000000000000000000000000" # the commit of hayai for the race
 zakura_repo = "https://git.example/zakura.git"

@@ -1256,43 +1256,51 @@ mod tests {
         }
     }
 
-    /// The files of the sync race (`docker/race/config`). The Testnet file of hayaid and
-    /// the one of zakurad give hayaid the same network, peer limits and RPC address, and
-    /// the file of zakurad has no key that hayaid does not use.
+    /// The files of the race (`docker/race/config`). For each network, the file of hayaid
+    /// and the one of zakurad give hayaid the same network, peer limits and RPC address.
+    /// The only key of the file of zakurad that hayaid does not use is the P2P stack.
     #[test]
     fn the_configs_of_the_sync_race_parse() {
         let race = |file: &str| {
             Config::parse(&fixture(&format!("../../docker/race/config/{file}")))
                 .unwrap_or_else(|e| panic!("{file}: {e}"))
         };
-        let hayaid = race("hayaid.testnet.toml");
-        let zakurad = race("zakurad.testnet.toml");
-        assert_eq!(zakurad.zakura_unused, Vec::<String>::new());
-        for config in [&hayaid, &zakurad] {
-            assert_eq!(config.network.network, NetworkKind::Testnet);
-            assert_eq!(config.network.mode, Mode::Full);
+        for (name, network, rpc) in [
+            ("mainnet", NetworkKind::Mainnet, "127.0.0.1:8232"),
+            ("testnet", NetworkKind::Testnet, "127.0.0.1:18232"),
+        ] {
+            let hayaid = race(&format!("hayaid.{name}.toml"));
+            let zakurad = race(&format!("zakurad.{name}.toml"));
             assert_eq!(
-                config.network.peer_limits(),
-                PeerLimits {
-                    outbound: Some(37),
-                    inbound: Some(75),
-                    total: 112
-                }
+                zakurad.zakura_unused,
+                ["network.p2p_stack: Zakura setting that hayaid does not use"]
             );
-            assert_eq!(config.network.max_connections_per_ip, Some(1));
-            assert!(config.network.peers.is_empty());
-            assert_eq!(config.network.initial_peers(), None, "the default seeders");
-            assert_eq!(
-                config.rpc.listen_addr,
-                Some("127.0.0.1:18232".parse().unwrap())
-            );
-            assert!(config.rpc.enable_cookie_auth);
+            for config in [&hayaid, &zakurad] {
+                assert_eq!(config.network.network, network);
+                assert_eq!(config.network.mode, Mode::Full);
+                assert_eq!(
+                    config.network.peer_limits(),
+                    PeerLimits {
+                        outbound: Some(37),
+                        inbound: Some(75),
+                        total: 112
+                    }
+                );
+                assert_eq!(config.network.max_connections_per_ip, Some(1));
+                assert!(config.network.peers.is_empty());
+                assert_eq!(config.network.initial_peers(), None, "the default seeders");
+                assert_eq!(config.rpc.listen_addr, Some(rpc.parse().unwrap()));
+                assert!(config.rpc.enable_cookie_auth);
+                let Some(_) = &config.network.zakura.trace_dir else {
+                    panic!("{name}: both nodes write trace tables");
+                };
+            }
+            assert!(!hayaid.network.compact_relay);
         }
-        assert!(!hayaid.network.compact_relay);
         let dry_run = race("hayaid.regtest.toml");
         assert_eq!(dry_run.network.network, NetworkKind::Regtest);
         assert_eq!(dry_run.network.initial_peers(), Some(&Vec::new()));
-        assert_eq!(race("zakurad.regtest.toml").zakura_unused.len(), 3);
+        assert_eq!(dry_run.network.peers, ["127.0.0.1:38233".parse().unwrap()]);
     }
 
     #[test]
