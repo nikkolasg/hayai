@@ -1,0 +1,42 @@
+[package]
+name = "hayai-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Legacy Zcash P2P codec and handshake, compact-relay negotiation, both-paths relay"
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-wire/upstream",
+    "hayai-relay/upstream",
+    "hayai-consensus/upstream",
+    "hayai-sync/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-wire/zakura",
+    "hayai-relay/zakura",
+    "hayai-consensus/zakura",
+    "hayai-sync/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-relay.workspace = true
+hayai-consensus.workspace = true
+hayai-sync.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+hex.workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "hayai-consensus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Network parameters and one rule set per network upgrade"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+hex.workspace = true
+rand.workspace = true
+# The reference implementation of the difficulty tests: big integers that share no code
+# with the `U256` of the rule.
+num-bigint = "0.4"

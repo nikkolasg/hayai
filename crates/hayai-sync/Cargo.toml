@@ -1,0 +1,28 @@
+[package]
+name = "hayai-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Header chain, block download and peer scoring"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream", "hayai-consensus/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura", "hayai-consensus/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-consensus.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Header chain: hash index, parallel context-free checks, checksums of the header log.
+hashbrown.workspace = true
+rayon.workspace = true
+crc32c.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true

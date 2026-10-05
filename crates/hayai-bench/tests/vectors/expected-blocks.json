@@ -1,0 +1,722 @@
+[
+  {
+    "vector": "main-0-000-000",
+    "stage": "transactions",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-001",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-002",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-003",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-004",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-005",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-006",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-007",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-008",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-009",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-010",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-202",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-202-bad",
+    "stage": "merkle_root",
+    "verdict": "rejected",
+    "error": "the header root differs from the root of the transaction ids",
+    "reason": "Zebra publishes the block as invalid: the coinbase height is not in the canonical encoding. The changed coinbase has another transaction id, so the merkle root rule rejects the block first",
+    "item": "none: the rejection is the expected verdict"
+  },
+  {
+    "vector": "main-0-000-395",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-000-396",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 1 inputs",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-347-499",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 14 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-347-500",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-347-501",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 1 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-415-000",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-419-199",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 167 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-419-200",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-419-201",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 7 inputs, Sprout tree frontier, Sprout anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-419-202",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 45 inputs, Sprout tree frontier, Sprout anchors, Sapling pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-434-873",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 30 inputs",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-653-599",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-653-600",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-653-601",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 4 inputs, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-902-999",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-0-903-000",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 110 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-903-001",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 57 inputs, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-949-496",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 2 inputs, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-975-066",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 5 inputs, Sapling tree frontier, Sapling anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-0-982-681",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 17 inputs, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-046-399",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-1-046-400",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-1-046-401",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 421 inputs, Sapling tree frontier, Sapling pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-180-900",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "main-1-687-106",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: Sapling tree frontier, Sapling anchors, Sapling pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-687-107",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 7 inputs, Sapling tree frontier, Sapling anchors, Orchard tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-687-108",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 3 inputs, Sapling tree frontier, Sapling anchors, Sapling pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-687-113",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 24 inputs, Sapling tree frontier, Sapling anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-687-118",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 3 inputs, Sapling tree frontier, Sapling anchors, Sapling pool value, Orchard tree frontier, Orchard anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "main-1-687-121",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 3 inputs, Sapling tree frontier, Orchard tree frontier, Orchard anchors, Orchard pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-000-000",
+    "stage": "transactions",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-001",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-002",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-003",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-004",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-005",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-006",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-007",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-008",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-009",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-000-010",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-002-259",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 1 inputs",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-141-042",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 4830 inputs, Sprout tree frontier, Sprout anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-207-499",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-207-500",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 3 inputs",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-207-501",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 1 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-279-999",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-280-000",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-280-001",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-299-187",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-299-188",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-299-189",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-299-201",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-299-202",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-583-999",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-584-000",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-584-001",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-903-799",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-903-800",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-903-801",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-0-914-678",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-0-925-483",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 2 inputs, Sprout tree frontier, Sprout anchors, Sprout pool value, Sapling tree frontier, Sapling anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-028-499",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-028-500",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-028-501",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-095-000",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-101-629",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-115-999",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-116-000",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-116-001",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-326-100",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-599-199",
+    "stage": "final_roots",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "test-1-842-421",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: Sapling pool value, Orchard tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-842-432",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 50 inputs, Sapling tree frontier",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-842-462",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 2 inputs, Orchard tree frontier, Orchard anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-842-467",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: Orchard tree frontier, Orchard anchors, Orchard pool value",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  },
+  {
+    "vector": "test-1-842-468",
+    "stage": "context",
+    "verdict": "context_free",
+    "error": "needs context: spent coins of 1 inputs, Sapling tree frontier, Orchard tree frontier, Orchard anchors",
+    "reason": "the vector set does not hold the state after the parent of the block",
+    "item": "C4 (W14): the full-history replay supplies the state"
+  }
+]

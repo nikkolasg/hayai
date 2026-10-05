@@ -1,0 +1,125 @@
+# hayaid node. Run from the docker/ directory:
+#
+#   docker compose up -d                                  # profile from .env (testnet)
+#   COMPOSE_PROFILES=mainnet docker compose up -d         # Mainnet shadow node
+#   COMPOSE_PROFILES=regtest docker compose up -d         # Regtest full node
+#   docker compose -f compose.yml -f compose.observability.yml up -d
+#
+# Profiles (one at a time):
+#   testnet  zakurad (the upstream node) and hayaid-testnet in shadow mode. hayaid-testnet
+#            shares the network namespace of zakurad and reaches it on 127.0.0.1.
+#   mainnet  zakurad-mainnet and hayaid-mainnet in shadow mode, as testnet on Mainnet. The
+#            operator chooses it: docs/hayaid.md (Mainnet) lists the consensus rules that
+#            hayaid does not enforce yet.
+#   regtest  hayaid-regtest in full mode.
+#
+# Variables (docker/.env): COMPOSE_PROFILES, HAYAI_ADMIN_BIND, HAYAI_IMAGE, ZAKURA_IMAGE.
+# docs/install.md gives the procedure; docs/deploy.md lists every file.
+
+name: hayai
+
+x-hayaid: &hayaid
+  image: ${HAYAI_IMAGE:-hayaid:local}
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+    args:
+      CRYPTO_BACKEND: ${HAYAI_CRYPTO_BACKEND:-upstream}
+  restart: unless-stopped
+  # A clean stop flushes the coins and writes a snapshot; give it time.
+  stop_grace_period: 2m
+  ulimits:
+    nofile: 65536
+
+services:
+  zakurad:
+    profiles: ["testnet"]
+    # Build it from a Zakura checkout (docs/install.md, Docker compose).
+    image: ${ZAKURA_IMAGE:-zakurad:local}
+    restart: unless-stopped
+    command: ["zakurad", "-c", "/etc/zakura/zakurad.toml", "start"]
+    volumes:
+      - ./config/zakurad.testnet.toml:/etc/zakura/zakurad.toml:ro
+      - zakurad-testnet-data:/home/zebra/.cache/zakura
+    ports:
+      - "18233:18233"                              # Zakura P2P, public
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:9999:9999"   # Zakura metrics
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:19101:19101" # hayaid-testnet metrics
+    networks:
+      default:
+        aliases: [hayaid-testnet]
+    healthcheck:
+      # /ready: Zakura is within 2 blocks of the Testnet tip.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 24h
+    stop_grace_period: 2m
+
+  zakurad-mainnet:
+    profiles: ["mainnet"]
+    image: ${ZAKURA_IMAGE:-zakurad:local}
+    restart: unless-stopped
+    command: ["zakurad", "-c", "/etc/zakura/zakurad.toml", "start"]
+    volumes:
+      - ./config/zakurad.mainnet.toml:/etc/zakura/zakurad.toml:ro
+      - zakurad-mainnet-data:/home/zebra/.cache/zakura
+    ports:
+      - "8233:8233"                                  # Zakura P2P, public
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:9999:9999"   # Zakura metrics
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:19101:19101" # hayaid-mainnet metrics
+    networks:
+      default:
+        aliases: [hayaid-mainnet]
+    healthcheck:
+      # /ready: Zakura is within 2 blocks of the Mainnet tip.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 24h
+    stop_grace_period: 2m
+
+  hayaid-mainnet:
+    <<: *hayaid
+    profiles: ["mainnet"]
+    network_mode: "service:zakurad-mainnet"
+    depends_on:
+      zakurad-mainnet:
+        condition: service_healthy
+    volumes:
+      - ./config/hayaid.mainnet.toml:/etc/hayai/hayaid.toml:ro
+      - hayaid-mainnet-data:/var/lib/hayai
+
+  hayaid-testnet:
+    <<: *hayaid
+    profiles: ["testnet"]
+    network_mode: "service:zakurad"
+    depends_on:
+      zakurad:
+        condition: service_healthy
+    volumes:
+      - ./config/hayaid.testnet.toml:/etc/hayai/hayaid.toml:ro
+      - hayaid-testnet-data:/var/lib/hayai
+
+  hayaid-regtest:
+    <<: *hayaid
+    profiles: ["regtest"]
+    volumes:
+      - ./config/hayaid.regtest.toml:/etc/hayai/hayaid.toml:ro
+      - hayaid-regtest-data:/var/lib/hayai
+    ports:
+      - "18344:18344"                                # P2P
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:18345:18345" # JSON-RPC, no authentication
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:19101:19101" # metrics
+    networks:
+      default:
+        aliases: [hayaid-regtest]
+
+volumes:
+  zakurad-testnet-data:
+  hayaid-testnet-data:
+  zakurad-mainnet-data:
+  hayaid-mainnet-data:
+  hayaid-regtest-data:

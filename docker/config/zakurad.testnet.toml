@@ -1,0 +1,34 @@
+# zakurad on Testnet: the upstream node of hayaid in shadow mode (docker/compose.yml,
+# profile testnet). The keys follow docker/default-zakura-config.toml of the Zakura
+# repository and the settings of docs/hayaid.md (Testnet shadow).
+
+[network]
+network = "Testnet"
+listen_addr = "[::]:18233"
+cache_dir = "/home/zebra/.cache/zakura"
+
+[network.zakura]
+# JSONL traces for scripts/join_traces.py.
+trace_dir = "/home/zebra/.cache/zakura/traces"
+
+[rpc]
+# Loopback of the shared network namespace: only hayaid-testnet reaches it.
+listen_addr = "127.0.0.1:18232"
+enable_cookie_auth = false
+cookie_dir = "/home/zebra/.cache/zakura"
+
+[state]
+cache_dir = "/home/zebra/.cache/zakura"
+
+[metrics]
+endpoint_addr = "0.0.0.0:9999"
+
+[health]
+# /ready gates the start of hayaid-testnet (compose healthcheck).
+listen_addr = "127.0.0.1:8080"
+enforce_on_test_networks = true
+ready_max_blocks_behind = 2
+ready_max_tip_age = "15m"
+
+[tracing]
+use_color = false

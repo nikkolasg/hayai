@@ -1,0 +1,25 @@
+[package]
+name = "hayai-blockstore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Flat append-only block files with a height index"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-wire/upstream"]
+zakura = ["hayai-wire/zakura"]
+
+[dependencies]
+hayai-wire.workspace = true
+rocksdb.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hayai-crypto.workspace = true
+tempfile.workspace = true
+hex.workspace = true

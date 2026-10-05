@@ -1,0 +1,103 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nikkolasg/hayai"
+
+[workspace.dependencies]
+# Cryptography stack. Only hayai-crypto depends on these directly; every other crate goes
+# through the facade so that the zakura-* forks can replace them (feature `zakura`).
+zcash_primitives = { version = "0.30.1", default-features = false, features = ["std"] }
+zcash_protocol = "0.10.5"
+zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
+zcash_address = "0.13.0"
+zcash_encoding = "0.4"
+zcash_script = "0.6.0"
+orchard = { version = "0.15.5", default-features = false, features = ["circuit", "multicore", "std"] }
+sapling-crypto = { version = "0.7.0", default-features = false, features = ["circuit", "multicore", "std"] }
+zcash_proofs = { version = "0.30", default-features = false, features = ["multicore"] }
+pasta_curves = "0.5.2"
+halo2_proofs = { version = "0.3.5", default-features = false, features = ["batch", "multicore"] }
+ff = "0.13"
+group = "0.13"
+subtle = "2"
+incrementalmerkletree = "0.8.2"
+equihash = "0.3"
+# ZIP 221 chain history tree. The same upstream crate under both backends (Zakura's node
+# uses it too); `primitive-types` is the type of its `subtree_total_work` field.
+zcash_history = "0.5"
+primitive-types = { version = "0.12", default-features = false }
+secp256k1 = "0.29"
+blake2b_simd = "1"
+sha2 = "0.10"
+siphasher = "1"
+# Systems
+bytes = "1"
+rayon = "1.10"
+ahash = "0.8"
+# `HashTable` (a hash index whose entries live elsewhere); the version already in the tree.
+hashbrown = { version = "0.16", default-features = false }
+# Checksums of the in-memory coins backing's snapshot and log (SSE 4.2 / ARMv8 CRC instructions).
+crc32c = "0.6"
+dashmap = "6"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+thiserror = "2"
+tracing = "0.1"
+rocksdb = { version = "0.25", default-features = false, features = ["lz4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+rand = "0.8"
+rand_core = "0.6"
+# Benchmarks
+criterion = { version = "0.5", features = ["html_reports"] }
+# Base allocator of the benchmark processes (hayai-bench feature `mimalloc`).
+mimalloc = "0.1"
+# Candidate replacements measured by `benches/structures.rs`.
+foldhash = "0.2"
+rapidhash = "4"
+papaya = "0.2"
+scc = "3"
+smallvec = "1"
+tempfile = "3"
+proptest = "1"
+# System metrics of the `sysbench` binary (rusage, wait4, perf_event_open).
+libc = "0.2"
+perf-event2 = "0.7"
+# Workspace crates. `default-features = false` so that a dependent's `upstream`/`zakura`
+# feature decides the backend instead of the dependency edge.
+hayai-crypto = { path = "crates/hayai-crypto", default-features = false }
+hayai-wire = { path = "crates/hayai-wire", default-features = false }
+hayai-consensus = { path = "crates/hayai-consensus", default-features = false }
+hayai-sinsemilla = { path = "crates/hayai-sinsemilla", default-features = false }
+hayai-trees = { path = "crates/hayai-trees", default-features = false }
+hayai-coins = { path = "crates/hayai-coins", default-features = false }
+hayai-prepared = { path = "crates/hayai-prepared", default-features = false }
+hayai-state = { path = "crates/hayai-state", default-features = false }
+hayai-validate = { path = "crates/hayai-validate", default-features = false }
+hayai-relay = { path = "crates/hayai-relay", default-features = false }
+hayai-template = { path = "crates/hayai-template", default-features = false }
+hayai-blockstore = { path = "crates/hayai-blockstore", default-features = false }
+hayai-net = { path = "crates/hayai-net", default-features = false }
+hayai-rpc = { path = "crates/hayai-rpc", default-features = false }
+hayai-trace = { path = "crates/hayai-trace" }
+hayai-sync = { path = "crates/hayai-sync", default-features = false }
+# hayaid: configuration file, signal handling, log output.
+toml = "0.8"
+signal-hook = "0.3"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "std"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = 1
+
+[profile.bench]
+inherits = "release"

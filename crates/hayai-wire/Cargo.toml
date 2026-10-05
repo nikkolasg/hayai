@@ -1,0 +1,26 @@
+[package]
+name = "hayai-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Retained-bytes block and transaction model, ids, merkle roots"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream"]
+zakura = ["hayai-crypto/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+bytes.workspace = true
+rayon.workspace = true
+sha2.workspace = true
+blake2b_simd.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+proptest.workspace = true
+hex.workspace = true

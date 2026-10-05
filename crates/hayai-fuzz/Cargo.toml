@@ -1,0 +1,76 @@
+[package]
+name = "hayai-fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.97"
+license.workspace = true
+repository.workspace = true
+description = "Differential fuzzer of hayai against the Zakura library code, in one process"
+publish = false
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-consensus/upstream",
+    "hayai-wire/upstream",
+    "hayai-coins/upstream",
+    "hayai-prepared/upstream",
+    "hayai-state/upstream",
+    "hayai-validate/upstream",
+    "hayai-template/upstream",
+    "hayai-bench/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-consensus/zakura",
+    "hayai-wire/zakura",
+    "hayai-coins/zakura",
+    "hayai-prepared/zakura",
+    "hayai-state/zakura",
+    "hayai-validate/zakura",
+    "hayai-template/zakura",
+    "hayai-bench/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-consensus.workspace = true
+hayai-wire.workspace = true
+hayai-coins.workspace = true
+hayai-prepared.workspace = true
+hayai-state.workspace = true
+hayai-validate.workspace = true
+hayai-template.workspace = true
+# The generated fixture blocks (real proofs and signatures) are the seeds.
+hayai-bench = { path = "../hayai-bench", default-features = false }
+bytes.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+sha2.workspace = true
+# RIPEMD-160 of a redeem script, for the pay-to-script-hash cases.
+ripemd = "0.1"
+thiserror.workspace = true
+tempfile.workspace = true
+# The reference: the Zakura library crates that link into this process, under their own
+# library names, so the copied files of `src/reference/zakura_consensus` need no change of
+# their paths. zakura-consensus and zakura-state do not link: their rocksdb 0.24 and the
+# rocksdb 0.25 of hayai-coins both link the native library `rocksdb`, and cargo allows
+# one. `src/reference/zakura_consensus` holds a copy of the check functions.
+zakura-chain = "9.0.0"
+zakura-header-chain = "4.0.0"
+zakura-script = "4.0.0"
+zk_orchard = { package = "zakura-orchard", version = "=2.2.0" }
+zk_protocol = { package = "zakura-protocol", version = "=2.2.0" }
+# The script types of zakura-chain (the 0.4 line), for the copy of the transaction checks.
+zcash_script = "0.4.5"
+chrono = { version = "0.4.40", default-features = false }
+# The random source of the reference Orchard batch validator (zakura-orchard takes a
+# rand 0.10 generator).
+zk_rand = { package = "rand", version = "0.10" }
+
+[[bin]]
+name = "hayai-fuzz"
+path = "src/main.rs"

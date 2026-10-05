@@ -1,0 +1,28 @@
+[package]
+name = "hayai-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Compact block relay protocol: short ids, batch lanes, reconstruction"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream", "hayai-consensus/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura", "hayai-consensus/zakura"]
+
+[dependencies]
+hayai-wire.workspace = true
+hayai-crypto.workspace = true
+hayai-consensus.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+siphasher.workspace = true
+blake2b_simd.workspace = true
+ahash.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+proptest.workspace = true

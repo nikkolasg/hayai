@@ -1,0 +1,40 @@
+[package]
+name = "hayai-validate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bulk block validation pipeline producing a state layer"
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-consensus/upstream",
+    "hayai-wire/upstream",
+    "hayai-coins/upstream",
+    "hayai-prepared/upstream",
+    "hayai-state/upstream",
+]
+zakura = [
+    "hayai-consensus/zakura",
+    "hayai-wire/zakura",
+    "hayai-coins/zakura",
+    "hayai-prepared/zakura",
+    "hayai-state/zakura",
+]
+
+[dependencies]
+hayai-consensus.workspace = true
+hayai-wire.workspace = true
+hayai-coins.workspace = true
+hayai-prepared.workspace = true
+hayai-state.workspace = true
+bytes.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+tempfile.workspace = true

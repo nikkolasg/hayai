@@ -1,0 +1,29 @@
+[package]
+name = "hayai-coins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Outpoint-keyed coins and nullifier stores with an in-memory cache and batched flush"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream"]
+zakura = ["hayai-crypto/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+rocksdb.workspace = true
+ahash.workspace = true
+crc32c.workspace = true
+hashbrown.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rand.workspace = true
+tempfile.workspace = true

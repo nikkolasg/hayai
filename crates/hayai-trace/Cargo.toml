@@ -1,0 +1,16 @@
+[package]
+name = "hayai-trace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Non-blocking JSONL trace writer in the row format of Zakura's zakura-jsonl-trace"
+
+[dependencies]
+crossbeam-channel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

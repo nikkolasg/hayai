@@ -1,0 +1,143 @@
+# Full checks: both cryptography backends with every test, the minimum Rust version, the
+# benchmarks and the image build. The tests include the slow tests, the comparisons of
+# hayai-bench with Zakura and Zebra (its `baselines` feature) and the hayai-fuzz smoke run.
+# Start it by hand before a release. No job uses secrets or pushes.
+name: Full
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # docker/Dockerfile pins the same toolchain: the lowest that builds the whole workspace
+  # (zakura-chain 9.0.0 of hayai-bench needs 1.97). The node crates build with the
+  # workspace `rust-version`, which the msrv job checks.
+  RUST_TOOLCHAIN: "1.97.1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # The release profile keeps debug info for profiling; CI does not need it.
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+
+jobs:
+  clippy:
+    name: clippy (${{ matrix.backend }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: upstream
+            flags: ""
+          # `baselines` is a default feature of hayai-bench only, so the Zakura backend
+          # names it.
+          - backend: zakura
+            flags: --no-default-features --features zakura,baselines
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy && rustup default "$RUST_TOOLCHAIN"
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ matrix.backend }}
+      - run: cargo clippy --workspace --all-targets --locked ${{ matrix.flags }} -- -D warnings
+
+  test:
+    name: test (${{ matrix.backend }}, release)
+    runs-on: ubuntu-24.04
+    # Measured on 2026-10-04 (32 threads): a cold release build is about 3,900 CPU-s and a
+    # cold test run (fixture generation included) about 1,700 CPU-s, so about 35 minutes
+    # on the 4 vCPU of a hosted runner. One job per backend stays below 60 minutes.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: upstream
+            flags: ""
+          # `baselines` is a default feature of hayai-bench only, so the Zakura backend
+          # names it.
+          - backend: zakura
+            flags: --no-default-features --features zakura,baselines
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && rustup default "$RUST_TOOLCHAIN"
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.backend }}
+      # Fixtures are generated on first use (real signatures and Orchard proofs). The cache
+      # is keyed on the generator.
+      - uses: actions/cache@v4
+        with:
+          path: bench-fixtures
+          key: fixtures-${{ hashFiles('crates/hayai-bench/src/fixtures.rs') }}
+      - run: cargo test --workspace --release --locked ${{ matrix.flags }} --no-run
+      - run: cargo test --workspace --release --locked ${{ matrix.flags }}
+
+  msrv:
+    name: msrv (${{ matrix.backend }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: upstream
+            flags: ""
+          - backend: zakura
+            flags: --no-default-features --features zakura
+    steps:
+      - uses: actions/checkout@v4
+      # The workspace rust-version (1.91) without hayai-bench and hayai-fuzz, which need 1.97.
+      - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ matrix.backend }}
+      - run: cargo check --workspace --exclude hayai-bench --exclude hayai-fuzz --locked ${{ matrix.flags }}
+
+  bench:
+    name: benches compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && rustup default "$RUST_TOOLCHAIN"
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+      - run: cargo bench --no-run --locked -p hayai-bench
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose files
+        working-directory: docker
+        run: |
+          COMPOSE_PROFILES=testnet docker compose -f compose.yml -f compose.observability.yml config -q
+          COMPOSE_PROFILES=mainnet docker compose -f compose.yml -f compose.observability.yml config -q
+          COMPOSE_PROFILES=regtest docker compose -f compose.yml -f compose.observability.yml config -q
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          tags: hayaid:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

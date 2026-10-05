@@ -1,0 +1,29 @@
+[package]
+name = "hayai-template"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Live block template with incremental updates and push delivery"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream", "hayai-consensus/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura", "hayai-consensus/zakura"]
+
+[dependencies]
+hayai-wire.workspace = true
+hayai-consensus.workspace = true
+hayai-crypto.workspace = true
+blake2b_simd.workspace = true
+bytes.workspace = true
+crossbeam-channel.workspace = true
+ahash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand.workspace = true

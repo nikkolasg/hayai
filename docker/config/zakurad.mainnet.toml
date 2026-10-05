@@ -1,0 +1,33 @@
+# zakurad on Mainnet: the upstream node of hayaid in shadow mode (docker/compose.yml,
+# profile mainnet). The keys follow docker/default-zakura-config.toml of the Zakura
+# repository and the settings of docs/hayaid.md (Shadow mode).
+
+[network]
+network = "Mainnet"
+listen_addr = "[::]:8233"
+cache_dir = "/home/zebra/.cache/zakura"
+
+[network.zakura]
+# JSONL traces for scripts/join_traces.py.
+trace_dir = "/home/zebra/.cache/zakura/traces"
+
+[rpc]
+# Loopback of the shared network namespace: only hayaid-mainnet reaches it.
+listen_addr = "127.0.0.1:8232"
+enable_cookie_auth = false
+cookie_dir = "/home/zebra/.cache/zakura"
+
+[state]
+cache_dir = "/home/zebra/.cache/zakura"
+
+[metrics]
+endpoint_addr = "0.0.0.0:9999"
+
+[health]
+# /ready gates the start of hayaid-mainnet (compose healthcheck).
+listen_addr = "127.0.0.1:8080"
+ready_max_blocks_behind = 2
+ready_max_tip_age = "15m"
+
+[tracing]
+use_color = false

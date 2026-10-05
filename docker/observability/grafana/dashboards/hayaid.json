@@ -1,0 +1,1789 @@
+{
+  "uid": "hayaid",
+  "title": "hayaid",
+  "description": "hayaid node: chain, validation, prepared store, relay, shadow mode, host, process, coins cache",
+  "tags": [
+    "hayai"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "network",
+        "label": "network",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "hayai-prometheus"
+        },
+        "query": {
+          "query": "label_values(up{job=\"hayaid\"}, network)",
+          "refId": "network"
+        },
+        "definition": "label_values(up{job=\"hayaid\"}, network)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Chain",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Committed height",
+      "description": "state_memory_best_committed_block_height",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "max(state_memory_best_committed_block_height{job=\"hayaid\", network=~\"$network\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Upstream height",
+      "description": "Committed height of zakurad (testnet profile)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "max(state_memory_best_committed_block_height{job=\"zakurad\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Blocks per minute",
+      "description": "Validated blocks per minute",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(sync_block_verify_duration_seconds_count{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])) * 60",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Peers",
+      "description": "hayai_peers",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(hayai_peers{job=\"hayaid\", network=~\"$network\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Blocks rejected",
+      "description": "hayai_blocks_rejected_total since the start of the process",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(hayai_blocks_rejected_total{job=\"hayaid\", network=~\"$network\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Shadow disagreements",
+      "description": "hayai_shadow_disagreements_total. The node stops after the first one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(hayai_shadow_disagreements_total{job=\"hayaid\", network=~\"$network\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Tip height",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "state_memory_best_committed_block_height{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "committed {{instance}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "zcash_chain_verified_block_height{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "verified {{instance}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "state_memory_best_committed_block_height{job=\"zakurad\"}",
+          "legendFormat": "zakurad",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Blocks per minute",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum by (instance) (rate(sync_block_verify_duration_seconds_count{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])) * 60",
+          "legendFormat": "accepted {{instance}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum by (instance) (rate(sync_block_verify_duration_seconds_count{job=\"hayaid\", network=~\"$network\", result=\"failure\"}[$__rate_interval])) * 60",
+          "legendFormat": "rejected {{instance}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 10,
+      "title": "Validation",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Block validation time",
+      "description": "sync_block_verify_duration_seconds{result=\"success\"}",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(sync_block_verify_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(sync_block_verify_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(sync_block_verify_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(sync_block_verify_duration_seconds_sum{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval])) / sum(rate(sync_block_verify_duration_seconds_count{job=\"hayaid\", network=~\"$network\", result=\"success\"}[$__rate_interval]))",
+          "legendFormat": "mean",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Validation stage durations (mean)",
+      "description": "hayai_validate_stage_duration_seconds by stage (the Timings of hayai-validate)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum by (stage) (rate(hayai_validate_stage_duration_seconds_sum{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) / sum by (stage) (rate(hayai_validate_stage_duration_seconds_count{job=\"hayaid\", network=~\"$network\"}[$__rate_interval]))",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Commit duration",
+      "description": "hayai_commit_duration_seconds: commit_start to commit_finish",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(hayai_commit_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(hayai_commit_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])))",
+          "legendFormat": "p90",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 14,
+      "title": "Validation stage durations (p90)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, stage) (rate(hayai_validate_stage_duration_seconds_bucket{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])))",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 15,
+      "title": "Prepared store and template",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 16,
+      "title": "Prepared store size",
+      "description": "zcash_mempool_size_transactions",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "zcash_mempool_size_transactions{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "transactions {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Prepared store bytes",
+      "description": "zcash_mempool_size_bytes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 31
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "zcash_mempool_size_bytes{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 18,
+      "title": "Prepared store hit rate",
+      "description": "Block transactions served by the prepared store / all block transactions",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_prepared_store_hits_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) / (sum(rate(hayai_prepared_store_hits_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) + sum(rate(hayai_prepared_store_misses_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])))",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 19,
+      "title": "Template rebuilds per minute",
+      "description": "mining_template_rebuilt. The template latency is in the row Process, coins cache and templates.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(mining_template_rebuilt{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "rebuilds",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "Relay",
+      "description": "Relay::metrics() counters, per minute",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_relay_forwarded_on_ids_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "forwarded on ids",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_relay_forwarded_without_auth_root_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "forwarded without auth root",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_relay_forwarded_after_body_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "forwarded after body",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_relay_root_mismatches_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "root mismatches",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 21,
+      "title": "Shadow mode and traces",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "Upstream verdicts per minute",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_agreements_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "agreements",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_disagreements_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "disagreements",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 23,
+      "title": "Trust limits per minute",
+      "description": "docs/hayaid.md, Trust limits",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_trusted_coins_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "trusted coins",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_trusted_nullifiers_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "trusted nullifiers",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_trusted_anchors_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "trusted anchors",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_shadow_trusted_bits_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "trusted bits",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum(rate(hayai_block_commitments_unchecked_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])) * 60",
+          "legendFormat": "commitments unchecked",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 24,
+      "title": "Trace rows dropped",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "sum by (table) (increase(hayai_trace_dropped_rows_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval]))",
+          "legendFormat": "{{table}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 25,
+      "title": "Host",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "CPU",
+      "description": "Host CPU (node-exporter). hayaid exports no process metrics yet.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 57
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "1 - avg(rate(node_cpu_seconds_total{job=\"node\", mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "busy",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 27,
+      "title": "Memory",
+      "description": "Host memory (node-exporter)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 57
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "node_memory_MemTotal_bytes{job=\"node\"} - node_memory_MemAvailable_bytes{job=\"node\"}",
+          "legendFormat": "used",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "node_memory_MemTotal_bytes{job=\"node\"}",
+          "legendFormat": "total",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 28,
+      "title": "Disk free",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 57
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "node_filesystem_avail_bytes{job=\"node\", fstype!~\"tmpfs|ramfs|overlay|squashfs|nsfs\"} / node_filesystem_size_bytes{job=\"node\", fstype!~\"tmpfs|ramfs|overlay|squashfs|nsfs\"}",
+          "legendFormat": "{{mountpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 30,
+      "title": "Process, coins cache and templates",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Process memory",
+      "description": "process_resident_memory_bytes of hayaid",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "process_resident_memory_bytes{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "resident",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 32,
+      "title": "Process CPU",
+      "description": "process_cpu_seconds_total of hayaid, in CPU cores",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "rate(process_cpu_seconds_total{job=\"hayaid\", network=~\"$network\"}[$__rate_interval])",
+          "legendFormat": "cores",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 33,
+      "title": "Coins cache memory",
+      "description": "hayai_coins_cache_bytes: the coins cache of the finalized state",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "hayai_coins_cache_bytes{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "cache",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 34,
+      "title": "Coins",
+      "description": "hayai_coins_cache_entries (cache entries) and hayai_coins_store_coins (coins of the memory backing)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 74
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "hayai_coins_cache_entries{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "cache entries",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "hayai_coins_store_coins{job=\"hayaid\", network=~\"$network\"}",
+          "legendFormat": "memory backing",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 35,
+      "title": "Template latency",
+      "description": "hayai_template_latency_seconds: tip change to the published empty and full template",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 74
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(hayai_template_latency_seconds_bucket{job=\"hayaid\", network=~\"$network\", template=\"full\"}[$__rate_interval])))",
+          "legendFormat": "full p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(hayai_template_latency_seconds_bucket{job=\"hayaid\", network=~\"$network\", template=\"full\"}[$__rate_interval])))",
+          "legendFormat": "full p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(hayai_template_latency_seconds_bucket{job=\"hayaid\", network=~\"$network\", template=\"empty\"}[$__rate_interval])))",
+          "legendFormat": "empty p50",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(hayai_template_latency_seconds_bucket{job=\"hayaid\", network=~\"$network\", template=\"empty\"}[$__rate_interval])))",
+          "legendFormat": "empty p90",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 36,
+      "title": "Build",
+      "description": "hayai_build_info",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hayai-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hayai-prometheus"
+          },
+          "expr": "hayai_build_info{job=\"hayaid\", network=~\"$network\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "Value": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

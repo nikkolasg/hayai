@@ -1,0 +1,114 @@
+[package]
+name = "hayai-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cryptography backend facade: upstream Zcash crates or the zakura-* forks"
+
+[features]
+default = ["upstream"]
+# Upstream Zcash crates (librustzcash, orchard, pasta_curves, halo2, ff/group 0.13).
+upstream = [
+    "dep:orchard",
+    "dep:sapling-crypto",
+    "dep:zcash_primitives",
+    "dep:zcash_protocol",
+    "dep:zcash_transparent",
+    "dep:zcash_address",
+    "dep:zcash_proofs",
+    "dep:bellman",
+    "dep:bls12_381",
+    "dep:pasta_curves",
+    "dep:halo2_proofs",
+    "dep:ff",
+    "dep:group",
+    "dep:equihash",
+    "dep:sinsemilla",
+    "dep:jubjub",
+    "dep:rand",
+    "dep:rand_core",
+]
+# The zakura-core/common forks of the same crates (ff/group 0.14, rand 0.10).
+zakura = [
+    "dep:zk_orchard",
+    "dep:zk_sapling",
+    "dep:zk_primitives",
+    "dep:zk_protocol",
+    "dep:zk_transparent",
+    "dep:zk_address",
+    "dep:zk_proofs",
+    "dep:zk_bellman",
+    "dep:zk_bls12_381",
+    "dep:zk_pasta",
+    "dep:zk_halo2",
+    "dep:zk_ff",
+    "dep:zk_group",
+    "dep:zk_equihash",
+    "dep:zk_sinsemilla",
+    "dep:zk_jubjub",
+    "dep:zk_rand",
+    "dep:zk_rand_core",
+]
+# `sinsemilla::HashDomain::from_Q`, for tests that need a reference hash for a chosen Q.
+test-dependencies = ["sinsemilla?/test-dependencies", "zk_sinsemilla?/test-dependencies"]
+
+[dependencies]
+# Identical under both backends.
+zcash_encoding.workspace = true
+zcash_script.workspace = true
+# The 0.4 line is what `zcash_transparent` (either fork) builds its `Script` type from.
+zcash_script04 = { package = "zcash_script", version = "0.4", default-features = false }
+subtle.workspace = true
+incrementalmerkletree.workspace = true
+zcash_history.workspace = true
+# Note decryption of ZIP 213. Both backends build on this crate.
+zcash_note_encryption = "0.4"
+primitive-types.workspace = true
+# Ed25519 with the ZIP 215 rules, for the JoinSplit signature. Zakura's node uses the same
+# crate.
+ed25519-zebra = "4.2"
+
+# Upstream backend.
+orchard = { workspace = true, optional = true }
+sapling-crypto = { workspace = true, optional = true }
+zcash_primitives = { workspace = true, optional = true }
+zcash_protocol = { workspace = true, optional = true }
+zcash_transparent = { workspace = true, optional = true }
+zcash_address = { workspace = true, optional = true }
+zcash_proofs = { workspace = true, optional = true }
+# The Groth16 types of `zcash_proofs::sprout::verify_proof` (the versions that zcash_proofs
+# builds on).
+bellman = { version = "0.14", default-features = false, features = ["groth16"], optional = true }
+bls12_381 = { version = "0.8", optional = true }
+pasta_curves = { workspace = true, optional = true }
+halo2_proofs = { workspace = true, optional = true }
+ff = { workspace = true, optional = true }
+group = { workspace = true, optional = true }
+equihash = { workspace = true, optional = true }
+sinsemilla = { version = "0.1", optional = true }
+jubjub = { version = "0.10", optional = true }
+rand = { workspace = true, optional = true }
+rand_core = { workspace = true, optional = true }
+
+# Zakura backend. The forks keep the upstream library names, so they are renamed here and
+# re-exported under the upstream names in lib.rs.
+zk_orchard = { package = "zakura-orchard", version = "=2.2.0", default-features = false, features = ["circuit", "multicore", "std"], optional = true }
+zk_sapling = { package = "zakura-sapling-crypto", version = "=2.2.0", default-features = false, features = ["circuit", "multicore", "std"], optional = true }
+zk_primitives = { package = "zakura-primitives", version = "=2.2.0", default-features = false, features = ["std"], optional = true }
+zk_protocol = { package = "zakura-protocol", version = "=2.2.0", optional = true }
+zk_transparent = { package = "zakura-transparent", version = "=2.2.0", features = ["transparent-inputs"], optional = true }
+zk_address = { package = "zakura-address", version = "=2.2.0", optional = true }
+zk_proofs = { package = "zakura-proofs", version = "=2.2.0", default-features = false, features = ["multicore"], optional = true }
+zk_bellman = { package = "zakura-bellman", version = "=2.2.0", default-features = false, features = ["groth16"], optional = true }
+zk_bls12_381 = { package = "zakura-bls12-381", version = "=2.2.0", optional = true }
+zk_pasta = { package = "zakura-pasta-curves", version = "=2.2.0", optional = true }
+zk_halo2 = { package = "zakura-halo2-proofs", version = "=2.2.0", default-features = false, features = ["batch", "multicore"], optional = true }
+zk_ff = { package = "ff", version = "0.14", optional = true }
+zk_group = { package = "group", version = "0.14", optional = true }
+zk_equihash = { package = "zakura-equihash", version = "=2.2.0", optional = true }
+zk_sinsemilla = { package = "zakura-sinsemilla", version = "=2.2.0", optional = true }
+zk_jubjub = { package = "zakura-jubjub", version = "=2.2.0", optional = true }
+zk_rand = { package = "rand", version = "0.10", optional = true }
+zk_rand_core = { package = "rand_core", version = "0.10", optional = true }

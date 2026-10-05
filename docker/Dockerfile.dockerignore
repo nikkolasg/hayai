@@ -1,0 +1,13 @@
+# Build context of docker/Dockerfile: the Cargo workspace.
+**/target
+target*
+bench-fixtures
+bench-results
+.git
+.github
+.beads
+.claude
+deploy
+docker
+docs
+zip

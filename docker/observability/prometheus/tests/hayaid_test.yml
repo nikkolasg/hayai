@@ -1,0 +1,134 @@
+# promtool test rules tests/hayaid_test.yml (from docker/observability/prometheus).
+rule_files:
+  - ../rules/hayaid.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      # Testnet node: the tip stops at 100 after 5 minutes; 0 peers from minute 10.
+      - series: 'state_memory_best_committed_block_height{job="hayaid", network="testnet", instance="hayaid-testnet"}'
+        values: '96 97 98 99 100+0x60'
+      - series: 'hayai_peers{job="hayaid", network="testnet", instance="hayaid-testnet"}'
+        values: '1x9 0x50'
+      - series: 'up{job="hayaid", network="testnet", instance="hayaid-testnet"}'
+        values: '1x60'
+      # Regtest node: no blocks and no peers; the stall and no-peers rules must not apply.
+      - series: 'state_memory_best_committed_block_height{job="hayaid", network="regtest", instance="hayaid-regtest"}'
+        values: '0x60'
+      - series: 'hayai_peers{job="hayaid", network="regtest", instance="hayaid-regtest"}'
+        values: '0x60'
+      # One disagreement at minute 3, then the process stops (the series ends).
+      - series: 'hayai_shadow_disagreements_total{job="hayaid", network="testnet", instance="hayaid-testnet"}'
+        values: '0 0 0 1'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HayaidTipStalled
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: HayaidTipStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: hayaid
+              network: testnet
+              instance: hayaid-testnet
+            exp_annotations:
+              summary: "hayaid tip did not advance for 30 minutes"
+              description: "The committed height of hayaid-testnet did not change in 30 minutes. Check the upstream node and the peers."
+      - eval_time: 20m
+        alertname: HayaidNoPeers
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hayaid
+              network: testnet
+              instance: hayaid-testnet
+            exp_annotations:
+              summary: "hayaid has no peers"
+              description: "hayaid-testnet has no connected peer for 5 minutes."
+      - eval_time: 30m
+        alertname: HayaidShadowDisagreement
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hayaid
+              network: testnet
+              instance: hayaid-testnet
+            exp_annotations:
+              summary: "hayaid disagrees with the upstream node"
+              description: "A block that upstream accepted failed in hayai, or the tree roots differ. Read the upstream_verdict rows in commit_state.jsonl."
+      - eval_time: 20m
+        alertname: HayaidAbsent
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="hayaid", network="regtest", instance="hayaid-regtest"}'
+        values: '1 1 0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HayaidDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hayaid
+              network: regtest
+              instance: hayaid-regtest
+            exp_annotations:
+              summary: "hayaid hayaid-regtest does not answer on /metrics"
+              description: "The scrape of hayaid-regtest fails for 2 minutes. Read the container or journal log."
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node", instance="node-exporter:9100"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HayaidAbsent
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hayaid
+            exp_annotations:
+              summary: "No hayaid target"
+              description: "Prometheus finds none of hayaid-testnet, hayaid-mainnet and hayaid-regtest. The node container is stopped or was not started."
+
+  - interval: 1m
+    input_series:
+      - series: 'process_resident_memory_bytes{job="hayaid", network="testnet", instance="hayaid-testnet"}'
+        values: '9e9x30'
+      - series: 'node_memory_MemTotal_bytes{job="node", instance="node-exporter:9100"}'
+        values: '10e9x30'
+      # Every observation of the full template is slower than 1 s.
+      - series: 'hayai_template_latency_seconds_bucket{job="hayaid", network="testnet", instance="hayaid-testnet", template="full", le="1"}'
+        values: '0x40'
+      - series: 'hayai_template_latency_seconds_bucket{job="hayaid", network="testnet", instance="hayaid-testnet", template="full", le="10"}'
+        values: '0+10x40'
+      - series: 'hayai_template_latency_seconds_bucket{job="hayaid", network="testnet", instance="hayaid-testnet", template="full", le="+Inf"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HayaidMemoryHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: hayaid
+              network: testnet
+              instance: hayaid-testnet
+            exp_annotations:
+              summary: "hayaid uses more than 80 % of the host memory"
+              description: "The resident memory of hayaid-testnet stays above 80 % of the host memory for 10 minutes."
+      - eval_time: 5m
+        alertname: HayaidMemoryHigh
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: HayaidTemplateSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              network: testnet
+            exp_annotations:
+              summary: "p90 time from a tip change to the full template is above 1 s"
+              description: "Miners work on a stale template for that time after each block on testnet."

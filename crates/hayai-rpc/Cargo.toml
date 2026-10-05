@@ -1,0 +1,35 @@
+[package]
+name = "hayai-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "zcashd-compatible getblocktemplate and submitblock over JSON-RPC, served from the live template"
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-wire/upstream",
+    "hayai-consensus/upstream",
+    "hayai-template/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-wire/zakura",
+    "hayai-consensus/zakura",
+    "hayai-template/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-consensus.workspace = true
+hayai-template.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

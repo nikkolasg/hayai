@@ -1,0 +1,46 @@
+# cargo-deny configuration (cargo deny check). CI runs it on every push.
+
+[graph]
+# Both crypto backends: the upstream and zakura features are exclusive at compile time,
+# but the dependency graph of both is checked.
+all-features = true
+# hayai-bench feature `multitable` (benches/structures.rs only, off by default): a git
+# dependency without a license. It never reaches hayaid. bd hayai-9aw.
+exclude = ["multitable"]
+
+[advisories]
+version = 2
+# RustSec advisory database (the default source). Every finding fails the check; an
+# accepted advisory goes into `ignore` with its id and a reason.
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+
+# MPL-2.0 (file-level copyleft), accepted for these crates only.
+[[licenses.exceptions]]
+# dirs-sys, through zakura-chain of hayai-bench.
+crate = "option-ext"
+allow = ["MPL-2.0"]
+
+[bans]
+# The two crypto stacks and the rand lines (0.8 and 0.10) duplicate many crates by design.
+multiple-versions = "allow"
+# The workspace crates depend on each other by path without a version.
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

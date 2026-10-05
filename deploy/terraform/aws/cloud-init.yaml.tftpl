@@ -1,0 +1,107 @@
+#cloud-config
+# Rendered by main.tf. First boot: install Docker, then hayai-bootstrap.service mounts the
+# data volume on /var/lib/docker, clones and builds the images and enables
+# hayai-stack.service, which runs docker/compose.yml with docker/compose.observability.yml.
+
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - docker-buildx
+  - git
+  - openssl
+
+write_files:
+  - path: /usr/local/sbin/hayai-bootstrap
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      network='${network}'
+
+      # Data volume (gp3), formatted on first use and mounted on /var/lib/docker.
+      dev=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}
+      for _ in $(seq 1 120); do
+        [ -e "$dev" ] && break
+        sleep 5
+      done
+      [ -e "$dev" ] || { echo "hayai-bootstrap: data volume $dev did not appear" >&2; exit 1; }
+      blkid "$dev" >/dev/null || mkfs.ext4 -L hayai-data "$dev"
+      if ! grep -q '^LABEL=hayai-data ' /etc/fstab; then
+        echo 'LABEL=hayai-data /var/lib/docker ext4 defaults,nofail 0 2' >>/etc/fstab
+      fi
+      if ! mountpoint -q /var/lib/docker; then
+        systemctl stop docker.socket docker.service
+        mkdir -p /var/lib/docker
+        mount /var/lib/docker
+        systemctl start docker.service
+      fi
+
+      # Sources.
+      install -d -m 0755 /opt/hayai
+      if [ ! -d /opt/hayai/src/.git ]; then
+        git clone '${hayai_repo}' /opt/hayai/src
+      fi
+      git -C /opt/hayai/src checkout '${hayai_ref}'
+      if [ "$network" != regtest ]; then
+        if [ ! -d /opt/hayai/zakura/.git ]; then
+          git clone '${zakura_repo}' /opt/hayai/zakura
+        fi
+        git -C /opt/hayai/zakura checkout '${zakura_ref}'
+        docker build -t zakurad:local -f /opt/hayai/zakura/docker/Dockerfile \
+          --target runtime /opt/hayai/zakura
+      fi
+
+      # Grafana admin password, generated once.
+      secrets=/opt/hayai/src/docker/secrets
+      install -d -m 0700 "$secrets"
+      if [ ! -f "$secrets/grafana_admin_password" ]; then
+        (umask 022 && openssl rand -base64 24 >"$secrets/grafana_admin_password")
+      fi
+
+      systemctl enable --now --no-block hayai-stack.service
+      touch /var/lib/hayai-bootstrap.done
+
+  - path: /etc/systemd/system/hayai-bootstrap.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=hayai first-boot setup (data volume, sources, images)
+      After=network-online.target docker.service
+      Wants=network-online.target
+      ConditionPathExists=!/var/lib/hayai-bootstrap.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/hayai-bootstrap
+      TimeoutStartSec=infinity
+
+  - path: /etc/systemd/system/hayai-stack.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=hayai compose stack (${network})
+      Requires=docker.service
+      After=docker.service network-online.target
+      RequiresMountsFor=/var/lib/docker
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/hayai/src/docker
+      Environment=COMPOSE_PROFILES=${network}
+      Environment=HAYAI_ADMIN_BIND=${admin_bind}
+      Environment=HAYAI_CRYPTO_BACKEND=${crypto_backend}
+      # On Testnet and Mainnet, `up` waits until zakurad reports /ready, which takes hours on a new
+      # volume.
+      ExecStart=/usr/bin/docker compose -f compose.yml -f compose.observability.yml up -d --build
+      ExecStop=/usr/bin/docker compose -f compose.yml -f compose.observability.yml stop
+      TimeoutStartSec=infinity
+      TimeoutStopSec=5min
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, start, --no-block, hayai-bootstrap.service]

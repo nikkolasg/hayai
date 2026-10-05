@@ -1,0 +1,138 @@
+[
+  {
+    "vector": "zip0143-0",
+    "stage": "draft",
+    "verdict": "unsupported",
+    "error": "not supported: transaction version before Sapling: only the checkpoint path applies it",
+    "reason": "a v3 transaction is in a block at or below the mandatory checkpoint: hayai applies such a block on the checkpoint path and has no verification for the transaction (as Zakura)",
+    "item": "none: owner decision Q3, Q4 (do as Zakura does)"
+  },
+  {
+    "vector": "zip0143-3",
+    "stage": "draft",
+    "verdict": "unsupported",
+    "error": "not supported: transaction version before Sapling: only the checkpoint path applies it",
+    "reason": "a v3 transaction is in a block at or below the mandatory checkpoint: hayai applies such a block on the checkpoint path and has no verification for the transaction (as Zakura)",
+    "item": "none: owner decision Q3, Q4 (do as Zakura does)"
+  },
+  {
+    "vector": "zip0143-7",
+    "stage": "draft",
+    "verdict": "unsupported",
+    "error": "not supported: transaction version before Sapling: only the checkpoint path applies it",
+    "reason": "a v3 transaction is in a block at or below the mandatory checkpoint: hayai applies such a block on the checkpoint path and has no verification for the transaction (as Zakura)",
+    "item": "none: owner decision Q3, Q4 (do as Zakura does)"
+  },
+  {
+    "vector": "zip0143-9",
+    "stage": "draft",
+    "verdict": "unsupported",
+    "error": "not supported: transaction version before Sapling: only the checkpoint path applies it",
+    "reason": "a v3 transaction is in a block at or below the mandatory checkpoint: hayai applies such a block on the checkpoint path and has no verification for the transaction (as Zakura)",
+    "item": "none: owner decision Q3, Q4 (do as Zakura does)"
+  },
+  {
+    "vector": "zip0243-0",
+    "stage": "draft",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "zip0243-3",
+    "stage": "draft",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "zip0243-7",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The transparent outputs of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-0",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The spent values of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-1",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "coinbase sapling output 0 does not decrypt with the zero outgoing viewing key",
+    "reason": "generated transaction: the vector tests digests, not validity. The coinbase has Sapling outputs with random ciphertexts, which do not decrypt with the zero outgoing viewing key (ZIP 213)",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-2",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "transaction has no outputs, no JoinSplits, no Sapling outputs and no actions with outputs enabled",
+    "reason": "generated transaction: the vector tests digests, not validity. The transaction has no transparent output and no shielded component",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-3",
+    "stage": "draft",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "zip0244-4",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The spent values of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-5",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The spent values of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-6",
+    "stage": "draft",
+    "verdict": "valid",
+    "error": null,
+    "reason": null,
+    "item": null
+  },
+  {
+    "vector": "zip0244-7",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The spent values of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-8",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "transaction has no outputs, no JoinSplits, no Sapling outputs and no actions with outputs enabled",
+    "reason": "generated transaction: the vector tests digests, not validity. The transaction has no transparent output and no shielded component",
+    "item": "none: the rejection is correct"
+  },
+  {
+    "vector": "zip0244-9",
+    "stage": "draft",
+    "verdict": "rejected",
+    "error": "value overflow",
+    "reason": "generated transaction: the vector tests digests, not validity. The spent values of the vector sum to more than MAX_MONEY",
+    "item": "none: the rejection is correct"
+  }
+]

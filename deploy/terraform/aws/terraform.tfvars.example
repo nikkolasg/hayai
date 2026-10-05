@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and edit. Every variable is described in variables.tf.
+region      = "eu-central-1"
+network     = "testnet" # testnet, mainnet or regtest
+hayai_repo  = "https://git.example.com/hayai.git"
+hayai_ref   = "main"
+zakura_repo = "https://git.example.com/zakura.git"
+zakura_ref  = "main"
+
+# Open the admin ports to one address (Grafana, Prometheus, metrics). Remove the line to
+# reach them only through SSM port forwards.
+admin_cidr = "198.51.100.7/32"

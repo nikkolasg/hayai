@@ -1,0 +1,43 @@
+# hayaid on Testnet in shadow mode (docker/compose.yml, profile testnet).
+#
+# The hayaid-testnet service shares the network namespace of the zakurad service, so
+# 127.0.0.1 is the Zakura node. Every key not set here has the default that
+# `hayaid config --network testnet` prints; docs/hayaid.md describes each key.
+
+[network]
+network = "testnet"
+mode = "shadow"
+# No listen_addr: in shadow mode, hayaid dials the Zakura node only (docs/hayaid.md,
+# Restrictions).
+peers = ["127.0.0.1:18233"]
+compact_relay = false
+max_peers = 16
+
+[state]
+# A restart resumes from this directory (docs/hayaid.md, Restart).
+data_dir = "/var/lib/hayai"
+backend = "memory"
+flush_interval_blocks = 100
+snapshot_interval_blocks = 10000
+
+[metrics]
+# Prometheus scrapes this address through the zakurad network alias hayaid-testnet.
+listen_addr = "0.0.0.0:19101"
+
+[trace]
+dir = "/var/lib/hayai/traces"
+node = "hayaid"
+
+[mining]
+# The shadow template is never served; the script only completes the coinbase.
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+
+[shadow]
+# JSON-RPC of the zakurad service (loopback only, cookie authentication off).
+rpc_addr = "127.0.0.1:18232"
+# Absent: the upstream tip at start.
+# start_height = 3900000
+poll_interval_ms = 200
+
+[log]
+level = "info"

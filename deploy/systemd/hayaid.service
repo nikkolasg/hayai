@@ -1,0 +1,58 @@
+# hayaid as a systemd service. scripts/install.sh installs this file as
+# /etc/systemd/system/hayaid.service, the binary as /usr/local/bin/hayaid and the
+# configuration as /etc/hayai/hayaid.toml.
+
+[Unit]
+Description=hayai node (hayaid)
+After=network-online.target
+Wants=network-online.target
+# A failing start repeats every 10 s; the loop stops after 5 attempts in 10 minutes.
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=hayai
+Group=hayai
+ExecStart=/usr/local/bin/hayaid start -c /etc/hayai/hayaid.toml
+Restart=on-failure
+RestartSec=10s
+# A clean stop flushes the coins and writes a snapshot of the memory backend. A start
+# resumes from /var/lib/hayai.
+KillSignal=SIGTERM
+TimeoutStopSec=2min
+LimitNOFILE=65536
+UMask=0027
+
+# /var/lib/hayai, owned by hayai. The only writable path.
+StateDirectory=hayai
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/hayai
+
+# Hardening.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,141 @@
+# Fast checks on each push and pull request, on the default backend: the functional tests,
+# the consensus rules of each upgrade and the published test vectors. The jobs build no
+# zakura-* crate and no zebra-chain: hayai-bench builds without its `baselines` feature,
+# and hayai-fuzz is not in the build. A test in a module named `slow` does not run.
+# The full workflow (full.yml) has the comparisons with Zakura and Zebra, the fuzzer, the
+# Zakura backend, the slow tests, the minimum Rust version, the benchmarks and the image
+# build. No job uses secrets or pushes.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # docker/Dockerfile pins the same toolchain: the lowest that builds the whole workspace
+  # (zakura-chain 9.0.0 of hayai-bench needs 1.97). The node crates build with the
+  # workspace `rust-version`, which the msrv job of full.yml checks.
+  RUST_TOOLCHAIN: "1.97.1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # The release profile keeps debug info for profiling; CI does not need it.
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt && rustup default "$RUST_TOOLCHAIN"
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy && rustup default "$RUST_TOOLCHAIN"
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-upstream
+      # The default backend without hayai-fuzz. `--no-default-features --features upstream`
+      # applies to each selected package: each one has the `upstream` feature, and
+      # hayai-bench loses its default feature `baselines`.
+      - run: cargo clippy --workspace --exclude hayai-fuzz --no-default-features --features upstream --all-targets --locked -- -D warnings
+
+  test:
+    name: test (release, without slow tests)
+    runs-on: ubuntu-24.04
+    # A test in a module named `slow` runs only in the full workflow (full.yml) and in
+    # the local gate. Measured on 2026-10-05 with the fixture cache, on 4 cores of
+    # the development machine (`taskset -c 0-3`): the tests use 142 CPU-s and 89 s of wall
+    # time. The build is not in this number.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && rustup default "$RUST_TOOLCHAIN"
+      # bindgen of librocksdb-sys needs libclang.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-upstream
+      # Fixtures are generated on first use (real signatures and Orchard proofs). The cache
+      # is keyed on the generator.
+      - uses: actions/cache@v4
+        with:
+          path: bench-fixtures
+          key: fixtures-${{ hashFiles('crates/hayai-bench/src/fixtures.rs') }}
+      # The same package set and features as the clippy job.
+      - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked --no-run
+      - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- --skip slow::
+
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  compose:
+    name: compose files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose files
+        working-directory: docker
+        run: |
+          COMPOSE_PROFILES=testnet docker compose -f compose.yml -f compose.observability.yml config -q
+          COMPOSE_PROFILES=mainnet docker compose -f compose.yml -f compose.observability.yml config -q
+          COMPOSE_PROFILES=regtest docker compose -f compose.yml -f compose.observability.yml config -q
+  observability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prometheus configuration and rules
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/docker/observability/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "$PWD/docker/observability/prometheus:/etc/prometheus:ro" \
+            -w /etc/prometheus/tests prom/prometheus:v3.5.0 test rules hayaid_test.yml
+      - name: Alertmanager configuration
+        run: |
+          docker run --rm --entrypoint amtool -v "$PWD/docker/observability/alertmanager:/etc/alertmanager:ro" \
+            prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+      - name: Dashboard and metric names
+        run: |
+          python3 -m json.tool docker/observability/grafana/dashboards/hayaid.json >/dev/null
+          python3 scripts/check_metric_names.py
+
+  terraform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive deploy/terraform
+      - run: terraform -chdir=deploy/terraform/aws init -backend=false -input=false
+      - run: terraform -chdir=deploy/terraform/aws validate
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/*.sh

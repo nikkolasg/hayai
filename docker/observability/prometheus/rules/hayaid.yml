@@ -1,0 +1,149 @@
+# Alert rules of hayaid. Metric names are the ones of crates/hayaid/src/metrics.rs and
+# docs/hayaid.md (Metrics). The `network` label comes from prometheus.yml.
+
+groups:
+  - name: hayaid
+    rules:
+      - alert: HayaidDown
+        expr: up{job="hayaid"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "hayaid {{ $labels.instance }} does not answer on /metrics"
+          description: "The scrape of {{ $labels.instance }} fails for 2 minutes. Read the container or journal log."
+
+      - alert: HayaidAbsent
+        expr: absent(up{job="hayaid"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No hayaid target"
+          description: "Prometheus finds none of hayaid-testnet, hayaid-mainnet and hayaid-regtest. The node container is stopped or was not started."
+
+      # The window is 24 target block spacings: 75 s on Testnet and Mainnet gives 30 minutes. At the
+      # 25 s spacing of NU7, use 10 minutes. Regtest blocks come from `generate` only.
+      - alert: HayaidTipStalled
+        expr: changes(state_memory_best_committed_block_height{job="hayaid", network=~"testnet|mainnet"}[30m]) == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "hayaid tip did not advance for 30 minutes"
+          description: "The committed height of {{ $labels.instance }} did not change in 30 minutes. Check the upstream node and the peers."
+
+      - alert: HayaidBehindUpstream
+        expr: |
+          max by (network) (state_memory_best_committed_block_height{job="zakurad"})
+            - max by (network) (state_memory_best_committed_block_height{job="hayaid", network=~"testnet|mainnet"}) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "hayaid is more than 3 blocks behind zakurad"
+          description: "The shadow node does not keep up with its upstream node for 10 minutes."
+
+      - alert: HayaidValidationSlow
+        expr: |
+          histogram_quantile(0.9,
+            sum by (le, network) (rate(sync_block_verify_duration_seconds_bucket{job="hayaid", result="success"}[15m]))
+          ) > 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p90 block validation time is above 1 s"
+          description: "p90 of sync_block_verify_duration_seconds is {{ $value }} s on {{ $labels.network }}. At a 25 s spacing, 1 s costs about 4 % of blocks."
+
+      # One peer is the minimum of shadow mode (the Zakura node). Raise the threshold for
+      # a node with more configured peers. A single Regtest node has no peers.
+      - alert: HayaidNoPeers
+        expr: hayai_peers{job="hayaid", network!="regtest"} < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "hayaid has no peers"
+          description: "{{ $labels.instance }} has no connected peer for 5 minutes."
+
+      # The node stops after a disagreement, so the counter lives for one or two scrapes.
+      - alert: HayaidShadowDisagreement
+        expr: max_over_time(hayai_shadow_disagreements_total{job="hayaid"}[1h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "hayaid disagrees with the upstream node"
+          description: "A block that upstream accepted failed in hayai, or the tree roots differ. Read the upstream_verdict rows in commit_state.jsonl."
+
+      - alert: HayaidBlocksRejected
+        expr: increase(hayai_blocks_rejected_total{job="hayaid"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "hayaid rejected a block"
+          description: "{{ $labels.instance }} rejected {{ $value }} blocks in 15 minutes."
+
+      - alert: HayaidTraceRowsDropped
+        expr: increase(hayai_trace_dropped_rows_total{job="hayaid"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "hayaid dropped trace rows"
+          description: "The trace writer queue of {{ $labels.instance }} was full ({{ $labels.table }}). The traces are incomplete."
+
+      # The memory backend keeps the whole coin set in memory (docs/architecture.md,
+      # Mainnet sizing). The host total comes from node-exporter.
+      - alert: HayaidMemoryHigh
+        expr: process_resident_memory_bytes{job="hayaid"} / scalar(max(node_memory_MemTotal_bytes{job="node"})) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "hayaid uses more than 80 % of the host memory"
+          description: "The resident memory of {{ $labels.instance }} stays above 80 % of the host memory for 10 minutes."
+
+      - alert: HayaidTemplateSlow
+        expr: |
+          histogram_quantile(0.9,
+            sum by (le, network) (rate(hayai_template_latency_seconds_bucket{job="hayaid", template="full"}[15m]))
+          ) > 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p90 time from a tip change to the full template is above 1 s"
+          description: "Miners work on a stale template for that time after each block on {{ $labels.network }}."
+
+  - name: host
+    rules:
+      - alert: HostDiskLow
+        expr: |
+          node_filesystem_avail_bytes{job="node", fstype!~"tmpfs|ramfs|overlay|squashfs|nsfs"}
+            / node_filesystem_size_bytes{job="node", fstype!~"tmpfs|ramfs|overlay|squashfs|nsfs"} < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10 % free on {{ $labels.mountpoint }}"
+          description: "The block files, the coins snapshot and the Zakura state grow without bound."
+
+      - alert: HostDiskCritical
+        expr: |
+          node_filesystem_avail_bytes{job="node", fstype!~"tmpfs|ramfs|overlay|squashfs|nsfs"}
+            / node_filesystem_size_bytes{job="node", fstype!~"tmpfs|ramfs|overlay|squashfs|nsfs"} < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Less than 5 % free on {{ $labels.mountpoint }}"
+          description: "A full disk stops the coins log and the block store."
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"} < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10 % of the host memory is available"
+          description: "The memory backend keeps the whole coin set in memory (docs/architecture.md, Mainnet sizing)."

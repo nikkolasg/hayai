@@ -1,0 +1,23 @@
+[package]
+name = "hayai-sinsemilla"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MerkleCRH^Orchard with position-weighted tables and batch-affine lanes"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream"]
+zakura = ["hayai-crypto/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# `sinsemilla::HashDomain::from_Q` (behind this feature) lets the tests build reference hashes
+# for a chosen Q, which is how the exceptional-case paths are exercised.
+hayai-crypto = { workspace = true, features = ["test-dependencies"] }

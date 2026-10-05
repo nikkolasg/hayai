@@ -1,0 +1,24 @@
+[package]
+name = "hayai-trees"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Note-commitment frontiers with batched lane appends"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-sinsemilla/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-sinsemilla/zakura"]
+
+[dependencies]
+hayai-sinsemilla.workspace = true
+hayai-crypto.workspace = true
+rayon.workspace = true
+# `compress256`: MerkleCRH^Sprout is the SHA-256 compression function without padding.
+sha2 = { workspace = true, features = ["compress"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -1,5 +1,11 @@
-
-# Beads / Dolt files (added by bd init)
-.dolt/
+target/
+/target-*
 *.db
 .beads-credential-key
+.dolt/
+/bench-results/*.json
+/bench-fixtures/
+/docker/secrets/
+/deploy/terraform/**/.terraform/
+/deploy/terraform/**/terraform.tfvars
+/deploy/terraform/**/*.tfstate*

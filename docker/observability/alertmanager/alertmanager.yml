@@ -1,0 +1,28 @@
+# Alertmanager of the hayai compose stack. The receiver is a placeholder: it accepts the
+# alerts and sends them nowhere. Add a notifier to it (webhook_configs, email_configs,
+# ...) as the Alertmanager documentation describes, for example:
+#
+#   receivers:
+#     - name: operators
+#       webhook_configs:
+#         - url: https://alerts.example.com/hayai
+#
+# Alerts are visible without a notifier in Alertmanager (port 9093) and in Prometheus.
+
+route:
+  receiver: operators
+  group_by: [alertname, network]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: operators
+
+inhibit_rules:
+  # A stopped node also has no peers and no new tip.
+  - source_matchers: [alertname = HayaidDown]
+    target_matchers: [alertname =~ "HayaidTipStalled|HayaidNoPeers|HayaidBehindUpstream"]
+  - source_matchers: [alertname = HostDiskCritical]
+    target_matchers: [alertname = HostDiskLow]
+    equal: [mountpoint]

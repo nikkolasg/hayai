@@ -1,0 +1,40 @@
+# hayaid on Regtest in full mode (docker/compose.yml, profile regtest).
+#
+# Every key not set here has the default that `hayaid config --network regtest` prints;
+# docs/hayaid.md describes each key.
+
+[network]
+network = "regtest"
+mode = "full"
+listen_addr = "0.0.0.0:18344"
+# Peers to dial, for example a second Regtest node.
+peers = []
+compact_relay = true
+max_peers = 16
+
+[state]
+# A restart resumes from this directory (docs/hayaid.md, Restart).
+data_dir = "/var/lib/hayai"
+backend = "memory"
+flush_interval_blocks = 100
+snapshot_interval_blocks = 10000
+
+[rpc]
+# No authentication: compose publishes this port on HAYAI_ADMIN_BIND only.
+listen_addr = "0.0.0.0:18345"
+
+[metrics]
+listen_addr = "0.0.0.0:19101"
+
+[trace]
+dir = "/var/lib/hayai/traces"
+node = "hayaid"
+
+[mining]
+# Regtest address encoding is the Testnet one.
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+# Serve the `generate n` RPC.
+regtest_produce = true
+
+[log]
+level = "info"

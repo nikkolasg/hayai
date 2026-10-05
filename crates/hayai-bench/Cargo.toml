@@ -1,0 +1,187 @@
+[package]
+name = "hayai-bench"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.97"
+license.workspace = true
+repository.workspace = true
+description = "Benchmarks of hayai against zakura-* crates and Zakura's data layouts"
+publish = false
+
+[features]
+default = ["upstream", "baselines"]
+# The comparison baselines: the zakura-* crates and zebra-chain, the modules that use them
+# (`zakura_*_layout`, `zakura_wire`, `zebra_*`), the scenario catalogue, the `sysbench`
+# binary, the bench targets and the tests that compare hayai with these libraries. Without
+# the feature the crate has the fixtures, the functional tests and the published vectors.
+baselines = [
+    "dep:zk_chain",
+    "dep:zk_orchard",
+    "dep:zk_sinsemilla",
+    "dep:zk_primitives",
+    "dep:zk_pasta",
+    "dep:zb_chain",
+    "dep:zk_header_chain",
+    "dep:chrono",
+]
+# Run the benchmark processes on mimalloc instead of glibc malloc (`docs/architecture.md`,
+# System benchmarks).
+mimalloc = ["dep:mimalloc"]
+# Adds the multitable arms to `benches/structures.rs`.
+multitable = ["dep:multitable"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-consensus/upstream",
+    "hayai-wire/upstream",
+    "hayai-sinsemilla/upstream",
+    "hayai-trees/upstream",
+    "hayai-coins/upstream",
+    "hayai-prepared/upstream",
+    "hayai-state/upstream",
+    "hayai-validate/upstream",
+    "hayai-relay/upstream",
+    "hayai-template/upstream",
+    "hayai-blockstore/upstream",
+    "hayai-sync/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-consensus/zakura",
+    "hayai-wire/zakura",
+    "hayai-sinsemilla/zakura",
+    "hayai-trees/zakura",
+    "hayai-coins/zakura",
+    "hayai-prepared/zakura",
+    "hayai-state/zakura",
+    "hayai-validate/zakura",
+    "hayai-relay/zakura",
+    "hayai-template/zakura",
+    "hayai-blockstore/zakura",
+    "hayai-sync/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-consensus.workspace = true
+hayai-wire.workspace = true
+hayai-sinsemilla.workspace = true
+hayai-trees.workspace = true
+hayai-coins.workspace = true
+hayai-prepared.workspace = true
+hayai-state.workspace = true
+hayai-validate.workspace = true
+hayai-relay.workspace = true
+hayai-template.workspace = true
+hayai-blockstore.workspace = true
+hayai-sync.workspace = true
+secp256k1.workspace = true
+rand.workspace = true
+rayon.workspace = true
+sha2.workspace = true
+bytes.workspace = true
+rocksdb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+tempfile.workspace = true
+libc.workspace = true
+perf-event2.workspace = true
+mimalloc = { workspace = true, optional = true }
+ahash.workspace = true
+parking_lot.workspace = true
+# Checksum candidate for the coins snapshot, measured in `coins/snapshot`.
+blake2b_simd.workspace = true
+crc32c.workspace = true
+dashmap.workspace = true
+foldhash.workspace = true
+rapidhash.workspace = true
+papaya.workspace = true
+scc.workspace = true
+smallvec.workspace = true
+# Measured by `benches/structures.rs` only; a git dependency, so it stays out of the default
+# build (`--features multitable`).
+multitable = { git = "https://github.com/maksympetkus/multitable", rev = "7fe2aae97d52734e95764ec54dc709d919f74e18", default-features = false, features = ["agile"], optional = true }
+# Baselines (feature `baselines`): the zakura-* forks, renamed so they coexist with the
+# upstream crates behind hayai-crypto. Under hayai-crypto's `zakura` feature they are the
+# same crates.
+zk_chain = { package = "zakura-chain", version = "9.0.0", optional = true }
+zk_orchard = { package = "zakura-orchard", version = "=2.2.0", optional = true }
+zk_sinsemilla = { package = "zakura-sinsemilla", version = "=2.2.0", optional = true }
+zk_primitives = { package = "zakura-primitives", version = "=2.2.0", optional = true }
+zk_pasta = { package = "zakura-pasta-curves", version = "=2.2.0", optional = true }
+# Baseline: upstream Zebra's chain crate. 13.0.1 is the newest release on the same upstream
+# Zcash crates as the workspace (zcash_primitives 0.30, orchard 0.15), so cargo does not
+# duplicate them.
+zb_chain = { package = "zebra-chain", version = "13.0.1", optional = true }
+# Baseline of the difficulty rule for `tests/conformance_nu7.rs`: the adjusted difficulty of
+# Zakura and its time type. A dev-dependency cannot be optional, so they are here.
+zk_header_chain = { package = "zakura-header-chain", version = "4.0.0", optional = true }
+chrono = { version = "0.4.40", default-features = false, optional = true }
+
+[dev-dependencies]
+criterion.workspace = true
+# The script test vectors of the crate (`zcash_script::test_vectors`), for
+# `tests/conformance_txs.rs`. The crate is the same under both crypto backends.
+zcash_script = { workspace = true, features = ["test-dependencies"] }
+
+[[bin]]
+name = "sysbench"
+path = "src/bin/sysbench.rs"
+required-features = ["baselines"]
+
+# Each test of this target compares hayai with zakura-chain or zakura-header-chain.
+[[test]]
+name = "conformance_nu7"
+required-features = ["baselines"]
+
+[[bench]]
+name = "sinsemilla"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "trees"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "wire"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "coins"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "state"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "prepared"
+harness = false
+
+[[bench]]
+name = "validate"
+harness = false
+
+[[bench]]
+name = "relay"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "template"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "blockstore"
+harness = false
+required-features = ["baselines"]
+
+[[bench]]
+name = "structures"
+harness = false
