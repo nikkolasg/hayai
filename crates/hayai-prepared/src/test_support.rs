@@ -93,7 +93,7 @@ pub struct TxSpec {
 
 impl TxSpec {
     /// One P2PKH input of 100,000 zatoshis and one P2PKH output of 50,000 zatoshis: the
-    /// fee is 5 times the ZIP 317 conventional fee.
+    /// fee of 50,000 zatoshis is above the conventional fee of 800 zatoshis.
     pub fn standard() -> Self {
         Self {
             inputs: vec![(P2PKH_SIG.to_vec(), p2pkh(1), 100_000)],

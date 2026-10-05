@@ -534,4 +534,79 @@ mod tests {
             ))
         ));
     }
+
+    /// The coinbase on a Regtest network with configured funding streams and lockbox
+    /// disbursements: the template has each required output of the terms, and the
+    /// coinbase passes the coinbase check of the height. A network without a disbursement
+    /// has no coinbase at its NU6.1 height, as it has no valid block there.
+    #[test]
+    fn the_coinbase_has_the_streams_and_the_disbursements_of_a_configured_regtest() {
+        use hayai_consensus::funding::Receiver;
+        use hayai_consensus::{
+            RegtestConfig, RegtestDisbursement, RegtestFundingStreams, RegtestRecipient,
+        };
+
+        const ADDRESS: &str = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh";
+        let config = || {
+            RegtestConfig::new(&[(Upgrade::Nu6, 5), (Upgrade::Nu6_1, 13)], Vec::new(), 0)
+                .expect("a valid configuration")
+        };
+        let recipient = |receiver, numerator, addresses: &[&str]| RegtestRecipient {
+            receiver,
+            numerator,
+            addresses: addresses.iter().map(|a| a.to_string()).collect(),
+        };
+        let disbursement = |amount| RegtestDisbursement {
+            address: ADDRESS.to_string(),
+            amount,
+        };
+        // The heights 11 to 16 are one address period.
+        let streams = [RegtestFundingStreams {
+            height_range: 11..17,
+            recipients: vec![
+                recipient(Receiver::Deferred, 12, &[]),
+                recipient(Receiver::MajorGrants, 8, &[ADDRESS]),
+            ],
+        }];
+        let network = config()
+            .with_lockbox_disbursements(vec![disbursement(150_000_000), disbursement(0)])
+            .and_then(|config| config.with_funding_streams(&streams))
+            .expect("a valid configuration")
+            .network();
+        let spec = spec_on(network);
+        let fees = 1_000;
+        // (height, outputs after the miner output, value of the miner output)
+        for (height, required, miner) in [
+            (10, vec![], 625_000_000),
+            (11, vec![50_000_000], 500_000_000),
+            (12, vec![50_000_000], 500_000_000),
+            (13, vec![50_000_000, 150_000_000, 0], 500_000_000),
+            (14, vec![50_000_000], 500_000_000),
+            (17, vec![], 625_000_000),
+        ] {
+            let cb = spec.build(height, fees).unwrap();
+            let outputs = outputs_of(&cb.bytes, cb.branch_id);
+            let values: Vec<u64> = outputs.iter().map(|(value, _)| *value).collect();
+            let mut expected = vec![miner + fees];
+            expected.extend(required);
+            assert_eq!(values, expected, "{height}");
+            let terms = CoinbaseTerms::at(network, height).unwrap();
+            assert_eq!(check(&terms, &outputs, fees), Ok(()), "{height}");
+        }
+        // The deferred pool gets 2 times 75,000,000 zatoshis before the NU6.1 block and
+        // pays the disbursement in it.
+        let terms = CoinbaseTerms::at(network, 13).unwrap();
+        assert_eq!(terms.deferred_pool_after(150_000_000), Ok(75_000_000));
+
+        let none = spec_on(config().network());
+        assert!(matches!(
+            none.build(13, fees),
+            Err(CoinbaseError::Terms(
+                ConsensusError::NoLockboxDisbursement { height: 13 }
+            ))
+        ));
+        let Ok(_) = none.build(12, fees) else {
+            panic!("the block before the NU6.1 height has a coinbase");
+        };
+    }
 }

@@ -9,16 +9,21 @@
 //! crypto backend's `zcash_protocol` and Equihash (200, 9).
 //!
 //! A Regtest network can have its own activation heights for the upgrades after NU5, its
-//! own checkpoint list and its own mandatory checkpoint height ([`RegtestConfig`],
-//! [`Network::ConfiguredRegtest`]). Every other value is the value of [`Network::Regtest`].
+//! own checkpoint list, its own mandatory checkpoint height, its own funding streams and
+//! its own lockbox disbursements ([`RegtestConfig`], [`Network::ConfiguredRegtest`]). Every
+//! other value is the value of [`Network::Regtest`].
 
 use hayai_crypto::zcash_protocol::consensus::{
     BranchId, NetworkType, NetworkUpgrade, Parameters, MAIN_NETWORK, TEST_NETWORK,
 };
+use hayai_crypto::zcash_protocol::value::MAX_MONEY;
+use std::ops::Range;
+
 use hayai_wire::header::{BlockHash, PowParams};
 use serde::{Deserialize, Serialize};
 
-use crate::{Checkpoints, ConsensusError, DuplicateCheckpoint};
+use crate::funding::{self, Receiver, StreamSet};
+use crate::{coinbase, Checkpoints, ConsensusError, DuplicateCheckpoint};
 
 /// The networks.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Deserialize, Serialize)]
@@ -43,6 +48,43 @@ const CONFIGURABLE: [Upgrade; 5] = [
     Upgrade::Nu7,
 ];
 
+/// One output that the coinbase of the NU6.1 activation block of a Regtest network must
+/// have (Zakura `ConfiguredLockboxDisbursement`). The deferred pool pays it.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegtestDisbursement {
+    /// A Base58Check P2SH address of any network.
+    pub address: String,
+    /// Zatoshis.
+    pub amount: u64,
+}
+
+/// The funding streams of one range of heights of a Regtest network (Zakura
+/// `ConfiguredFundingStreams`). The field names and the receiver names are those of a
+/// Zakura configuration file.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegtestFundingStreams {
+    /// The first height of the streams, and the first height after them.
+    pub height_range: Range<u32>,
+    pub recipients: Vec<RegtestRecipient>,
+}
+
+/// One funding stream of a [`RegtestFundingStreams`] (Zakura
+/// `ConfiguredFundingStreamRecipient`).
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegtestRecipient {
+    pub receiver: Receiver,
+    /// The share of the block subsidy, in hundredths.
+    pub numerator: u64,
+    /// One Base58Check P2SH address of any network for each address period of the range,
+    /// from the period of the start height. A period has 6 blocks before NU7 and 18
+    /// blocks from NU7. Empty for [`Receiver::Deferred`].
+    #[serde(default)]
+    pub addresses: Vec<String>,
+}
+
 /// The values of a Regtest network that a node operator or a test can set.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RegtestConfig {
@@ -52,10 +94,14 @@ pub struct RegtestConfig {
     mandatory_checkpoint_height: u32,
     /// [`RegtestConfig::with_test_reissuance_height`].
     test_reissuance_height: Option<u32>,
+    /// [`RegtestConfig::with_lockbox_disbursements`].
+    lockbox_disbursements: Vec<RegtestDisbursement>,
+    /// [`RegtestConfig::with_funding_streams`].
+    funding_streams: &'static [StreamSet],
 }
 
 /// Why a [`RegtestConfig`] is not valid.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, thiserror::Error)]
+#[derive(Clone, PartialEq, Eq, Debug, thiserror::Error)]
 pub enum RegtestConfigError {
     #[error("the Regtest activation height of {0:?} is not configurable")]
     FixedUpgrade(Upgrade),
@@ -67,6 +113,40 @@ pub enum RegtestConfigError {
     Genesis,
     #[error("the last checkpoint is below the mandatory checkpoint height {0}")]
     Coverage(u32),
+    #[error("{address} is not a P2SH address: {reason}")]
+    Address { address: String, reason: String },
+    #[error("a lockbox disbursement, or the sum of all, is above {MAX_MONEY} zatoshis")]
+    DisbursementAmount,
+    #[error("the funding stream range from {start} to {end} ends below its start")]
+    StreamRange { start: u32, end: u32 },
+    #[error("the funding stream receiver {0:?} is two times in one range")]
+    StreamReceiver(Receiver),
+    #[error("the funding stream numerators of one range have the sum {0}, above 100")]
+    StreamNumerators(u128),
+    #[error("the deferred pool is a funding stream receiver without an address")]
+    DeferredAddress,
+    #[error(
+        "the funding stream receiver {receiver:?} has {found} addresses and its range from \
+         {start} to {end} has {required} address periods"
+    )]
+    StreamAddresses {
+        receiver: Receiver,
+        start: u32,
+        end: u32,
+        required: usize,
+        found: usize,
+    },
+}
+
+/// Checks that `address` is a P2SH address, of any network.
+fn check_address(address: &str) -> Result<(), RegtestConfigError> {
+    match coinbase::p2sh_script(Network::Regtest, address) {
+        Ok(_) => Ok(()),
+        Err(reason) => Err(RegtestConfigError::Address {
+            address: address.to_string(),
+            reason,
+        }),
+    }
 }
 
 impl RegtestConfig {
@@ -113,7 +193,90 @@ impl RegtestConfig {
             checkpoints,
             mandatory_checkpoint_height,
             test_reissuance_height: None,
+            lockbox_disbursements: Vec::new(),
+            funding_streams: &[],
         })
+    }
+
+    /// Sets the outputs that the coinbase of the NU6.1 activation block must have, with
+    /// the meaning of `lockbox_disbursements` of Zakura's Regtest parameters
+    /// (`zakura-chain/src/parameters/network/testnet.rs`, `check_lockbox_disbursements`):
+    /// each address is a P2SH address of any network, and the sum of the amounts is a
+    /// valid amount of money.
+    ///
+    /// A network with an NU6.1 height and no disbursement has no valid block at that
+    /// height while the block subsidy is not 0, as in Zakura
+    /// ([`ConsensusError::NoLockboxDisbursement`]).
+    pub fn with_lockbox_disbursements(
+        mut self,
+        disbursements: Vec<RegtestDisbursement>,
+    ) -> Result<Self, RegtestConfigError> {
+        let mut total = 0u64;
+        for disbursement in &disbursements {
+            check_address(&disbursement.address)?;
+            total = total
+                .checked_add(disbursement.amount)
+                .filter(|total| *total <= MAX_MONEY)
+                .ok_or(RegtestConfigError::DisbursementAmount)?;
+        }
+        self.lockbox_disbursements = disbursements;
+        Ok(self)
+    }
+
+    /// Sets the funding streams, with the meaning of `funding_streams` of Zakura's Regtest
+    /// parameters with a height range and recipients in each entry: the streams of the
+    /// first range that holds a height apply at that height, from height 1.
+    ///
+    /// The configuration is refused where Zakura stops at its start or at a block: a
+    /// range that ends below its start, a receiver two times in one range, numerators
+    /// above 100 in total, an address that is not a P2SH address, and fewer addresses
+    /// than the range has address periods. An address of [`Receiver::Deferred`] is
+    /// refused too.
+    ///
+    /// The tables of the streams stay in memory until the process ends, as the
+    /// configuration does ([`RegtestConfig::network`]).
+    pub fn with_funding_streams(
+        mut self,
+        streams: &[RegtestFundingStreams],
+    ) -> Result<Self, RegtestConfigError> {
+        for set in streams {
+            let Range { start, end } = set.height_range;
+            if end < start {
+                return Err(RegtestConfigError::StreamRange { start, end });
+            }
+            let mut numerators = 0u128;
+            for (index, recipient) in set.recipients.iter().enumerate() {
+                let receiver = recipient.receiver;
+                if set.recipients[..index]
+                    .iter()
+                    .any(|earlier| earlier.receiver == receiver)
+                {
+                    return Err(RegtestConfigError::StreamReceiver(receiver));
+                }
+                numerators += u128::from(recipient.numerator);
+                match (receiver, recipient.addresses.as_slice()) {
+                    (Receiver::Deferred, []) => {}
+                    (Receiver::Deferred, _) => return Err(RegtestConfigError::DeferredAddress),
+                    (_, addresses) => addresses.iter().try_for_each(|a| check_address(a))?,
+                }
+            }
+            if numerators > u128::from(funding::DENOMINATOR) {
+                return Err(RegtestConfigError::StreamNumerators(numerators));
+            }
+        }
+        self.funding_streams = funding::regtest_sets(streams);
+        // The address periods depend on the activation heights: the check needs the
+        // network of this configuration.
+        funding::check_address_counts(self.clone().network())?;
+        Ok(self)
+    }
+
+    pub(crate) fn lockbox_disbursements(&self) -> &[RegtestDisbursement] {
+        &self.lockbox_disbursements
+    }
+
+    pub(crate) fn funding_streams(&self) -> &'static [StreamSet] {
+        self.funding_streams
     }
 
     /// Sets an NSM reissuance height for the tests of a short chain. The rules of a
@@ -802,5 +965,124 @@ mod tests {
             let back: Network = serde_json::from_str(&json).expect("parses");
             assert_eq!(back, network);
         }
+    }
+
+    /// The checks of `ParametersBuilder` and of `new_regtest` of Zakura on the lockbox
+    /// disbursements and the funding streams, and the address count that Zakura checks at
+    /// a block.
+    #[test]
+    fn a_configured_regtest_checks_its_disbursements_and_its_funding_streams() {
+        const REGTEST: &str = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh";
+        const MAINNET: &str = "t3Vz22vK5z2LcKEdg16Yv4FFneEL1zg9ojd";
+        const P2PKH: &str = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV";
+        let config = || RegtestConfig::new(&[], Vec::new(), 0).expect("valid");
+        let disbursements = |entries: &[(&str, u64)]| {
+            let entries = entries
+                .iter()
+                .map(|(address, amount)| RegtestDisbursement {
+                    address: address.to_string(),
+                    amount: *amount,
+                })
+                .collect();
+            config().with_lockbox_disbursements(entries)
+        };
+        let Ok(_) = disbursements(&[(REGTEST, MAX_MONEY - 1), (MAINNET, 1)]) else {
+            panic!("an address of each network and the largest amount are valid");
+        };
+        assert_eq!(
+            disbursements(&[(REGTEST, MAX_MONEY), (MAINNET, 1)]),
+            Err(RegtestConfigError::DisbursementAmount)
+        );
+        for address in [P2PKH, "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUni", ""] {
+            let Err(RegtestConfigError::Address { address: found, .. }) =
+                disbursements(&[(address, 1)])
+            else {
+                panic!("{address} is refused");
+            };
+            assert_eq!(found, address);
+        }
+
+        let recipient = |receiver, numerator, addresses: &[&str]| RegtestRecipient {
+            receiver,
+            numerator,
+            addresses: addresses.iter().map(|a| a.to_string()).collect(),
+        };
+        let streams = |start, end, recipients: Vec<RegtestRecipient>| {
+            config().with_funding_streams(&[RegtestFundingStreams {
+                height_range: start..end,
+                recipients,
+            }])
+        };
+        let (deferred, grants) = (Receiver::Deferred, Receiver::MajorGrants);
+        // The heights 10, 11 to 16 and 17 to 21 are 3 address periods. An empty range
+        // needs no address.
+        for (start, end, addresses) in [
+            (10, 22, vec![REGTEST, MAINNET, REGTEST]),
+            (11, 17, vec![REGTEST]),
+            (10, 10, vec![]),
+        ] {
+            let recipients = vec![
+                recipient(deferred, 92, &[]),
+                recipient(grants, 8, &addresses),
+            ];
+            let Ok(_) = streams(start, end, recipients) else {
+                panic!("the range from {start} to {end} is valid");
+            };
+        }
+        assert_eq!(
+            streams(10, 22, vec![recipient(grants, 8, &[REGTEST, MAINNET])]),
+            Err(RegtestConfigError::StreamAddresses {
+                receiver: grants,
+                start: 10,
+                end: 22,
+                required: 3,
+                found: 2,
+            })
+        );
+        assert_eq!(
+            streams(11, 18, vec![recipient(grants, 8, &[REGTEST])]),
+            Err(RegtestConfigError::StreamAddresses {
+                receiver: grants,
+                start: 11,
+                end: 18,
+                required: 2,
+                found: 1,
+            })
+        );
+        assert_eq!(
+            streams(10, 9, Vec::new()),
+            Err(RegtestConfigError::StreamRange { start: 10, end: 9 })
+        );
+        assert_eq!(
+            streams(
+                11,
+                17,
+                vec![
+                    recipient(grants, 1, &[REGTEST]),
+                    recipient(grants, 1, &[REGTEST])
+                ]
+            ),
+            Err(RegtestConfigError::StreamReceiver(grants))
+        );
+        assert_eq!(
+            streams(
+                11,
+                17,
+                vec![
+                    recipient(deferred, 93, &[]),
+                    recipient(grants, 8, &[REGTEST])
+                ]
+            ),
+            Err(RegtestConfigError::StreamNumerators(101))
+        );
+        assert_eq!(
+            streams(11, 17, vec![recipient(deferred, 1, &[REGTEST])]),
+            Err(RegtestConfigError::DeferredAddress)
+        );
+        let Err(RegtestConfigError::Address { .. }) =
+            streams(11, 17, vec![recipient(grants, 1, &[P2PKH])])
+        else {
+            panic!("a P2PKH address is refused");
+        };
     }
 }

@@ -111,7 +111,7 @@ services:
       - hayaid-regtest-data:/var/lib/hayai
     ports:
       - "18344:18344"                                # P2P
-      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:18345:18345" # JSON-RPC, no authentication
+      - "${HAYAI_ADMIN_BIND:-127.0.0.1}:18345:18345" # JSON-RPC, cookie authentication, no TLS
       - "${HAYAI_ADMIN_BIND:-127.0.0.1}:19101:19101" # metrics
     networks:
       default:

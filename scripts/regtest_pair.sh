@@ -45,10 +45,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-rpc() { # rpc ADDR METHOD PARAMS_JSON -> prints the result as JSON
-  local body
+declare -A RPC_ADDR # name of a node -> address of its RPC server
+
+# hayaid writes the credentials of its RPC server to the file .cookie in its data directory.
+rpc() { # rpc NAME METHOD PARAMS_JSON -> prints the result as JSON
+  local body cookie
   body=$(printf '{"jsonrpc":"2.0","id":1,"method":"%s","params":%s}' "$2" "$3")
-  curl -s --max-time 120 -H 'content-type: application/json' --data-binary "${body}" "http://$1/" |
+  # Without the file the node did not start its RPC server. curl asks the terminal for a
+  # password when the credentials are empty.
+  cookie=$(<"${WORK}/$1-data/.cookie") || return 1
+  curl -s --max-time 120 -u "${cookie}" \
+    -H 'content-type: application/json' --data-binary "${body}" "http://${RPC_ADDR[$1]}/" |
     python3 -c 'import json,sys; r=json.load(sys.stdin); e=r.get("error"); sys.exit(f"rpc error: {e}") if e else print(json.dumps(r["result"]))'
 }
 
@@ -106,11 +113,11 @@ A_P2P=$((PORT_BASE)); A_RPC=$((PORT_BASE + 1)); A_MET=$((PORT_BASE + 2))
 B_P2P=$((PORT_BASE + 10)); B_RPC=$((PORT_BASE + 11)); B_MET=$((PORT_BASE + 12))
 hayaid_config a "${A_P2P}" "${A_RPC}" "${A_MET}" "" true true
 hayaid_config b "${B_P2P}" "${B_RPC}" "${B_MET}" "\"127.0.0.1:${A_P2P}\"" false true
+RPC_ADDR=([a]="127.0.0.1:${A_RPC}" [b]="127.0.0.1:${B_RPC}")
 start_hayaid a
-wait_for 30 rpc "127.0.0.1:${A_RPC}" getblockcount '[]'
+wait_for 30 rpc a getblockcount '[]'
 start_hayaid b
-wait_for 30 rpc "127.0.0.1:${B_RPC}" getblockcount '[]'
-MINE_RPC="127.0.0.1:${A_RPC}"; FOLLOW_RPC="127.0.0.1:${B_RPC}"
+wait_for 30 rpc b getblockcount '[]'
 # shellcheck disable=SC2317,SC2329 # called through wait_for
 peered() { curl -s "http://127.0.0.1:${A_MET}/metrics" | grep -q '^hayai_peers 1$'; }
 wait_for 30 peered || { log "the two nodes did not connect"; exit 1; }
@@ -121,16 +128,16 @@ python3 "${REPO}/scripts/sample_procs.py" "${PIDS[@]}" --out "${WORK}/procs.csv"
   "${METRICS[@]}" &
 SAMPLER=$!
 
-log "mining ${BLOCKS} blocks on ${MINE_RPC}"
-rpc "${MINE_RPC}" generate "[${BLOCKS}]" >"${WORK}/generated.json"
-TARGET=$(rpc "${MINE_RPC}" getbestblockhash '[]')
+log "mining ${BLOCKS} blocks on ${RPC_ADDR[a]}"
+rpc a generate "[${BLOCKS}]" >"${WORK}/generated.json"
+TARGET=$(rpc a getbestblockhash '[]')
 # shellcheck disable=SC2317,SC2329 # called through wait_for
-followed() { [[ "$(rpc "${FOLLOW_RPC}" getbestblockhash '[]')" == "${TARGET}" ]]; }
+followed() { [[ "$(rpc b getbestblockhash '[]')" == "${TARGET}" ]]; }
 if wait_for 120 followed; then
   log "the follower reached ${TARGET}"
   STATUS=0
 else
-  log "the follower is at $(rpc "${FOLLOW_RPC}" getbestblockhash '[]'), not ${TARGET}"
+  log "the follower is at $(rpc b getbestblockhash '[]'), not ${TARGET}"
   log "see the node logs in ${WORK}"
   STATUS=1
 fi

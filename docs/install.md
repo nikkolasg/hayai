@@ -110,9 +110,15 @@ docker compose build
 install -d -m 0700 secrets
 (umask 022 && openssl rand -base64 24 > secrets/grafana_admin_password)
 COMPOSE_PROFILES=regtest docker compose -f compose.yml -f compose.observability.yml up -d
-curl -s -H 'content-type: application/json' \
+curl -s -u "$(docker compose exec -T hayaid-regtest cat /var/lib/hayai/.cookie)" \
+  -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[10]}' http://127.0.0.1:18345/
 ```
+
+The RPC server has cookie authentication. The node writes the credentials to
+`/var/lib/hayai/.cookie` at each start (`docs/hayaid.md`, Protection of the port). On
+bare metal, read the file as root: `sudo cat /var/lib/hayai/.cookie`. The server has no
+TLS: use the port through 127.0.0.1 or through an SSH tunnel.
 
 To make Regtest the default, set `COMPOSE_PROFILES=regtest` in `docker/.env`.
 
@@ -205,7 +211,7 @@ port forwards only. `terraform destroy` removes the instance and the data volume
 | The node started | Log line `hayaid started` with the P2P, RPC and metrics addresses | same |
 | Metrics endpoint | `curl -s http://127.0.0.1:19101/metrics \| head` | same address as `[metrics] listen_addr` |
 | Tip height | `curl -s http://127.0.0.1:19101/metrics \| grep '^state_memory_best_committed_block_height'` | same |
-| Tip height (Regtest RPC) | `curl -s -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18345/` | same |
+| Tip height (Regtest RPC) | `curl -s -u "$(docker compose exec -T hayaid-regtest cat /var/lib/hayai/.cookie)" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18345/` | same, with `-u "$(sudo cat /var/lib/hayai/.cookie)"` |
 | Peers | `curl -s http://127.0.0.1:19101/metrics \| grep '^hayai_peers'`: 1 in shadow mode (the Zakura node) | same |
 | Shadow agreement | `hayai_shadow_agreements_total` increases with each block; `hayai_shadow_disagreements_total` stays 0 | same |
 | Prometheus targets | `http://127.0.0.1:9090/targets`: jobs `hayaid`, `node` and (Testnet) `zakurad` are up | — |

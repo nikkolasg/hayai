@@ -1,9 +1,11 @@
 //! ZIP 317 fee arithmetic: logical actions, conventional fee and block-production weight.
 //!
-//! The fee constants are parameters, because deployments differ. ZIP 317 as published uses a
-//! 5000 zatoshi marginal fee and a weight-ratio cap of 4. Zakura ships 400 zatoshi and a cap
-//! of 13 (`zakura-chain/src/transaction/unmined/zip317.rs`: `MARGINAL_FEE`,
-//! `BLOCK_PRODUCTION_WEIGHT_RATIO_CAP`). Both sets are available as constants.
+//! The node uses the values of Zakura ([`Zip317Params::ZAKURA`]) in its mempool policy, its
+//! store and its template, so that it relays and mines the transactions that a Zakura node
+//! relays and mines. Zakura has a marginal fee of 400 zatoshis and a weight ratio cap of 13
+//! (`zakura-chain/src/transaction/unmined/zip317.rs:25` `MARGINAL_FEE`, `:28`
+//! `GRACE_ACTIONS`, `:37` `BLOCK_PRODUCTION_WEIGHT_RATIO_CAP`). ZIP 317 as published has
+//! 5,000 zatoshis and a cap of 4 ([`Zip317Params::ZIP317`]).
 
 use std::io::Write;
 
@@ -37,7 +39,7 @@ impl Zip317Params {
         weight_ratio_cap: 4,
     };
 
-    /// The values that Zakura deploys (see the module documentation).
+    /// The values of Zakura, which the node uses (see the module documentation).
     pub const ZAKURA: Self = Self {
         marginal_fee: 400,
         grace_actions: 2,
@@ -158,40 +160,47 @@ mod tests {
 
     #[test]
     fn conventional_fee_applies_grace_actions() {
-        let p = Zip317Params::ZIP317;
-        assert_eq!(p.conventional_fee(0), 10_000);
-        assert_eq!(p.conventional_fee(2), 10_000);
-        assert_eq!(p.conventional_fee(3), 15_000);
-        assert_eq!(Zip317Params::ZAKURA.conventional_fee(3), 1200);
+        let p = Zip317Params::ZAKURA;
+        assert_eq!(p.conventional_fee(0), 800);
+        assert_eq!(p.conventional_fee(2), 800);
+        assert_eq!(p.conventional_fee(3), 1_200);
+        assert_eq!(Zip317Params::ZIP317.conventional_fee(3), 15_000);
     }
 
     #[test]
     fn weight_ratio_is_capped_and_ordered() {
-        let p = Zip317Params::ZIP317;
-        let one = p.weight_ratio(10_000, 10_000);
-        let half = p.weight_ratio(5_000, 10_000);
-        let capped = p.weight_ratio(1_000_000, 10_000);
+        let p = Zip317Params::ZAKURA;
+        let one = p.weight_ratio(800, 800);
+        let half = p.weight_ratio(400, 800);
+        // The cap: 13 times the conventional fee, and each fee above it.
+        let below_cap = p.weight_ratio(13 * 800 - 1, 800);
+        let capped = p.weight_ratio(13 * 800, 800);
         assert_eq!(one.to_f64(), 1.0);
         assert_eq!(half.to_f64(), 0.5);
-        assert_eq!(capped.to_f64(), 4.0);
-        assert!(half < one && one < capped);
+        assert_eq!(capped.to_f64(), 13.0);
+        assert_eq!(p.weight_ratio(1_000_000, 800), capped);
+        assert!(half < one && one < below_cap && below_cap < capped);
         // No fee: the weight of 1 zatoshi, so the larger conventional fee has the lower weight.
-        assert_eq!(p.weight_ratio(0, 10_000), p.weight_ratio(1, 10_000));
-        assert!(p.weight_ratio(0, 15_000) < p.weight_ratio(0, 10_000));
-        assert!(p.weight_ratio(0, 15_000) > WeightRatio::from_ratio(0, 1, 4));
+        assert_eq!(p.weight_ratio(0, 800), p.weight_ratio(1, 800));
+        assert!(p.weight_ratio(0, 1_200) < p.weight_ratio(0, 800));
+        assert!(p.weight_ratio(0, 1_200) > WeightRatio::from_ratio(0, 1, 13));
         assert_eq!(
-            Zip317Params::ZAKURA.weight_ratio(1_000_000, 800).to_f64(),
-            13.0
+            Zip317Params::ZIP317
+                .weight_ratio(1_000_000, 10_000)
+                .to_f64(),
+            4.0
         );
     }
 
     #[test]
     fn unpaid_actions_follow_the_marginal_fee() {
-        let p = Zip317Params::ZIP317;
-        assert_eq!(p.unpaid_actions(10_000, 10_000), 0);
-        assert_eq!(p.unpaid_actions(4_999, 10_000), 2);
-        assert_eq!(p.unpaid_actions(5_000, 15_000), 2);
-        assert_eq!(p.unpaid_actions(50_000, 15_000), 0);
+        let p = Zip317Params::ZAKURA;
+        assert_eq!(p.unpaid_actions(800, 800), 0);
+        assert_eq!(p.unpaid_actions(799, 800), 1);
+        assert_eq!(p.unpaid_actions(399, 800), 2);
+        assert_eq!(p.unpaid_actions(400, 1_200), 2);
+        assert_eq!(p.unpaid_actions(50_000, 1_200), 0);
+        assert_eq!(Zip317Params::ZIP317.unpaid_actions(4_999, 10_000), 2);
     }
 
     #[test]

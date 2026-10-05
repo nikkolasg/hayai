@@ -13,7 +13,7 @@ Date: 2026-10-04. `docs/install.md` gives the procedures.
 | `docker/.env` | Compose variables: `COMPOSE_PROFILES`, `HAYAI_ADMIN_BIND`, `HAYAI_IMAGE`, `HAYAI_CRYPTO_BACKEND`, `ZAKURA_IMAGE`. |
 | `docker/config/hayaid.testnet.toml` | hayaid in shadow mode: peer and RPC of zakurad on 127.0.0.1, data in `/var/lib/hayai`, traces on. |
 | `docker/config/hayaid.mainnet.toml` | hayaid in shadow mode on Mainnet: peer 8233 and RPC 8232 of zakurad-mainnet on 127.0.0.1. |
-| `docker/config/hayaid.regtest.toml` | hayaid in full mode: P2P 18344, RPC 18345, `generate` on. |
+| `docker/config/hayaid.regtest.toml` | hayaid in full mode: P2P 18344, RPC 18345 with cookie authentication (cookie file `/var/lib/hayai/.cookie`), `generate` on. |
 | `docker/config/zakurad.testnet.toml` | zakurad on Testnet: RPC on loopback without cookie authentication, metrics 9999, health 8080, traces. |
 | `docker/config/zakurad.mainnet.toml` | zakurad on Mainnet: the same settings, P2P 8233, RPC 8232. |
 

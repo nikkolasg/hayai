@@ -1109,8 +1109,6 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
 - Zakura with the legacy stack writes no commit trace rows, so the pair measures both
   nodes from outside. A Zakura node that stops loses its newest non-finalized blocks: a
   test must not use its restart as a disconnect.
-- Not solved: a configured Regtest cannot state a lockbox disbursement or a funding
-  stream, so Zakura refuses the NU6.1 activation block of hayaid (hayai-op5).
 
 ## 2026-10-05 — Unpaid action limit 0 (owner decision)
 
@@ -1123,3 +1121,85 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
 - Lesson: a test transaction needs the conventional fee of its logical actions (15,000
   zatoshis for one transparent input and one Orchard or Ironwood output).
 
+## 2026-10-05 — Fee policy values of Zakura (owner decision, hayai-dh9)
+
+- The policy, the store and the template use `Zip317Params::ZAKURA`: marginal fee 400
+  zatoshis, 2 grace actions, weight ratio cap 13. `MIN_RELAY_FEE_CAP` is 800. Reason:
+  equal relay behaviour with the other nodes. `docs/mempool-policy.md` has the table.
+- `Zip317Params::ZIP317` stays for the arithmetic tests of hayai-template and hayai-rpc.
+  The fixtures of hayai-bench still pay 5,000 zatoshis for each action.
+- The node names the parameter set in three places (`MempoolPolicy::of`, and two
+  `PreparedStore::new` calls in `hayaid/src/node.rs`). They must name the same set.
+- Lesson: a policy test must state its fee as a multiple of the marginal fee of the
+  policy. The tests with a literal fee of 15,000 zatoshis needed a change.
+
+## 2026-10-05 — Regtest funding streams and lockbox disbursements (F1, hayai-op5, hayai-40v)
+
+- `RegtestConfig` takes lockbox disbursements and funding streams with the meaning of
+  Zakura's Regtest parameters. `CoinbaseTerms` is the one place that reads them, so the
+  coinbase check and the template agree without a change.
+- The rule of Zakura on an NU6.1 height without a disbursement is in `CoinbaseTerms`
+  (`ConsensusError::NoLockboxDisbursement`): the block is not valid. hayaid also refuses
+  such a `[regtest]` section at its start, because a node stops when it cannot make a
+  template on its tip.
+- A check that needs the activation heights (address periods) runs on a `Network`.
+  `with_funding_streams` makes one from a copy of the configuration, which stays in
+  memory. The stream tables stay in memory too.
+- Regtest takes a P2SH address of any network, as Zakura: the script has the hash only.
+- Lesson: the reference has its own rule for an absent configuration value. Compare the
+  behaviour of both nodes on the empty configuration, not only on the full one.
+
+## 2026-10-05 — Lane publication and private transactions (owner decision, hayai-m7h)
+
+- `[mining] lane_publication`: `all` (default), `public`, `none`. The key decides only
+  what the node publishes of its own template. The feature bits do not change: a bit
+  states what a node can receive, and no peer waits for a candidate.
+- A private transaction (`sendprivatetransaction`) is in the store and in the template.
+  The relay reads the store through `mempool::PublicTxs`, which does not have the private
+  transactions. This one place covers `inv`, `TxAnnounce`, `getdata`, `TxRequest`,
+  `mempool` and the id form of a compact block (prefilled). The driver keeps the private
+  ids out of the lane.
+- A separate method, and not a parameter of `sendrawtransaction`: a Zakura or zcashd node
+  ignores an unknown parameter and publishes the transaction. An unknown method fails.
+- A node with `all` refuses the method. A silent public relay is worse than an error.
+- Lesson: in a test with two nodes, the second node publishes its own lane, and the first
+  node sends it on. A test that reads "no batch on the wire" needs a second node with
+  `none`, or no second node.
+
+## 2026-10-05 — Operator RPC methods with the fields of Zakura (hayai-m7h)
+
+- `hayai-rpc/src/info.rs` has the shapes, `hayaid/src/query.rs` has the node state
+  (`NodeQuery`). Scenario `rpc` of the Regtest pair compares each answer with zakurad.
+- `stop` and `addnode` work on Regtest only, as the bodies of Zakura.
+- The node holds the state after a block (tree roots, tree sizes, value pools) for the
+  layers and the base only. `getblockheader` and `getblock` leave the fields of that
+  state out for an older block. The node does not store the genesis block.
+- Not served: `getblock` with verbosity 2 (the transaction object of
+  `getrawtransaction`), `errors` of `getinfo`.
+- Lessons from the comparison with zakurad:
+  - Zakura answers a parameter error with code -1, not -32602.
+  - The difficulty limit of Zakura is the target of the compact form of the limit. The
+    full Regtest limit gives 1.0000000596, not 1.0.
+  - Two Regtest producers with the same coinbase script make the same block in the same
+    second. A fork test needs two scripts.
+  - A test address must come from a key. A made-up Sapling or Unified address is not
+    valid, and both nodes then agree on "not valid".
+
+## 2026-10-05 — Cookie authentication of the RPC server (hayai-8g4)
+
+- The RPC server has the cookie of Zakura: file `.cookie` with `__cookie__:<secret>`,
+  mode 0600, HTTP Basic, keys `enable_cookie_auth` (default on) and `cookie_dir`. The
+  default directory is `data_dir`. `hayai-rpc/src/cookie.rs` owns the file and the
+  header rule. `HttpServer` removes the file at its shutdown.
+- A request without the credentials gets the status 401, as zcashd. zakurad closes the
+  connection without an answer. `stop` and `addnode` stay Regtest only, as the bodies of
+  Zakura. The `/metrics` server stays open, as in Zakura.
+- Each client in the repository reads the cookie file: the tests of hayaid, the Regtest
+  pair (both nodes have the cookie, with one client code), `scripts/regtest_pair.sh`.
+  The tests of `hayai-rpc` that have another subject start the server without a cookie.
+- The workspace has no base64 crate: `cookie.rs` has the two functions.
+- Lessons:
+  - `curl -u ""` asks the terminal for a password and blocks a script. Read the cookie
+    file first and stop when it is absent.
+  - The server reads the body of a request before it answers 401. An answer before the
+    read can be lost when the server closes a connection with data that it did not read.

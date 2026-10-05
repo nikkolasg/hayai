@@ -4,7 +4,8 @@
 //! heights. The recipient is an address that changes with the address period, or the
 //! deferred pool (lockbox). The constants are those of Zakura
 //! (`zakura-chain/src/parameters/network/subsidy/constants/{mainnet,testnet}.rs`), which
-//! are those of Zebra and zcashd. Regtest has no funding stream.
+//! are those of Zebra and zcashd. A Regtest network takes its funding streams from its
+//! configuration ([`crate::RegtestConfig::with_funding_streams`]).
 //!
 //! NU7 changes two things (ZIP 218, ZIP 214 revision 3): the end of the last stream set
 //! moves with the third halving ([`nu7_adjusted_end`]), and an address period has 3 times
@@ -12,12 +13,18 @@
 //! before NU7. ZIP 2008 changes the Mainnet recipient of the last stream set at NU7:
 //! Mainnet has no NU7 height, and this module has no code for ZIP 2008.
 
-use crate::{Network, Upgrade, POST_BLOSSOM_TARGET_SPACING, POST_NU7_TARGET_SPACING};
+use crate::subsidy::halving_height;
+use crate::{
+    Network, RegtestConfigError, RegtestFundingStreams, Upgrade, POST_BLOSSOM_TARGET_SPACING,
+    POST_NU7_TARGET_SPACING,
+};
 
-/// The recipient of a funding stream.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// The recipient of a funding stream. The names in a configuration file are those of
+/// Zakura (`FundingStreamReceiver`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum Receiver {
     /// Electric Coin Company (ZIP 1014).
+    #[serde(rename = "ECC")]
     Ecc,
     /// Zcash Foundation (ZIP 1014).
     ZcashFoundation,
@@ -39,11 +46,12 @@ pub struct FundingStream {
 }
 
 /// `fs.Denominator` of every stream.
-const DENOMINATOR: u64 = 100;
+pub(crate) const DENOMINATOR: u64 = 100;
 /// Address periods in one post-Blossom halving interval:
 /// `FSRecipientChangeInterval = PostBlossomHalvingInterval / 48`.
 const PERIODS_PER_HALVING_INTERVAL: u32 = 48;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Stream {
     receiver: Receiver,
     /// `fs.Numerator`.
@@ -55,7 +63,8 @@ struct Stream {
 }
 
 /// The streams of one range of heights.
-struct StreamSet {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct StreamSet {
     /// `fs.StartHeight`.
     start: u32,
     /// `fs.EndHeight`: the first height after the streams, before NU7.
@@ -187,8 +196,77 @@ fn schedule(network: Network) -> (&'static [StreamSet], u32) {
     match network {
         Network::Mainnet => (&MAINNET, 1_046_400),
         Network::Testnet => (&TESTNET, 1_116_000),
-        Network::Regtest | Network::ConfiguredRegtest(_) => (&[], 0),
+        Network::Regtest => (&[], 0),
+        Network::ConfiguredRegtest(config) => match config.funding_streams() {
+            [] => (&[], 0),
+            sets => {
+                // Zakura `height_for_first_halving` of a configured network.
+                let Some(first_halving) = halving_height(network, 1, u32::MAX) else {
+                    unreachable!("Regtest has a first halving below the largest height");
+                };
+                (sets, first_halving)
+            }
+        },
     }
+}
+
+/// The stream sets of a Regtest configuration. The tables stay in memory until the
+/// process ends.
+pub(crate) fn regtest_sets(sets: &[RegtestFundingStreams]) -> &'static [StreamSet] {
+    fn leak<T>(items: Vec<T>) -> &'static [T] {
+        Box::leak(items.into_boxed_slice())
+    }
+    let sets = sets.iter().map(|set| StreamSet {
+        start: set.height_range.start,
+        end: set.height_range.end,
+        ends_at_third_halving: false,
+        streams: leak(
+            set.recipients
+                .iter()
+                .map(|recipient| Stream {
+                    receiver: recipient.receiver,
+                    numerator: recipient.numerator,
+                    addresses: leak(
+                        recipient
+                            .addresses
+                            .iter()
+                            .map(|address| &*Box::leak(address.clone().into_boxed_str()))
+                            .collect(),
+                    ),
+                })
+                .collect(),
+        ),
+    });
+    leak(sets.collect())
+}
+
+/// Checks that each stream with an address of the configured Regtest `network` has one
+/// address for each address period of its range. Zakura stops at the first block of a
+/// period without an address (`funding_stream_address_index`,
+/// `zakura-consensus/src/block/subsidy.rs:18-43`).
+pub(crate) fn check_address_counts(network: Network) -> Result<(), RegtestConfigError> {
+    let (sets, first_halving) = schedule(network);
+    for set in sets.iter().filter(|set| set.start < set.end) {
+        let periods = address_period(network, first_halving, set.end - 1)
+            - address_period(network, first_halving, set.start)
+            + 1;
+        let Ok(required) = usize::try_from(periods) else {
+            unreachable!("the address period does not decrease with the height");
+        };
+        for stream in set.streams {
+            let found = stream.addresses.len();
+            if stream.receiver != Receiver::Deferred && found < required {
+                return Err(RegtestConfigError::StreamAddresses {
+                    receiver: stream.receiver,
+                    start: set.start,
+                    end: set.end,
+                    required,
+                    found,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The address period of `height` (protocol specification §7.10):
@@ -214,9 +292,11 @@ fn address_period(network: Network, first_halving: u32, height: u32) -> i64 {
 
 /// The funding streams that are active at `height`, with the values for a block subsidy
 /// of `subsidy` zatoshis: `fs.Value(height) = floor(subsidy * numerator / 100)`. A subsidy
-/// of 0 has no funding stream (Zakura `funding_stream_values`).
+/// of 0 has no funding stream, and a height before Canopy has none (Zakura
+/// `funding_stream_values`).
 pub fn funding_streams(network: Network, height: u32, subsidy: u64) -> Vec<FundingStream> {
-    if subsidy == 0 {
+    let canopy = network.activation_height(Upgrade::Canopy);
+    if subsidy == 0 || !matches!(canopy, Some(canopy) if canopy <= height) {
         return Vec::new();
     }
     let (sets, first_halving) = schedule(network);

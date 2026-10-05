@@ -18,10 +18,10 @@ use crate::{rpc, Args, Report};
 
 type R<T> = Result<T, String>;
 
-/// The fee of a transaction of the harness: above the ZIP 317 conventional fee of each.
-const FEE: u64 = 20_000;
+/// The fee of a transaction of the harness: above the conventional fee of each.
+pub const FEE: u64 = 20_000;
 /// Seconds that a node has to follow the other one.
-const FOLLOW_S: u64 = 90;
+pub const FOLLOW_S: u64 = 90;
 
 fn pools(addr: SocketAddr) -> R<BTreeMap<String, u64>> {
     let info = rpc::call(addr, "getblockchaininfo", json!([]))?;
@@ -90,12 +90,12 @@ fn compare_state(pair: &Pair) -> R<String> {
 }
 
 /// The coinbase coin of the block at `at`. It is mature 100 blocks later.
-fn coin_at(pair: &Pair, at: u32) -> R<Coin> {
+pub fn coin_at(pair: &Pair, at: u32) -> R<Coin> {
     let block = rpc::call(pair.zakura_rpc(), "getblock", json!([at.to_string(), 0]))?;
     coinbase_coin(block.as_str().ok_or("getblock: no hex")?, at)
 }
 
-fn send(addr: SocketAddr, tx: &Bytes) -> R<String> {
+pub fn send(addr: SocketAddr, tx: &Bytes) -> R<String> {
     rpc::call(addr, "sendrawtransaction", json!([hex::encode(tx)]))?
         .as_str()
         .map(str::to_string)
@@ -112,7 +112,7 @@ fn mempool(addr: SocketAddr) -> R<Vec<String>> {
         .collect())
 }
 
-fn wait_mempool(addr: SocketAddr, id: &str, seconds: u64) -> R<Duration> {
+pub fn wait_mempool(addr: SocketAddr, id: &str, seconds: u64) -> R<Duration> {
     let start = Instant::now();
     loop {
         if mempool(addr)?.iter().any(|t| t == id) {
@@ -128,7 +128,7 @@ fn wait_mempool(addr: SocketAddr, id: &str, seconds: u64) -> R<Duration> {
 }
 
 /// A transparent transaction of the next block that spends `coin` to one output.
-fn plain_tx(pair: &Pair, coin: &Coin, fee: u64) -> R<(Bytes, String)> {
+pub fn plain_tx(pair: &Pair, coin: &Coin, fee: u64) -> R<(Bytes, String)> {
     let branch = branch_at(height(pair.zakura_rpc())? as u32 + 1);
     let tx = transparent_tx(
         branch,
@@ -142,7 +142,7 @@ fn plain_tx(pair: &Pair, coin: &Coin, fee: u64) -> R<(Bytes, String)> {
 }
 
 /// A transaction of the next block that shields half of `coin`.
-fn shield_tx(pair: &Pair, coin: &Coin) -> R<(Bytes, String, BranchId)> {
+pub fn shield_tx(pair: &Pair, coin: &Coin) -> R<(Bytes, String, BranchId)> {
     let branch = branch_at(height(pair.zakura_rpc())? as u32 + 1);
     let half = coin.value / 2;
     let tx = shielding_tx(branch, coin, half, coin.value - half - FEE, 0);
@@ -372,36 +372,110 @@ pub fn b(args: &Args, report: &mut Report) -> R<()> {
     finish(&mut pair, report)
 }
 
-/// The NU6.1 activation block without a lockbox disbursement in the configuration of
-/// Zakura: hayaid accepts its own block 100, zakurad refuses it.
+/// Starts hayaid on the configuration file `config` of `pair`, which the node must
+/// refuse. Returns its output.
+fn refused_start(pair: &Pair, config: &str) -> R<String> {
+    let log_path = pair.setup.dir.join("hayaid-refused.log");
+    let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
+    let mut child = Command::new(&pair.setup.hayaid_bin)
+        .arg("start")
+        .arg("-c")
+        .arg(pair.setup.dir.join(config))
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log)
+        .spawn()
+        .map_err(|e| format!("hayaid: start: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            let text = std::fs::read_to_string(&log_path).map_err(|e| e.to_string())?;
+            return match status.success() {
+                true => Err(format!("hayaid ended without an error: {text}")),
+                false => Ok(text.trim().to_string()),
+            };
+        }
+        if Instant::now() > deadline {
+            child.kill().map_err(|e| e.to_string())?;
+            child.wait().map_err(|e| e.to_string())?;
+            return Err("hayaid started on a configuration that it must refuse".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Scenario nu61: the NU6.1 activation block (finding F1). Part 1: a network without a
+/// lockbox disbursement. zakurad has no block 100, and hayaid does not start. Part 2: both
+/// nodes have the same funding streams and the same disbursement of 10 ZEC. Each node
+/// accepts the blocks of the other one across height 100.
 pub fn nu61(args: &Args, report: &mut Report) -> R<()> {
-    let mut pair = args.pair("nu61", None)?;
+    let mut none = args.pair_with("nu61-none", None, true)?;
+    none.start_zakurad()?;
+    let z = none.zakura_rpc();
+    generate(z, 99)?;
+    let own = rpc::call(z, "generate", json!([1]));
+    let tip_z = height(z)?;
+    report.check(
+        "no disbursement: zakurad has no block 100",
+        own.is_err() && tip_z == 99,
+        format!("zakurad at {tip_z}, generate: {own:?}"),
+    );
+    let refused = refused_start(&none, "hayai.toml");
+    report.check(
+        "no disbursement: hayaid does not start",
+        matches!(&refused, Ok(text) if text.contains("lockbox_disbursements")),
+        format!("{refused:?}"),
+    );
+    finish(&mut none, report)?;
+
+    const DISBURSEMENT: u64 = 1_000_000_000;
+    let mut pair = args.pair_with("nu61", Some(DISBURSEMENT), true)?;
     pair.start_both()?;
     let (h, z) = (pair.hayai_rpc(), pair.zakura_rpc());
     let before = generate(h, 99)?;
     wait_tip(z, &before, FOLLOW_S)?;
-    let own = rpc::call(z, "generate", json!([1]));
+    report.result("state at height 99", compare_state(&pair));
+    // The coinbase of the template: the miner output, the funding stream output, the
+    // disbursement output.
+    let template = rpc::call(h, "getblocktemplate", json!([]))?;
+    let mut draft = Draft::from_template(&template)?;
+    draft.change_coinbase_output(2, -1)?;
+    draft.change_coinbase_value(1)?;
+    let (block, _) = draft.build()?;
+    let vz = verdict(&rpc::call(z, "submitblock", json!([block])));
+    let vh = verdict(&rpc::call(h, "submitblock", json!([block])));
+    let (tip_h, tip_z) = (best(h)?, best(z)?);
     report.check(
-        "zakurad cannot mine block 100 without a configured disbursement",
-        own.is_err(),
-        format!("{own:?}"),
+        "invalid block 100: disbursement output one zatoshi too little",
+        vz != "accepted" && vh != "accepted" && tip_h == before && tip_z == before,
+        format!("hayaid: {vh}; zakurad: {vz}"),
     );
     let block_100 = generate(h, 1)?;
-    std::thread::sleep(Duration::from_secs(10));
-    let (tip_h, tip_z) = (height(h)?, height(z)?);
-    let block = rpc::call(h, "getblock", json!([block_100, 0]))?;
-    let verdict = rpc::call(z, "submitblock", json!([block]));
-    // The split is the finding. The row passes while both nodes behave as the finding says.
+    let followed = wait_tip(z, &block_100, FOLLOW_S).map(|d| format!("after {} ms", d.as_millis()));
+    report.result("zakurad accepts block 100 of hayaid", followed);
+    // 50 blocks with 0.75 ZEC each for the deferred pool, then block 100.
+    let lockbox = pools(z)?.get("lockbox").copied();
     report.check(
-        "known difference: hayaid accepts block 100 of hayaid, zakurad refuses it",
-        tip_h == 100 && tip_z == 99,
-        format!("hayaid at {tip_h}, zakurad at {tip_z}, zakurad submitblock: {verdict:?}"),
+        "the deferred pool pays the disbursement",
+        lockbox == Some(51 * 75_000_000 - DISBURSEMENT),
+        format!("lockbox of zakurad: {lockbox:?} zatoshis"),
     );
+    report.result("state at height 100", compare_state(&pair));
+    for (miner, other, name) in [(z, h, "zakurad"), (h, z, "hayaid")] {
+        let mined = generate(miner, 5)?;
+        let followed =
+            wait_tip(other, &mined, FOLLOW_S).map(|d| format!("after {} ms", d.as_millis()));
+        report.result(
+            &format!("5 blocks of {name} after the activation reach the other node"),
+            followed,
+        );
+    }
+    report.result("state at the end", compare_state(&pair));
     finish(&mut pair, report)
 }
 
 /// Scenario c: a transaction that one node takes reaches the mempool of the other node,
-/// which mines it. Then the transactions that only one policy takes.
+/// which mines it. Then the fee policy cases: both nodes give the same verdict.
 pub fn c(args: &Args, report: &mut Report) -> R<()> {
     let mut pair = args.pair("c", Some(0))?;
     pair.start_both()?;
@@ -452,20 +526,19 @@ pub fn c(args: &Args, report: &mut Report) -> R<()> {
     }
     report.result("state after the relayed transactions", compare_state(&pair));
 
-    // The policies. Both nodes take no unpaid action. hayai has the ZIP 317 marginal fee of
-    // 5,000 zatoshis for each logical action, Zakura has 400 zatoshis (`zakura-chain`,
-    // `unmined/zip317.rs`). The count of unpaid actions in the name of a row is the count
-    // of ZIP 317.
-    for (outputs, fee) in [
-        (1u64, 0u64),
-        (1, 1_000),
-        (1, 9_999),
-        (1, 10_000),
-        (2, 5_000),
-        (40, 5_000),
-        (52, 5_000),
-        (60, 5_000),
-        (60, 23_000),
+    // The policies. Both nodes take no unpaid action and have a marginal fee of 400
+    // zatoshis for each logical action (`zakura-chain`, `unmined/zip317.rs`). Each row has
+    // the verdict that both nodes must give.
+    for (outputs, fee, accepted) in [
+        (1u64, 0u64, false),
+        (1, 1_000, true),
+        (1, 9_999, true),
+        (1, 10_000, true),
+        (2, 5_000, true),
+        (40, 5_000, false),
+        (52, 5_000, false),
+        (60, 5_000, false),
+        (60, 23_000, true),
     ] {
         let coin = coin_at(&pair, next_coin)?;
         next_coin += 1;
@@ -483,10 +556,7 @@ pub fn c(args: &Args, report: &mut Report) -> R<()> {
         // The division rest goes to the fee.
         let fee = fee + rest;
         // ZIP 317: the outputs count as their bytes (32 for each) divided by 34, rounded up.
-        let unpaid = (outputs * 32)
-            .div_ceil(34)
-            .max(2)
-            .saturating_sub(fee / 5_000);
+        let unpaid = (outputs * 32).div_ceil(34).max(2).saturating_sub(fee / 400);
         // The second node can have the transaction from the first one: that is an accept
         // of its policy too.
         let known = |verdict: R<String>| match verdict {
@@ -496,18 +566,17 @@ pub fn c(args: &Args, report: &mut Report) -> R<()> {
         let verdict_z = known(send(z, &tx));
         let verdict_h = known(send(h, &tx));
         let (took_h, took_z) = (verdict_h.is_ok(), verdict_z.is_ok());
-        // Each policy decides for itself: the row records the pair of verdicts.
         report.check(
             &format!(
                 "policy verdicts: {outputs} outputs, fee {fee} zatoshis, {unpaid} unpaid actions"
             ),
-            true,
+            took_h == accepted && took_z == accepted,
             format!("hayaid: {verdict_h:?}; zakurad: {verdict_z:?}"),
         );
         if !took_h && !took_z {
             continue;
         }
-        // The node that took it mines it. The block is valid for the other node.
+        // A node that took it mines it. The block is valid for the other node.
         let (miner, other, name) = if took_h {
             wait_template_txs(h, 1, 20)?;
             (h, z, "hayaid")
@@ -609,9 +678,10 @@ fn log_len(pair: &Pair, node: &str) -> u64 {
     std::fs::metadata(pair.setup.dir.join(format!("{node}.log"))).map_or(0, |m| m.len())
 }
 
-/// Scenario e: blocks that break one rule each, through `submitblock` of both nodes.
+/// Scenario e: blocks that break one rule each, through `submitblock` of both nodes. The
+/// pair has funding streams, so one block has a wrong funding stream output.
 pub fn e(args: &Args, report: &mut Report) -> R<()> {
-    let mut pair = args.pair("e", Some(0))?;
+    let mut pair = args.pair_with("e", Some(0), true)?;
     pair.start_both()?;
     let (h, z) = (pair.hayai_rpc(), pair.zakura_rpc());
     let tip = generate(z, 112)?;
@@ -663,6 +733,13 @@ pub fn e(args: &Args, report: &mut Report) -> R<()> {
         (
             "coinbase one zatoshi too little (NU6: exact value)",
             Box::new(|d, _| d.change_coinbase_value(-1)),
+        ),
+        (
+            "funding stream output one zatoshi too little (the miner output has it)",
+            Box::new(|d, _| {
+                d.change_coinbase_output(1, -1)?;
+                d.change_coinbase_value(1)
+            }),
         ),
         (
             "wrong merkle root",

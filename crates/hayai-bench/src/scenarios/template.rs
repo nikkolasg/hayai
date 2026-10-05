@@ -21,7 +21,8 @@ use zcash_transparent::bundle::OutPoint;
 use super::{Built, Impl};
 use crate::zakura_zip317::{select_mempool_transactions, Limits};
 
-pub const PARAMS: Zip317Params = Zip317Params::ZIP317;
+/// The fee values of both sides of the comparison: the values that the node uses.
+pub const PARAMS: Zip317Params = Zip317Params::ZAKURA;
 
 pub fn coinbase_spec() -> CoinbaseSpec {
     CoinbaseSpec {
@@ -72,11 +73,12 @@ pub fn candidates(n: usize, seed: u64) -> Vec<Candidate> {
             )
         };
         let conventional_fee = PARAMS.conventional_fee(logical);
-        // Ratio in [0.3, 6): about a tenth fall below the conventional fee.
+        // Ratio in [0.3, 1.5 times the weight ratio cap): about a tenth fall below the
+        // conventional fee, and about a third are above the cap.
         let ratio: f64 = if rng.gen_bool(0.1) {
             rng.gen_range(0.3..1.0)
         } else {
-            rng.gen_range(1.0..6.0)
+            rng.gen_range(1.0..1.5 * f64::from(PARAMS.weight_ratio_cap))
         };
         let fee = (conventional_fee as f64 * ratio) as u64;
         let mut wtxid = [0u8; 32];

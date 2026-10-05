@@ -27,7 +27,7 @@ fn template(h: &Harness) -> LiveTemplate {
     let candidates: Vec<Candidate> = h
         .prepare_all()
         .iter()
-        .map(|p| p.candidate(Vec::new(), &Zip317Params::ZIP317))
+        .map(|p| p.candidate(Vec::new(), &Zip317Params::ZAKURA))
         .collect();
     live.load(candidates).unwrap();
     live

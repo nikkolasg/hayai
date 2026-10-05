@@ -599,13 +599,13 @@ mod tests {
     use crate::test_support::{p2pkh, prepared, TxSpec, BRANCH, P2PKH_SIG};
 
     /// The fee of [`TxSpec::paying`] that equals the conventional fee (2 grace actions).
-    const CONVENTIONAL: u64 = 10_000;
+    const CONVENTIONAL: u64 = 800;
 
     fn store(entries: usize, seed: u64) -> PreparedStore {
         PreparedStore::with_rng(
             RuleEpoch::consensus(BRANCH),
             entries * MEMPOOL_COST_THRESHOLD as usize,
-            Zip317Params::ZIP317,
+            Zip317Params::ZAKURA,
             Box::new(StdRng::seed_from_u64(seed)),
         )
     }
@@ -663,7 +663,7 @@ mod tests {
                 fee: CONVENTIONAL,
                 conventional_fee: CONVENTIONAL,
                 unpaid_actions: 0,
-                weight_ratio: Zip317Params::ZIP317.weight_ratio(CONVENTIONAL, CONVENTIONAL),
+                weight_ratio: Zip317Params::ZAKURA.weight_ratio(CONVENTIONAL, CONVENTIONAL),
                 cost: MEMPOOL_COST_THRESHOLD,
                 eviction_weight: MEMPOOL_COST_THRESHOLD,
             }
@@ -838,7 +838,7 @@ mod tests {
         assert!(!list.contains(&txid(1), at(3_602)));
         assert!(list.contains(&txid(2), at(3_602)));
         assert_eq!(
-            PreparedStore::new(RuleEpoch::consensus(BRANCH), 1, Zip317Params::ZIP317)
+            PreparedStore::new(RuleEpoch::consensus(BRANCH), 1, Zip317Params::ZAKURA)
                 .writer
                 .lock()
                 .evicted

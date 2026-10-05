@@ -811,7 +811,7 @@ fn a_template_candidate_counts_its_ironwood_actions() {
     let fixture = transparent_coinbase_block();
     let h = harness(&fixture);
     let prepared = h.prepare_all();
-    let params = Zip317Params::ZIP317;
+    let params = Zip317Params::ZAKURA;
     let mut with_ironwood = 0;
     for tx in &prepared {
         let raw = &tx.raw;

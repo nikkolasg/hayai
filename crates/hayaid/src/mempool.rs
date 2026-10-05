@@ -20,7 +20,12 @@
 //! The cheap rules run before the proofs. A transaction with an invalid script or an
 //! invalid proof costs its peer score (`hayai_sync::score`). A refusal that depends on the
 //! tip or on the policy costs nothing.
+//!
+//! A private transaction ([`Mempool::admit_private`]) is in the store and thus in the
+//! template, and the node does not show it to a peer before a block contains it: the relay
+//! reads the store through [`PublicTxs`], which does not have the private transactions.
 
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock, Weak};
 
 use hayai_coins::{CoinsView, OutPoint, Pool};
@@ -32,7 +37,7 @@ use hayai_prepared::{
 };
 use hayai_prepared::{MempoolPolicy, PolicyContext, PolicyReject};
 use hayai_state::ChainView;
-use hayai_wire::{RawTx, WtxId};
+use hayai_wire::{RawTx, TxLookup, WtxId};
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::metrics::NodeMetrics;
@@ -88,6 +93,9 @@ pub struct Mempool {
     /// The number of tip changes. The driver holds the lock while it changes the view and
     /// cleans the store, and the insert of an admission holds it too.
     tip_changes: Mutex<u64>,
+    /// The private transactions that no block contains yet.
+    private: RwLock<HashSet<WtxId>>,
+    private_admission: Mutex<()>,
     #[cfg(test)]
     pub(crate) before_insert: Mutex<Option<BeforeInsert>>,
 }
@@ -109,6 +117,8 @@ impl Mempool {
             metrics,
             relay: OnceLock::new(),
             tip_changes: Mutex::new(0),
+            private: RwLock::new(HashSet::new()),
+            private_admission: Mutex::new(()),
             #[cfg(test)]
             before_insert: Mutex::new(None),
         }
@@ -151,6 +161,41 @@ impl Mempool {
             }
         }
         Err(Reject::TipChanged)
+    }
+
+    /// As [`Mempool::admit`], for a transaction that the node must not show to a peer
+    /// before a block contains it. The mark is set before the insert, so the relay never
+    /// reads the transaction from the store.
+    pub fn admit_private(&self, tx: Arc<RawTx>) -> Result<(), Reject> {
+        // One private admission at a time: the mark of a transaction has one owner.
+        let _one = self.private_admission.lock();
+        let wtxid = tx.wtxid();
+        // A transaction of the store is public: the peers can know it already.
+        let None = self.store.get(&wtxid) else {
+            return Err(Reject::Known);
+        };
+        self.private.write().insert(wtxid);
+        self.admit(tx).inspect_err(|_| {
+            self.private.write().remove(&wtxid);
+        })
+    }
+
+    /// Whether `id` is a private transaction that no block contains yet.
+    pub fn is_private(&self, id: &WtxId) -> bool {
+        self.private.read().contains(id)
+    }
+
+    /// Ends the private marks of `ids`: the transactions that a block contains, the
+    /// transactions that a block removed from the store, and a transaction that a peer
+    /// sent.
+    pub(crate) fn forget_private(&self, ids: &[WtxId]) {
+        if self.private.read().is_empty() {
+            return;
+        }
+        let mut private = self.private.write();
+        for id in ids {
+            private.remove(id);
+        }
     }
 
     /// One admission of `tx`. `None`: the tip changed between the checks and the insert.
@@ -354,11 +399,49 @@ impl Mempool {
     }
 }
 
+/// The store without the private transactions: what the relay announces and serves.
+pub struct PublicTxs {
+    pub store: Arc<PreparedStore>,
+    pub mempool: Arc<Mempool>,
+}
+
+impl TxLookup for PublicTxs {
+    fn get(&self, id: &WtxId) -> Option<Arc<RawTx>> {
+        match self.mempool.is_private(id) {
+            true => None,
+            false => TxLookup::get(self.store.as_ref(), id),
+        }
+    }
+
+    fn for_each_id(&self, f: &mut dyn FnMut(&WtxId)) {
+        let private = self.mempool.private.read();
+        self.store.for_each_id(&mut |id| {
+            if !private.contains(id) {
+                f(id)
+            }
+        });
+    }
+
+    fn len(&self) -> usize {
+        let private = self.mempool.private.read();
+        let hidden = private
+            .iter()
+            .filter(|id| self.mempool.contains(id))
+            .count();
+        TxLookup::len(self.store.as_ref()).saturating_sub(hidden)
+    }
+}
+
 impl TxSink for Mempool {
     fn accept_tx(&self, tx: Arc<RawTx>, source: Source) -> bool {
         let wtxid = tx.wtxid();
         match self.admit(tx) {
-            Ok(()) => true,
+            Ok(()) => {
+                // A transaction from a peer is public. A mark of an earlier private
+                // admission of the same transaction, which left the store, ends here.
+                self.forget_private(&[wtxid]);
+                true
+            }
             Err(Reject::Known) => false,
             Err(reason) => {
                 let counter = match &reason {
@@ -453,7 +536,7 @@ mod tests {
             let store = Arc::new(PreparedStore::new(
                 epoch,
                 MAX_BLOCK_BYTES,
-                Zip317Params::ZIP317,
+                Zip317Params::ZAKURA,
             ));
             let mut mempool = Mempool::new(
                 store,

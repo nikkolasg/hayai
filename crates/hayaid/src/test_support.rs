@@ -251,11 +251,11 @@ mod tests {
             )
         };
 
-        // One transparent input and two Orchard actions: 3 logical actions, 15,000
+        // One transparent input and two Orchard actions: 3 logical actions, 1,200
         // zatoshis. The unpaid action limit is 0.
-        assert_eq!(admit(&prepared(15_000, 0)), Ok(()));
+        assert_eq!(admit(&prepared(1_200, 0)), Ok(()));
         assert_eq!(
-            admit(&prepared(14_999, 0)),
+            admit(&prepared(1_199, 0)),
             Err(PolicyReject::UnpaidActions {
                 unpaid: 1,
                 limit: 0

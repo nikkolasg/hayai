@@ -37,11 +37,12 @@ fn every_fixture_transaction_is_standard() {
         let h = harness(&fixture);
         for tx in h.prepare_all() {
             assert_eq!(admit(&h, &tx, fixture.height), Ok(()), "{}", fixture.name);
-            // The fixtures pay the conventional fee.
-            let store = PreparedStore::new(h.cfg.epoch(), 1 << 20, Zip317Params::ZIP317);
+            // The fixtures pay 5,000 zatoshis for each logical action, 12.5 times the
+            // conventional fee of the node.
+            let store = PreparedStore::new(h.cfg.epoch(), 1 << 20, Zip317Params::ZAKURA);
             store.insert(tx.clone()).unwrap();
             let fees = store.fees(&tx.wtxid()).unwrap();
-            assert_eq!(fees.fee, fees.conventional_fee);
+            assert_eq!(2 * fees.fee, 25 * fees.conventional_fee);
             assert_eq!(fees.unpaid_actions, 0);
             assert_eq!(fees.eviction_weight, fees.cost);
             assert_eq!(
@@ -100,16 +101,16 @@ fn a_real_transaction_meets_the_context_rules_at_their_boundaries() {
         Err(PolicyReject::UnshieldedCoinbaseSpend { input: 0 })
     );
 
-    // Fee: 2 logical actions at 5,000 zatoshis. The unpaid action limit is 0, so the
-    // transaction must pay 10,000 zatoshis. The minimum relay fee is below that value.
+    // Fee: 2 logical actions at 400 zatoshis. The unpaid action limit is 0, so the
+    // transaction must pay 800 zatoshis. The minimum relay fee is not above that value.
     let with_fee = |fee| {
         let mut copy = (**tx).clone();
         copy.fee = fee;
         admit(&h, &copy, next)
     };
-    assert_eq!(with_fee(10_000), Ok(()));
+    assert_eq!(with_fee(800), Ok(()));
     assert_eq!(
-        with_fee(9_999),
+        with_fee(799),
         Err(PolicyReject::UnpaidActions {
             unpaid: 1,
             limit: 0
@@ -165,7 +166,7 @@ fn zip_401_eviction_with_real_transactions() {
         let store = PreparedStore::with_rng(
             h.cfg.epoch(),
             3 * MEMPOOL_COST_THRESHOLD as usize,
-            Zip317Params::ZIP317,
+            Zip317Params::ZAKURA,
             Box::new(StdRng::seed_from_u64(seed)),
         );
         let events = store.events();

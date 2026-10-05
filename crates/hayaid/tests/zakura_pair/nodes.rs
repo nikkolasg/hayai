@@ -1,8 +1,9 @@
 //! The two processes of the pair: one hayaid and one zakurad on Regtest, on loopback.
 //!
 //! Both nodes have the same network: the zcashd Regtest genesis block, Overwinter to NU5 at
-//! height 1, the activation heights of [`ACTIVATIONS`], no funding stream, no proof of
-//! work (`disable_pow` of Zakura, the Regtest waiver of hayai), and no seeder.
+//! height 1, the activation heights of [`ACTIVATIONS`], the lockbox disbursement and the
+//! funding streams of the [`Setup`], no proof of work (`disable_pow` of Zakura, the
+//! Regtest waiver of hayai), and no seeder.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use hayai_rpc::cookie::COOKIE_FILE;
 use serde_json::{json, Value};
 
 use crate::rpc;
@@ -31,6 +33,15 @@ pub fn nu7_height() -> Option<u32> {
 /// The Regtest pay-to-script-hash address of the redeem script `OP_TRUE`: each coinbase of
 /// both nodes pays to it, so the harness spends a coin without a key.
 pub const MINER_ADDRESS: &str = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh";
+
+/// The funding streams of a pair that has them: from the NU6 height to the NU6.3 height,
+/// 12 % of the block subsidy to the deferred pool and 8 % to an address.
+const STREAM_HEIGHTS: std::ops::Range<u32> = ACTIVATIONS[0]..ACTIVATIONS[3];
+/// The addresses of the funding stream, in turn: one for each address period of 6 blocks.
+const STREAM_ADDRESSES: [&str; 2] = [
+    "t2HifwjUj9uyxr9bknR8LFuQbc98c3vkXtu",
+    "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v",
+];
 
 pub struct Ports {
     pub hayai_p2p: u16,
@@ -101,6 +112,25 @@ impl Proc {
         }
     }
 
+    /// Waits until the child ends by itself. Returns whether its exit status is 0. After
+    /// `seconds` the function returns an error, and the drop of the value ends the child.
+    pub fn wait_exit(mut self, seconds: u64) -> Result<bool, String> {
+        let deadline = Instant::now() + Duration::from_secs(seconds);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    fs::remove_file(&self.pid_file).map_err(|e| e.to_string())?;
+                    return Ok(status.success());
+                }
+                Ok(None) if Instant::now() > deadline => {
+                    return Err(format!("{} runs {seconds} s after `stop`", self.name));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => return Err(format!("{}: wait: {e}", self.name)),
+            }
+        }
+    }
+
     /// Sends `signal` to the PID of this child and waits for its end. After 90 s the
     /// harness ends the child with SIGKILL and returns an error.
     pub fn stop(mut self, signal: &str) -> Result<(), String> {
@@ -154,10 +184,12 @@ pub struct Setup {
     pub zakurad_bin: PathBuf,
     pub dir: PathBuf,
     pub ports: Ports,
-    /// The amount in zatoshis of the lockbox disbursement that the Zakura node expects in
-    /// the NU6.1 activation block. `None`: no disbursement in the configuration, and the
-    /// Zakura node refuses each block at that height.
-    pub zakura_disbursement: Option<u64>,
+    /// The amount in zatoshis of the lockbox disbursement that both nodes expect in the
+    /// NU6.1 activation block. `None`: no disbursement in the configurations. The Zakura
+    /// node then refuses each block at that height, and hayaid does not start.
+    pub disbursement: Option<u64>,
+    /// Both nodes have the funding streams of [`STREAM_HEIGHTS`].
+    pub funding_streams: bool,
     /// The log level of hayaid.
     pub hayai_log: String,
 }
@@ -183,6 +215,14 @@ impl Pair {
             zakurad: None,
         };
         pair.write_configs()?;
+        // Both nodes have the cookie authentication, and one client code serves both.
+        // hayaid writes its cookie file to its data directory, zakurad to its `cookie_dir`.
+        for (addr, cookie_dir) in [
+            (pair.hayai_rpc(), "hayai-data"),
+            (pair.zakura_rpc(), "zakura-cookie"),
+        ] {
+            rpc::set_cookie(addr, pair.setup.dir.join(cookie_dir).join(COOKIE_FILE));
+        }
         Ok(pair)
     }
 
@@ -210,6 +250,30 @@ impl Pair {
             Some(height) => (format!(", nu7 = {height}"), format!("NU7 = {height}\n")),
             None => (String::new(), String::new()),
         };
+        // The heights from 50 to 199 are the address periods 8 to 33.
+        let addresses: Vec<String> = (0..26)
+            .map(|period| format!("\"{}\"", STREAM_ADDRESSES[period % 2]))
+            .collect();
+        let addresses = addresses.join(", ");
+        let (start, end) = (STREAM_HEIGHTS.start, STREAM_HEIGHTS.end);
+        let (disbursement_hayai, disbursement_zakura) = match self.setup.disbursement {
+            Some(amount) => (
+                format!("lockbox_disbursements = [{{ address = \"{MINER_ADDRESS}\", amount = {amount} }}]\n"),
+                format!("[[network.testnet_parameters.lockbox_disbursements]]\naddress = \"{MINER_ADDRESS}\"\namount = {amount}\n"),
+            ),
+            None => (String::new(), String::new()),
+        };
+        let streams = |table: &str| match self.setup.funding_streams {
+            true => format!(
+                "[[{table}]]\nheight_range = {{ start = {start}, end = {end} }}\n\
+                 [[{table}.recipients]]\nreceiver = \"Deferred\"\nnumerator = 12\n\
+                 [[{table}.recipients]]\nreceiver = \"MajorGrants\"\nnumerator = 8\n\
+                 addresses = [{addresses}]\n"
+            ),
+            false => String::new(),
+        };
+        let streams_hayai = streams("regtest.funding_streams");
+        let streams_zakura = streams("network.testnet_parameters.funding_streams");
         let hayai = format!(
             r#"[network]
 network = "regtest"
@@ -235,12 +299,13 @@ node = "hayai"
 miner_address = "{MINER_ADDRESS}"
 regtest_produce = true
 
-[regtest]
-activation_heights = {{ nu6 = {nu6}, nu6_1 = {nu6_1}, nu6_2 = {nu6_2}, nu6_3 = {nu6_3}{nu7_hayai} }}
-
 [log]
 level = "{log}"
-"#,
+
+[regtest]
+activation_heights = {{ nu6 = {nu6}, nu6_1 = {nu6_1}, nu6_2 = {nu6_2}, nu6_3 = {nu6_3}{nu7_hayai} }}
+{disbursement_hayai}
+{streams_hayai}"#,
             log = self.setup.hayai_log,
             hp2p = p.hayai_p2p,
             zp2p = p.zakura_p2p,
@@ -260,12 +325,6 @@ level = "{log}"
                 "peers = []",
             );
         fs::write(self.setup.dir.join("hayai-alone.toml"), alone).map_err(|e| e.to_string())?;
-        let disbursement = match self.setup.zakura_disbursement {
-            Some(amount) => format!(
-                "[[network.testnet_parameters.lockbox_disbursements]]\naddress = \"{MINER_ADDRESS}\"\namount = {amount}\n"
-            ),
-            None => String::new(),
-        };
         // No seeder and no bootstrap peer: the peer lists are empty, the peer cache is
         // off, and the legacy stack starts no Zakura (iroh) endpoint. On Regtest Zakura
         // keeps only loopback addresses of its initial peers
@@ -288,7 +347,8 @@ NU6 = {nu6}
 "NU6.2" = {nu6_2}
 "NU6.3" = {nu6_3}
 {nu7_zakura}
-{disbursement}
+{disbursement_zakura}
+{streams_zakura}
 [network.zakura]
 bootstrap_peers = []
 listen_addr = "127.0.0.1:{zv2}"
@@ -299,7 +359,7 @@ cache_dir = "{dir}/zakura-state"
 
 [rpc]
 listen_addr = "127.0.0.1:{zrpc}"
-enable_cookie_auth = false
+enable_cookie_auth = true
 cookie_dir = "{dir}/zakura-cookie"
 
 [metrics]
