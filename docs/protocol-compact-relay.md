@@ -210,6 +210,16 @@ Sender rules:
   would prefill makes it use `CompactBlock` instead.
 - A sender sends `CandidateAnnounce` and `CandidateBlock` only to peers that negotiated
   feature bits 1 and 2.
+- Publication is the choice of the lane owner. An owner can publish each template change,
+  a part of each change, or nothing. A transaction that the owner keeps out of its lane
+  is not in a batch and has no `TxAnnounce`, and the owner does not serve it before its
+  block. The block then has the transaction as a prefilled transaction in a
+  `CompactBlock`. An owner that publishes nothing sends each of its blocks as a
+  `CompactBlock`, or in the candidate form of a candidate of another lane.
+- The choice changes no message, no feature bit and no version. A feature bit states what
+  a node can receive and send on. It does not state that the node publishes a lane, and a
+  receiver never waits for a batch or a candidate before it handles a block. A node that
+  publishes nothing still sets bits 1 and 2 to take the lanes of other owners.
 
 Receiver rules:
 
@@ -240,7 +250,9 @@ Receiver rules:
 - A node announces every transaction it accepts into its prepared store with `TxAnnounce`
   (batched per 100 ms or 64 ids, whichever first). A peer requests unknown ids with
   `TxRequest`. A node prepares a transaction once on receipt and serves it from wire bytes.
-- Lane owners additionally publish their template as a lane: each template change is one
+  A miner can keep a transaction of a local client out of this rule until its block
+  (section Candidates, sender rules).
+- Lane owners can additionally publish their template as a lane: each template change is one
   `BatchAnnounce` of the added transactions and, on feature bit 2, one `CandidateAnnounce`
   (section Candidates). A batch contains only transactions already announced; a receiver
   missing some of them requests them with `TxRequest` and marks the batch complete once all

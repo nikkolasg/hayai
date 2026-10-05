@@ -156,9 +156,12 @@ Manual start of one node:
 ```
 target/release/hayaid config --network regtest > a.toml   # then edit ports and paths
 target/release/hayaid start -c a.toml
-curl -s -H 'content-type: application/json' \
+curl -s -u "$(cat hayaid-data/.cookie)" -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[10]}' http://127.0.0.1:18345/
 ```
+
+The node writes the credentials of its RPC server to the file `.cookie` in `data_dir`
+(JSON-RPC server, Protection of the port).
 
 A second node sets `peers = ["127.0.0.1:18344"]`. A node that starts later synchronizes the
 blocks that it does not have.
@@ -195,7 +198,8 @@ Read the section Mainnet first.
    scripts/join_traces.py --hayai traces --zakura /path/zakura-traces --out report.csv
    ```
 
-The node stops on SIGINT or SIGTERM. It flushes the coins, writes a snapshot (memory
+The node stops on SIGINT or SIGTERM and, on Regtest, on the `stop` method of the RPC
+server. It flushes the coins, writes a snapshot (memory
 backend), syncs the block files and closes the trace files.
 
 ### Restart
@@ -272,15 +276,20 @@ Unknown keys are errors.
 | | `flush_interval_blocks` | `100` | Blocks between two flushes of the finalized coins |
 | | `snapshot_interval_blocks` | `10000` | Memory backend: finalized blocks between two snapshots |
 | `[rpc]` | `listen_addr` | none | JSON-RPC server; full mode only |
+| | `enable_cookie_auth` | `true` | Each request needs the credentials of the cookie file (JSON-RPC server, Protection of the port). `false`: no authentication |
+| | `cookie_dir` | `[state] data_dir` | Directory of the cookie file `.cookie` |
 | `[metrics]` | `listen_addr` | none | `GET /metrics` |
 | `[trace]` | `dir` | none | JSONL trace directory; none: tracing is off |
 | | `node` | `hayaid` | The `node` field of every row |
 | `[mining]` | `miner_address` or `miner_script` | (one is required) | Script of the coinbase miner output |
 | | `regtest_produce` | `false` | Serve `generate n` (Regtest full mode) |
 | | `prebuild_own` | `true` | Full mode: prebuild the body of the newest template, so an own block commits as a pointer swap |
+| | `lane_publication` | `all` | Full mode with the compact relay: the part of the template that the node publishes to its hayai peers before it finds a block. `all`, `public` or `none` (Lane publication and private transactions) |
 | `[regtest]` | `activation_heights` | none | Regtest only: `{ nu6 = h, nu6_1 = h, nu6_2 = h, nu6_3 = h }`, the activation heights of the upgrades after NU5. Each height is above 1 and at or above the height of the upgrade before it. Each node of one Regtest network needs the same values, and a node keeps them for the life of its `data_dir` |
 | | `checkpoints` | `[]` | Regtest only: `[[height, "hash"], ...]`, the hash as `getbestblockhash` prints it. The genesis block is always a checkpoint |
 | | `mandatory_checkpoint_height` | `0` | Regtest only: a block at or below this height has the checkpoint path only. The last checkpoint must be at or above it |
+| | `lockbox_disbursements` | `[]` | Regtest only: `[{ address = "t2...", amount = n }, ...]`, the outputs that the coinbase of the `nu6_1` block must have, in zatoshis. The deferred pool pays them. The address is a P2SH address. The key has the meaning of `lockbox_disbursements` of the Regtest parameters of Zakura. A network with an `nu6_1` height needs one entry or more: without one no node accepts a block at that height, and the node does not start |
+| | `funding_streams` | `[]` | Regtest only: a list of tables with `height_range = { start = h, end = h }` and `recipients = [{ receiver = "...", numerator = n, addresses = ["t2...", ...] }, ...]`. A recipient gets `numerator` hundredths of the block subsidy from `start` to the block before `end`. `receiver` is `ECC`, `ZcashFoundation`, `MajorGrants` or `Deferred`. `Deferred` is the deferred pool and has no address. Each other recipient needs one P2SH address for each address period of the range: 6 blocks before `nu7`, 18 blocks from `nu7`. The key has the meaning of `funding_streams` of the Regtest parameters of Zakura, with a `height_range` and `recipients` in each entry |
 | `[shadow]` | `rpc_addr` | (required in shadow mode) | JSON-RPC of the Zakura node |
 | | `start_height` | upstream tip | hayai validates from `start_height + 1` |
 | | `poll_interval_ms` | `200` | Time between two `getbestblockhash` calls |
@@ -288,18 +297,164 @@ Unknown keys are errors.
 
 The node writes its log to stderr. It writes ANSI colour codes only when stderr is a terminal.
 
-The JSON-RPC server serves `getblocktemplate`, `submitblock`, `getblockcount`,
-`getbestblockhash` and, with `regtest_produce`, `generate`. It also serves these query
-methods:
+## Lane publication and private transactions
 
-| Method | Parameters | Result |
+A full node with the compact relay publishes its block template to its hayai peers before
+it finds a block: one batch for the transactions that each template change adds, and one
+candidate for each change (`docs/protocol-compact-relay.md`, Candidates). A peer then
+rebuilds a block of the node from a reference. `[mining] lane_publication` is the choice of
+the miner:
+
+| Value | Batches and candidates of the own template | Private transactions |
 |---|---|---|
-| `getblockhash` | height | The hash of the block of the committed chain |
-| `getblock` | height or hash, verbosity `0` | The block as hex. No other verbosity |
-| `getblockchaininfo` | none | `chain`, `blocks`, `bestblockhash`, and `valuePools` with `id` and `chainValueZat` for `transparent`, `sprout`, `sapling`, `orchard`, `ironwood` and `lockbox` |
-| `z_gettreestate` | height or hash of the tip | `hash`, `height`, `time`, and `commitments.finalRoot` of `sapling`, `orchard` and `ironwood`. The node has the tree state of the tip only |
-| `getrawmempool` | none | The transaction ids of the mempool |
-| `sendrawtransaction` | transaction as hex | The transaction id. The mempool admission applies; a refusal is error -26 with the reason |
+| `all` (default) | Each template change | Refused: `sendprivatetransaction` answers error -26 |
+| `public` | Each template change, without the private transactions | Accepted |
+| `none` | None | Accepted |
+
+A found block goes out over the compact relay and the legacy protocol with each value. The
+key changes only what the node publishes of its own template. The node offers the same
+feature bits with each value: it takes the batches and the candidates of other miners,
+sends them on, and can prebuild them (`prebuilt_candidates`). No peer waits for a
+candidate: a block without one arrives as a compact block.
+
+A private transaction is a transaction that a local client sends with
+`sendprivatetransaction`. The node handles it in this way until a block contains it:
+
+- The transaction is in the mempool and in the block template (`getblocktemplate`,
+  `getrawmempool`, `getmempoolinfo`).
+- The node sends no `inv` and no `TxAnnounce` for it.
+- The node does not give it to a peer: no answer to `getdata` and `TxRequest`, and no
+  entry in the answer to `mempool`.
+- No batch and no candidate of the node has it.
+- A block of the node with the transaction has its bytes for each compact-relay peer (a
+  prefilled transaction). Such a block has no candidate form.
+
+The mark ends when a block with the transaction is committed, when a block removes the
+transaction from the mempool, or when a peer sends the transaction after it left the
+mempool. A node with `lane_publication = "all"` refuses the method,
+so that a client does not get a public transaction for a private one. The method is not a
+method of zcashd or Zakura: such a node answers "method not found", and does not publish
+the transaction.
+
+Limits:
+
+- The mark is in memory only. The mempool is in memory only too.
+- A peer that has the same transaction from another source can send it to the node. While
+  the mempool holds the transaction, the node then still does not announce it.
+- A pool that reads `getblocktemplate` sees the transaction.
+
+## JSON-RPC server
+
+`[rpc] listen_addr` starts the server in full mode. The server speaks JSON-RPC 1.0 and
+2.0 over HTTP `POST`.
+
+### Protection of the port
+
+The server has the cookie authentication of Zakura and zcashd. It is on by default
+(`[rpc] enable_cookie_auth`).
+
+- At each start the node makes a secret of 32 random bytes from the random source of the
+  operating system. It writes `__cookie__:<secret>` (the secret in base64) to the file
+  `.cookie` in `[rpc] cookie_dir`, by default `[state] data_dir`.
+- The file has the mode 0600 from its creation. The node replaces a file that an earlier
+  run left. A clean stop removes the file. A node that cannot write the file does not
+  start.
+- Each request must have the header `Authorization: Basic <base64 of the file content>`.
+  The node compares the password with the secret in constant time. As Zakura, the node
+  does not read the user name.
+- A request without the correct credentials gets the HTTP status 401 with
+  `WWW-Authenticate: Basic realm="jsonrpc"` and an empty body, as in zcashd. No method
+  runs, and the node closes the connection.
+- The request line and the headers of one request have a limit of 16 KiB together
+  (status 431). The body has a limit of 5 MB (status 413).
+
+```
+curl -s -u "$(cat hayaid-data/.cookie)" -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18345/
+```
+
+The same rules in Zakura: file name and content (`zakura-rpc/src/server/cookie.rs:18`,
+`:38-45`, `:66`), mode 0600 (`cookie.rs:119-127`), write at the start
+(`server.rs:211-215`), removal at the stop (`server.rs:341-348`), header rule
+(`server/http_request_compatibility.rs:73-84`), keys `enable_cookie_auth` and `cookie_dir`
+(`config/rpc.rs:116-129`). Differences:
+
+| Subject | Zakura | hayaid |
+|---|---|---|
+| Request without the credentials | Error 401 in the code (`http_request_compatibility.rs:229-233`). The zakurad of the Regtest pair closes the connection without an HTTP answer | HTTP status 401 |
+| Default of `cookie_dir` | The cache directory of the user (`config/rpc.rs:183`) | `[state] data_dir` |
+| `cookie_file_name` | A key (`config/rpc.rs:119-121`) | Not a key: the name is `.cookie` |
+| No authentication on Mainnet and Testnet | The methods of the class `Unauthenticated` only (`server.rs:410-416`, `methods.rs:204-246`) | Each method |
+| TLS, `admin_listen_addr` | Present (`config/rpc.rs:46-60`) | Absent |
+
+What the cookie does not protect:
+
+- The server has no TLS. The credentials and each request cross the network as plain
+  text, and a host that reads them can use them until the node stops. Keep
+  `listen_addr` on 127.0.0.1, or put the port behind an SSH tunnel or a reverse proxy
+  with TLS.
+- Each user that can read the cookie file can call each method.
+- `enable_cookie_auth = false` removes the authentication. Each client that reaches the
+  port can then call each method: `submitblock`, `sendrawtransaction`,
+  `sendprivatetransaction`, `generate`, `ping`, `getpeerinfo`, and on Regtest `stop` and
+  `addnode`. The node has no smaller method set for this case. When `listen_addr` is not
+  a loopback address, the node writes one warning to its log at the start.
+- The `/metrics` server has no authentication, as the metrics endpoint of Zakura
+  (`zakurad/src/components/metrics.rs:20-22`).
+
+`stop` and `addnode` are in the class `Test` of Zakura, and their bodies refuse each
+network that is not Regtest, with or without the cookie (`methods.rs:2858-2882`,
+`methods.rs:3918-3945`). hayaid has the same rule: the two methods work on Regtest only.
+
+### Methods
+
+The fields of each method are the fields of Zakura at revision `1377915`
+(`crates/zakura-rpc/src/methods.rs`; `types/` is `crates/zakura-rpc/src/methods/types/`).
+`crates/hayaid/tests/zakura_pair/rpc_compare.rs` compares each answer with a real
+zakurad (`docs/regtest-pair.md`, scenario rpc).
+
+| Method | Zakura source | State |
+|---|---|---|
+| `getblocktemplate`, `submitblock`, `getblockcount`, `getbestblockhash` | `methods.rs:2911`, `3318`, `2884`, `2245` | Served. `docs/protocol-template-push.md` has the template fields |
+| `generate` | `methods.rs:3858-3916` | Served with `regtest_produce` |
+| `getblockhash` | `methods.rs:2888-2909` | Differs: no negative height; a height above the tip is error -8 (Zakura: -1) |
+| `getrawmempool` | `methods.rs:2294` | Differs: no `verbose` parameter |
+| `sendrawtransaction` | `methods.rs:1813` | Same result. A refusal is error -26 with the reason of the mempool |
+| `getblockchaininfo` | `methods.rs:1604-1790` | Differs: `chain` (`regtest` on Regtest, Zakura `test`), `blocks`, `bestblockhash` and `valuePools` with `id` and `chainValueZat` only |
+| `z_gettreestate` | `methods.rs:2548-2660` | Differs: the tip only, and `finalRoot` without `finalState` |
+| `getinfo` | `methods.rs:1519-1568` | Differs: no `errors` and no `errorstimestamp` (hayaid keeps no record of its log messages). `version`, `build`, `subversion` and `protocolversion` are the values of hayaid |
+| `getmininginfo` | `methods.rs:3510-3543`, `types/get_mining_info.rs` | Same as Zakura |
+| `getblocksubsidy` | `methods.rs:3676-3773`, `types/subsidy.rs` | Same as Zakura before the NSM reissuance height. From that height: the block after the tip only (the subsidy needs the value pools after the parent) |
+| `getnetworksolps`, `getnetworkhashps` | `methods.rs:3545-3592`, `zakura-state/src/service/read/difficulty.rs:97-155` | Same as Zakura |
+| `getdifficulty` | `methods.rs:3775-3777`, `5742-5813` | Same as Zakura with a template on the tip. Without one (the node synchronizes): the difficulty of the bits of the tip block |
+| `getnetworkinfo` | `methods.rs:3594-3640`, `types/network_info.rs` | Same fields. `localservices` has the service bits of hayaid (Zakura prints `NODE_NETWORK` only) |
+| `getpeerinfo` | `methods.rs:3642-3653`, `types/peer_info.rs` | Same as Zakura. `pingtime` is the time of the last answered `ping` |
+| `getmempoolinfo` | `methods.rs:2273-2292`, `zakurad/src/components/mempool.rs:1199-1215` | Same as Zakura: `usage` is `bytes`, and no `fully_notified` |
+| `getblockheader` | `methods.rs:2117-2243` | Differs: not served for the genesis block (the node does not store it); `finalsaplingroot` only for a block whose state the node holds (the blocks that a reorg can disconnect, at most 1,000) and for a block before Sapling |
+| `getblock` verbosity 0 and 1 | `methods.rs:1875-2115` | Differs: as `getblockheader`; `finalorchardroot`, `chainSupply`, `valuePools` and `trees` only for a block whose state the node holds |
+| `getblock` verbosity 2 | `methods.rs:1941-2013`, `types/transaction.rs` | Not served (error -8): the transaction object is the object of `getrawtransaction`, which belongs to the indexer work package |
+| `getchaintips` | `methods.rs:2259-2271`, `types/chain_tips.rs` | Same fields and states. The tips are the tips of the header tree of the node, with the branches that the node left |
+| `validateaddress` | `methods.rs:3664-3668`, `types/validate_address.rs:44-83` | Same as Zakura |
+| `z_validateaddress` | `methods.rs:3670-3674`, `types/z_validate_address.rs:81-123` | Same as Zakura |
+| `addnode` | `methods.rs:3918-3945` | Same as Zakura: Regtest only, `add` only, into the address book of the peer manager; error -23 for an address of the book |
+| `ping` | `methods.rs:3655-3662` | Differs: hayaid sends a `ping` to each peer, and `getpeerinfo` shows the times. Zakura does nothing |
+| `stop` | `methods.rs:2858-2882` | Same as Zakura: Regtest only. The node stops as for SIGINT. The result names hayaid |
+| `getbestblockheightandhash` | `methods.rs:2252-2257` | Same as Zakura: `hash` is a list of 32 bytes |
+| `getdeprecationinfo` | `methods.rs:1570-1601` | Same as Zakura outside Mainnet: `{}`. On Mainnet Zakura has `end_of_service`; hayaid has no end-of-service height |
+| `sendprivatetransaction` | none | A method of hayaid (Lane publication and private transactions) |
+| `getrawtransaction`, `gettxout`, `getaddressbalance`, `getaddresstxids`, `getaddressutxos`, `z_getsubtreesbyindex`, `z_listunifiedreceivers`, `invalidateblock`, `reconsiderblock`, `rpc.discover` | | Not served: "method not found" (-32601). They need an index of the transactions or a change of the chain state |
+
+Rules of the methods:
+
+- A parameter of the wrong type or count is error -1 in each method from `getinfo` on, as
+  in zcashd and Zakura (`zakura-rpc/src/server/rpc_call_compatibility.rs`).
+- A block parameter is a height (a number, or a string of digits) or a hash. A height
+  above the tip is error -8, and an unknown hash is error -5.
+- `getblockhash 0` has the hash of the genesis block. The node does not store the genesis
+  block, so `getblock` and `getblockheader` do not serve it.
+- Values that are constants in hayaid and in Zakura: `paytxfee` (no wallet), `timeoffset`,
+  `networks` (IPv4 and IPv6 reachable, no onion transport, no proxy), `localaddresses`
+  (the node states no address of its own), `warnings`, `ismine`.
 
 `getblocktemplate`: `mintime` is the median-time-past plus 1 s, `maxtime` is the
 median-time-past plus 90 min, and `curtime` is the clock of the node inside these limits.

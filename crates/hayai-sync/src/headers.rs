@@ -1040,6 +1040,46 @@ impl HeaderChain {
         self.dag.include_all()
     }
 
+    /// The tips of the header tree: the best tip, then each entry outside the best chain
+    /// that has no child.
+    pub fn tips(&self) -> Vec<BlockHash> {
+        let parents: std::collections::HashSet<u32> = self
+            .dag
+            .side
+            .iter()
+            .map(|id| self.dag.entry(*id).parent)
+            .collect();
+        std::iter::once(self.dag.best())
+            .chain(
+                self.dag
+                    .side
+                    .iter()
+                    .copied()
+                    .filter(|id| !parents.contains(id)),
+            )
+            .map(|id| self.dag.entry(id).hash)
+            .collect()
+    }
+
+    /// The number of blocks of the chain of `hash` that are not on the chain of `other`:
+    /// the blocks above the newest block that the two chains share. `None`: the chain does
+    /// not have one of the two headers.
+    pub fn blocks_not_on(&self, hash: &BlockHash, other: &BlockHash) -> Option<u32> {
+        let (mut a, mut b) = (self.dag.lookup(hash)?, self.dag.lookup(other)?);
+        let height = |id: u32| self.dag.entry(id).height;
+        let start = height(a);
+        while a != b {
+            let (height_a, height_b) = (height(a), height(b));
+            if height_a >= height_b {
+                a = self.dag.entry(a).parent;
+            }
+            if height_b >= height_a {
+                b = self.dag.entry(b).parent;
+            }
+        }
+        Some(start - height(a))
+    }
+
     /// The newest block of the chain of `hash` that is on the best chain: the block at
     /// which the branch of `hash` leaves the best chain, or `hash` itself.
     pub fn best_chain_ancestor(&self, hash: &BlockHash) -> Option<Tip> {

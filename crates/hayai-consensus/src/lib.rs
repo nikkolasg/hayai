@@ -44,7 +44,10 @@ pub use checkpoints::{Checkpoints, DuplicateCheckpoint};
 pub use difficulty::{ContextTooShort, ParentChain};
 pub use header::{HeaderRuleError, HeaderVerdict};
 pub use limits::BlockLimits;
-pub use network::{Network, NetworkParams, RegtestConfig, RegtestConfigError, Upgrade};
+pub use network::{
+    Network, NetworkParams, RegtestConfig, RegtestConfigError, RegtestDisbursement,
+    RegtestFundingStreams, RegtestRecipient, Upgrade,
+};
 pub use rules::{
     rules_at, CoinbaseRules, DifficultyParams, HistoryVersion, RuleSet, ShieldedPools, TxVersions,
 };
@@ -95,6 +98,12 @@ pub enum ConsensusError {
         scheduled: u128,
         issued: u64,
     },
+    /// The network has no lockbox disbursement for its NU6.1 activation block. Zakura
+    /// refuses each block at that height (`zakura-consensus/src/block/check.rs:279-283`).
+    #[error(
+        "the network has no lockbox disbursement for the NU6.1 activation block at height {height}"
+    )]
+    NoLockboxDisbursement { height: u32 },
     /// The NSM value balance before NU7 is not the value of the network.
     #[error("the NSM value balance before NU7 is {found} zatoshis and must be {expected}")]
     NsmSeedMismatch { expected: u64, found: u64 },

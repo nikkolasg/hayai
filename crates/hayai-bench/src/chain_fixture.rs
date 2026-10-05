@@ -133,7 +133,7 @@ pub fn chain_with_layers(fixture: &Fixture, n_layers: usize, shape: BlockShape) 
     Harness {
         block,
         chain,
-        store: PreparedStore::new(epoch, STORE_LIMIT, Zip317Params::ZIP317),
+        store: PreparedStore::new(epoch, STORE_LIMIT, Zip317Params::ZAKURA),
         cfg: ValidateConfig {
             network: FIXTURE_NETWORK,
             rules,

@@ -1,4 +1,5 @@
-//! `hayaid start -c <config.toml>` runs the node until SIGINT or SIGTERM.
+//! `hayaid start -c <config.toml>` runs the node until SIGINT, SIGTERM or, on Regtest, the
+//! `stop` method of the RPC server.
 //! `hayaid config --network regtest|testnet|mainnet` prints a commented default configuration.
 
 use std::io::IsTerminal;
@@ -67,10 +68,12 @@ fn start(path: PathBuf) -> Result<(), String> {
         p2p = ?node.p2p_addr,
         rpc = ?node.rpc_addr,
         metrics = ?node.metrics_addr,
+        cookie = ?node.rpc_cookie,
         "hayaid started"
     );
     let stopped_by = select! {
         recv(signal_rx) -> signal => format!("signal {}", signal.unwrap_or(0)),
+        recv(node.stop_requested()) -> _ => "stop method of the RPC server".to_string(),
         recv(node.done()) -> result => match result {
             Ok(Err(e)) => format!("fatal error: {e}"),
             _ => "driver exit".to_string(),

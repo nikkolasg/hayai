@@ -9,7 +9,7 @@ directory.
 
 | Id | Subject | Wrong side | State |
 |---|---|---|---|
-| F1 | NU6.1 activation block without a lockbox disbursement | Configuration that hayai cannot state (hayai-consensus) | Open: hayai-op5, hayai-40v |
+| F1 | NU6.1 activation block without a lockbox disbursement | Configuration that hayai could not state (hayai-consensus) | Fixed |
 | F2 | No answer to `getblocks` | hayai (hayai-net) | Fixed |
 | F3 | More than 16 blocks in one `getdata` | hayai (hayai-sync) | Fixed |
 | F4 | Announcement of a block to legacy peers before its validation | hayai (hayai-net, hayaid) | Fixed |
@@ -17,12 +17,12 @@ directory.
 | F6 | No query method in the RPC server of hayaid | hayai (hayai-rpc, hayaid) | Fixed |
 | F7 | No `mempool` request to a peer | hayai (hayai-net) | Fixed |
 | F8 | Protocol version below the NU7 minimum | hayai (hayai-net) | Fixed |
-| P1 | Mempool fee policy | Difference of policy, not of consensus | Recorded |
+| P1 | Mempool fee policy | Difference of policy, not of consensus | Fixed: hayai has the values of Zakura |
 | Z1 | A Zakura node that stops loses its newest blocks | Zakura behaviour | Recorded |
 | Z2 | No commit trace rows with the legacy stack | Zakura behaviour | Recorded |
 | Z3 | `submitblock` verdict for an unknown parent | Wording | Recorded |
 
-No block that both nodes validated had two verdicts, except F1.
+No block that both nodes validated had two verdicts, except the block of F1.
 
 ## Runs of 2026-10-05
 
@@ -40,6 +40,9 @@ crypto backend, `zakura` the hayaid of the Zakura backend.
 | g | default | 15 | 0 | 30 min, 622 blocks, no failed round, 12 equal state comparisons |
 | a, b, e | zakura | 170 | 0 | As the default backend |
 | c, after the change of the unpaid action limit | default | 26 | 0 | P1 |
+| nu61, after the fix of F1 | default | 14 | 0 | zakurad accepts block 100 of hayaid with a disbursement of 10 ZEC and the funding streams; the same state at the heights 99, 100 and 110 |
+| e, with the funding streams | default | 30 | 0 | 21 invalid blocks refused by both, one of them with a wrong funding stream output; 2 valid blocks accepted |
+| c, after the fix of P1 | default | 25 | 0 | 4 relayed transactions; 9 policy cases with the same verdict on both nodes |
 | nu7 | zakura | 56 | 0 | NU7 at height 250: hayaid follows zakurad across the activation; zakurad accepts 19 blocks of hayaid after it, 4 of them with 2 transactions of 20,000 zatoshis fee each; the same state at each compared height |
 
 zakurad follows a burst of 99 blocks of hayaid in 9 to 12 s (scenario b): it reads them in
@@ -51,31 +54,40 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
 - Zakura: `zakura-consensus/src/block/check.rs`, `subsidy_is_valid`. At the NU6.1 activation
   height of each network the list `lockbox_disbursements` of the network must not be empty,
   else the block is invalid (`missing lockbox disbursements for NU6.1 activation block`).
-  Each entry must be an output of the coinbase.
-- hayai: `hayai-consensus/src/lockbox.rs`, `disbursement`. Regtest and a configured Regtest
-  have no disbursement, and the activation block needs no output.
-- Result with the same activation heights and no disbursement in the configuration of
-  Zakura: hayaid accepts block 100, zakurad refuses each block at height 100. zakurad
-  cannot mine that block itself (`generate`: `block was rejected`). The chain of zakurad
-  ends at 99.
+  Each entry must be an output of the coinbase. A block without a subsidy has no such rule.
+- hayai before the fix: Regtest and a configured Regtest had no disbursement and no
+  funding stream, and the activation block needed no output.
+- Result before the fix, with the same activation heights and no disbursement in the
+  configuration of Zakura: hayaid accepted block 100, zakurad refused each block at height
+  100. zakurad cannot mine that block itself (`generate`: `block was rejected`). The chain
+  of zakurad ends at 99.
 - A second activation at the same height does not help: with NU6.1 and NU6.2 at height
   100 Zakura applies the same rule.
-- Used in the pair: one disbursement with the amount 0 in the configuration of Zakura. The
-  block 100 of zakurad has an output of 0 zatoshis, and hayaid accepts it. zakurad refuses
-  the block 100 of hayaid.
-- Owner: hayai-consensus (`RegtestConfig`), hayai-template and the `[regtest]` section of
-  hayaid.
-- Proposed fix: `RegtestConfig` takes a list of lockbox disbursements (script and amount)
-  and a list of funding streams, as `RegtestParameters` of Zakura. `disbursement` returns
-  the list for a configured Regtest, the coinbase check and the template use it, and the
-  deferred pool pays it. A configured Regtest with an NU6.1 height and an empty list is a
-  configuration error at the start: Zakura has no valid block at that height.
-- Reproduce: `--scenario nu61`. The row `known difference` passes while the difference
-  exists.
-
-The network of the pair has no funding stream for the same reason: hayai has no funding
-stream on Regtest, and Zakura takes them from its configuration. No scenario has a block
-with a wrong funding stream.
+- Fix, hayai-consensus: `RegtestConfig::with_lockbox_disbursements` and
+  `RegtestConfig::with_funding_streams` take the values with the meaning of
+  `RegtestParameters` of Zakura. `CoinbaseTerms` has the outputs, so the coinbase check
+  and the template use them, and the deferred pool pays the disbursements.
+- Fix, the rule of Zakura: the terms of the NU6.1 activation height of a network without a
+  disbursement are the error `ConsensusError::NoLockboxDisbursement` while the block has a
+  subsidy. The block validation refuses each block at that height, and the template has no
+  coinbase for it. Both nodes refuse the same blocks.
+- Fix, hayaid: `[regtest]` has the keys `lockbox_disbursements` and `funding_streams`. A
+  network with an `nu6_1` height and no disbursement is a configuration error at the
+  start: the chain of such a network ends below that height on each node, and hayaid
+  cannot make a template on its last block. zakurad starts with such a configuration and
+  stops at the block before that height.
+- Differences of the configuration that stay: hayai needs a `height_range` and
+  `recipients` in each funding stream entry (Zakura takes the Testnet values for an absent
+  key), and hayai has no `extend_funding_stream_addresses_as_required`. hayai refuses at
+  its start a recipient with fewer addresses than its range has address periods; Zakura
+  stops at the first block of a period without an address.
+- Tests: `a_configured_regtest_pays_its_disbursements_at_nu6_1`,
+  `a_regtest_without_a_disbursement_has_no_nu6_1_activation_block`,
+  `a_configured_regtest_pays_its_funding_streams` (hayai-consensus),
+  `the_coinbase_has_the_streams_and_the_disbursements_of_a_configured_regtest`
+  (hayai-template), `a_chain_with_configured_funding_streams_crosses_nu6_1` (hayaid),
+  scenario nu61 and the funding stream block of scenario e.
+- Reproduce on the old code: `--scenario nu61` of the old harness.
 
 ## F2: no answer to `getblocks`
 
@@ -187,34 +199,37 @@ tip), `getrawmempool` and `sendrawtransaction` (`docs/hayaid.md`).
 
 ## P1: mempool fee policy
 
-| Rule | hayai | Zakura |
-|---|---|---|
-| Marginal fee for each logical action | 5,000 zatoshis (ZIP 317) | 400 zatoshis (`zakura-chain/src/transaction/unmined/zip317.rs`, `MARGINAL_FEE`) |
-| Unpaid actions | 0 | 0 (`BLOCK_UNPAID_ACTION_LIMIT`) |
+| Rule | hayai in the first runs | Zakura | hayai now |
+|---|---|---|---|
+| Marginal fee for each logical action | 5,000 zatoshis (ZIP 317) | 400 zatoshis (`zakura-chain/src/transaction/unmined/zip317.rs`, `MARGINAL_FEE`) | 400 zatoshis |
+| Unpaid actions | 50, then 0 | 0 (`BLOCK_UNPAID_ACTION_LIMIT`) | 0 |
+| Upper bound of the minimum relay fee | 1,000 zatoshis | 800 zatoshis (`MEMPOOL_TX_FEE_REQUIREMENT_CAP`) | 800 zatoshis |
+| Weight ratio cap of the template | 4 | 13 (`BLOCK_PRODUCTION_WEIGHT_RATIO_CAP`) | 13 |
 
-The first runs had a hayai limit of 50 unpaid actions: hayaid then took and mined
-transactions with 37 and 48 unpaid actions that zakurad refused, and zakurad accepted the
-blocks. The limit of hayai is 0 now. The difference that stays is the marginal fee: Zakura
-takes a transaction that pays 400 zatoshis for each action, and hayai refuses it.
+- With a limit of 50 unpaid actions hayaid took and mined transactions that zakurad
+  refused. With the limit 0 and the marginal fee of ZIP 317, zakurad took 4 of the 9
+  transactions below that hayaid refused.
+- Fix: the policy, the store and the template of hayai have the values of Zakura
+  (`Zip317Params::ZAKURA`, `MIN_RELAY_FEE_CAP`; table in `docs/mempool-policy.md`).
 
-Verdicts of scenario c with the limit 0, for a transaction with one input (the count of
-unpaid actions is the count of ZIP 317):
+Verdicts of scenario c, for a transaction with one input. The count of unpaid actions has
+the marginal fee of 400 zatoshis:
 
-| Outputs | Fee (zatoshis) | Unpaid actions | hayaid | zakurad | Block with it |
+| Outputs | Fee (zatoshis) | Unpaid actions | hayaid in the first runs | zakurad | hayaid now |
 |---|---|---|---|---|---|
-| 1 | 0 | 2 | refused | refused | none |
-| 1 | 1,000 | 2 | refused | accepted | mined by zakurad, accepted by hayaid |
-| 1 | 9,999 | 1 | refused | accepted | mined by zakurad, accepted by hayaid |
-| 1 | 10,000 | 0 | accepted | accepted | accepted by both |
-| 2 | 5,000 | 1 | refused | accepted | mined by zakurad, accepted by hayaid |
-| 40 | 5,000 | 37 | refused | refused | none |
-| 52 | 5,032 | 48 | refused | refused | none |
-| 60 | 5,020 | 56 | refused | refused | none |
-| 60 | 23,020 | 53 | refused | accepted | mined by zakurad, accepted by hayaid |
+| 1 | 0 | 2 | refused | refused | refused |
+| 1 | 1,000 | 0 | refused | accepted | accepted |
+| 1 | 9,999 | 0 | refused | accepted | accepted |
+| 1 | 10,000 | 0 | accepted | accepted | accepted |
+| 2 | 5,000 | 0 | refused | accepted | accepted |
+| 40 | 5,000 | 26 | refused | refused | refused |
+| 52 | 5,032 | 37 | refused | refused | refused |
+| 60 | 5,020 | 45 | refused | refused | refused |
+| 60 | 23,020 | 0 | refused | accepted | accepted |
 
-No case has a transaction that hayaid takes and zakurad refuses. A block of zakurad with a
-transaction that the policy of hayai refuses is valid for hayaid. Such a transaction is not
-in the prepared store of hayaid before its block.
+hayaid mined each accepted transaction, and zakurad accepted the block. The test
+`the_policy_cases_of_the_regtest_pair_have_the_verdict_of_zakura` (hayai-prepared) has the
+same cases.
 
 ## Z1: a Zakura node that stops loses its newest blocks
 
@@ -277,12 +292,14 @@ Inside hayaid, from its trace rows of the same run:
 
 ## Verdict pairs of scenario e
 
-Each row is one invalid block at height 113 (NU6.1 rules). Both nodes refuse each one.
+Each row is one invalid block at height 113 (NU6.1 rules) on the pair with the funding
+streams. Both nodes refuse each one.
 
 | Block | hayaid | zakurad |
 |---|---|---|
-| Coinbase 1 zatoshi too much | coinbase pays 625000001 zatoshis and must pay 625000000 exactly | `Subsidy(InvalidMinerFees)` |
-| Coinbase 1 zatoshi too little | coinbase pays 624999999 zatoshis and must pay 625000000 exactly | `Subsidy(InvalidMinerFees)` |
+| Coinbase 1 zatoshi too much | coinbase pays 550000001 zatoshis and must pay 550000000 exactly | `Subsidy(InvalidMinerFees)` |
+| Coinbase 1 zatoshi too little | coinbase pays 549999999 zatoshis and must pay 550000000 exactly | `Subsidy(InvalidMinerFees)` |
+| Funding stream output 1 zatoshi too little | coinbase FundingStream(MajorGrants) output pays 49999999 zatoshis and must pay 50000000 | `Subsidy(FundingStreamNotFound)` |
 | Wrong merkle root | merkle root does not match the transactions | `BadMerkleRoot` |
 | Wrong header commitment | the header commitment does not match the parent's history tree | `InvalidBlockCommitment` |
 | Time at the median-time-past | time is not after the median-time-past | `TimeTooEarly` |

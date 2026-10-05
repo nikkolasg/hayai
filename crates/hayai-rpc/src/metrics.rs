@@ -442,6 +442,16 @@ fn serve_scrapes(stream: TcpStream, registry: &Registry) -> io::Result<()> {
                     false,
                 );
             }
+            Err(HttpError::HeadTooLarge) => {
+                return write_typed_response(
+                    &mut writer,
+                    431,
+                    "Request Header Fields Too Large",
+                    "text/plain",
+                    b"",
+                    false,
+                );
+            }
             Err(HttpError::TooLarge) => {
                 return write_typed_response(
                     &mut writer,

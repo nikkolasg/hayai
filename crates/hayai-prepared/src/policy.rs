@@ -47,11 +47,14 @@ pub const ONE_THIRD_DUST_THRESHOLD_RATE: u64 = 100;
 /// Bytes that zcashd adds to the size of an output for the input that spends it.
 const DUST_SPEND_BYTES: u64 = 148;
 /// The minimum relay fee rate, in zatoshis per 1,000 bytes (zcashd
-/// `DEFAULT_MIN_RELAY_TX_FEE`). It is also the minimum relay fee of a transaction.
+/// `DEFAULT_MIN_RELAY_TX_FEE`; Zakura `zip317.rs:56`, `MIN_MEMPOOL_TX_FEE_RATE`). It is
+/// also the minimum relay fee of a transaction.
 pub const MIN_RELAY_FEE_RATE: u64 = 100;
-/// The upper bound of the minimum relay fee of a transaction, in zatoshis (zcashd
-/// `LEGACY_DEFAULT_FEE`).
-pub const MIN_RELAY_FEE_CAP: u64 = 1_000;
+/// The upper bound of the minimum relay fee of a transaction, in zatoshis: the value of
+/// Zakura (`zakura-chain/src/transaction/unmined/zip317.rs:62`,
+/// `MEMPOOL_TX_FEE_REQUIREMENT_CAP`), which is its conventional fee of 2 grace actions.
+/// zcashd has 1,000 (`LEGACY_DEFAULT_FEE`).
+pub const MIN_RELAY_FEE_CAP: u64 = 800;
 
 /// The chain facts that the policy needs.
 #[derive(Clone, Copy, Debug)]
@@ -250,7 +253,7 @@ pub fn dust_threshold(script_len: usize) -> u64 {
 }
 
 /// The minimum relay fee of a transaction of `size` bytes (zcashd
-/// `CFeeRate::GetFeeForRelay`; Zebra `zip317::mempool_checks`).
+/// `CFeeRate::GetFeeForRelay`; Zakura `zip317::mempool_checks`, `zip317.rs:189-190`).
 pub fn min_relay_fee(size: usize) -> u64 {
     (MIN_RELAY_FEE_RATE * size as u64 / 1_000).clamp(MIN_RELAY_FEE_RATE, MIN_RELAY_FEE_CAP)
 }
@@ -263,11 +266,11 @@ pub fn is_relayable(expiry_height: u32, next_height: u32) -> bool {
 }
 
 impl MempoolPolicy {
-    /// The policy of `network`: ZIP 317 as published and zcashd standardness. Regtest does
-    /// not require standard transactions.
+    /// The policy of `network`: the fee values of Zakura and zcashd standardness. Regtest
+    /// does not require standard transactions.
     pub fn of(network: Network) -> Self {
         Self {
-            zip317: Zip317Params::ZIP317,
+            zip317: Zip317Params::ZAKURA,
             unpaid_action_limit: BLOCK_UNPAID_ACTION_LIMIT,
             require_standard: !network.is_regtest(),
             permit_bare_multisig: false,
@@ -901,22 +904,29 @@ mod tests {
 
     #[test]
     fn unpaid_actions_boundary() {
-        // 60 P2PKH outputs are 60 logical actions. The fee pays for `paid` of them.
-        let with = |paid: u64| TxSpec {
-            inputs: vec![(P2PKH_SIG.to_vec(), p2pkh(1), 60 * 1_000 + paid * 5_000)],
+        // 60 P2PKH outputs are 60 logical actions. The fee pays for `paid` of them, and
+        // `rest` zatoshis more.
+        let with = |paid: u64, rest: u64| TxSpec {
+            inputs: vec![(P2PKH_SIG.to_vec(), p2pkh(1), 60 * 1_000 + paid * 400 + rest)],
             outputs: (0..60).map(|i| (p2pkh(i), 1_000)).collect(),
             ..TxSpec::standard()
         };
-        // The limit is 0, the value of Zakura and Zebra: the policy admits only a
-        // transaction that pays for each of its logical actions (Zakura `mempool_checks`,
-        // `zakura-chain/src/transaction/unmined/zip317.rs:166-175`).
+        // The marginal fee is 400 zatoshis and the limit is 0, the values of Zakura: the
+        // policy admits only a transaction that pays for each of its logical actions
+        // (Zakura `mempool_checks`, `zakura-chain/src/transaction/unmined/zip317.rs:
+        // 166-175`).
         assert_eq!(BLOCK_UNPAID_ACTION_LIMIT, 0);
-        assert_eq!(MempoolPolicy::of(Network::Mainnet).unpaid_action_limit, 0);
-        assert_eq!(admit(&with(60)), Ok(()));
-        assert_eq!(admit(&with(61)), Ok(()));
-        for (paid, unpaid) in [(59, 1), (58, 2), (0, 60)] {
+        let policy = MempoolPolicy::of(Network::Mainnet);
+        assert_eq!(
+            (policy.zip317, policy.unpaid_action_limit),
+            (Zip317Params::ZAKURA, 0)
+        );
+        assert_eq!(policy.zip317.marginal_fee, 400);
+        assert_eq!(admit(&with(60, 0)), Ok(()));
+        assert_eq!(admit(&with(61, 0)), Ok(()));
+        for (paid, rest, unpaid) in [(59, 399, 1), (59, 0, 1), (58, 0, 2), (0, 0, 60)] {
             assert_eq!(
-                admit(&with(paid)),
+                admit(&with(paid, rest)),
                 Err(PolicyReject::UnpaidActions { unpaid, limit: 0 })
             );
         }
@@ -925,9 +935,9 @@ mod tests {
             unpaid_action_limit: 50,
             ..MempoolPolicy::of(Network::Mainnet)
         };
-        assert_eq!(admit_with(&zip317_default, &with(10)), Ok(()));
+        assert_eq!(admit_with(&zip317_default, &with(10, 0)), Ok(()));
         assert_eq!(
-            admit_with(&zip317_default, &with(9)),
+            admit_with(&zip317_default, &with(9, 0)),
             Err(PolicyReject::UnpaidActions {
                 unpaid: 51,
                 limit: 50
@@ -935,12 +945,43 @@ mod tests {
         );
     }
 
+    /// The grace actions: a transaction with 1 or 2 logical actions pays for 2.
+    #[test]
+    fn grace_actions_boundary() {
+        let with = |outputs: u8, fee: u64| TxSpec {
+            inputs: vec![(P2PKH_SIG.to_vec(), p2pkh(1), 50_000 + fee)],
+            outputs: (0..outputs)
+                .map(|i| (p2pkh(i), 50_000 / u64::from(outputs)))
+                .collect(),
+            ..TxSpec::standard()
+        };
+        for outputs in [1, 2] {
+            assert_eq!(admit(&with(outputs, 800)), Ok(()));
+            assert_eq!(
+                admit(&with(outputs, 799)),
+                Err(PolicyReject::UnpaidActions {
+                    unpaid: 1,
+                    limit: 0
+                })
+            );
+        }
+        // 3 outputs of 16,666 zatoshis leave 2 zatoshis of the input for the fee.
+        assert_eq!(admit(&with(3, 1_198)), Ok(()));
+        assert_eq!(
+            admit(&with(3, 1_197)),
+            Err(PolicyReject::UnpaidActions {
+                unpaid: 1,
+                limit: 0
+            })
+        );
+    }
+
     #[test]
     fn minimum_relay_fee_boundary() {
         // One input and one output: 2 grace actions. With the unpaid action limit of 0 a
-        // fee below 10,000 zatoshis fails the unpaid action rule first, so the minimum
-        // relay fee decides only under a policy with a higher limit (Zakura keeps the rule
-        // in the same way, `zip317.rs:177-200`).
+        // fee below 800 zatoshis fails the unpaid action rule first, and the minimum relay
+        // fee is at most 800 zatoshis. So the minimum relay fee decides only under a policy
+        // with a higher limit (Zakura keeps the rule in the same way, `zip317.rs:177-200`).
         let lenient = MempoolPolicy {
             unpaid_action_limit: 2,
             ..MempoolPolicy::of(Network::Mainnet)
@@ -961,11 +1002,56 @@ mod tests {
                 minimum: MIN_RELAY_FEE_RATE
             })
         );
-        // The rate applies between the two bounds.
+        // The rate applies between the two bounds. The upper bound is 800 zatoshis.
+        assert_eq!(MIN_RELAY_FEE_CAP, 800);
         assert_eq!(min_relay_fee(1_000), 100);
         assert_eq!(min_relay_fee(5_500), 550);
+        assert_eq!(min_relay_fee(7_999), 799);
+        assert_eq!(min_relay_fee(8_000), MIN_RELAY_FEE_CAP);
         assert_eq!(min_relay_fee(10_000), MIN_RELAY_FEE_CAP);
         assert_eq!(min_relay_fee(2_000_000), MIN_RELAY_FEE_CAP);
+    }
+
+    /// The policy cases that the Regtest pair measured against zakurad
+    /// (`docs/regtest-pair-findings.md`, P1; scenario c of `crates/hayaid/tests/
+    /// zakura_pair`): one input that spends a pay-to-script-hash coinbase output of 6.25
+    /// ZEC with a scriptSig of 2 bytes, and pay-to-script-hash outputs of 32 bytes each.
+    /// The verdict of each case is the verdict of zakurad.
+    #[test]
+    fn the_policy_cases_of_the_regtest_pair_have_the_verdict_of_zakura() {
+        const COIN: u64 = 625_000_000;
+        let policy = MempoolPolicy::of(Network::Regtest);
+        // (outputs, fee, unpaid actions of a refused transaction)
+        for (outputs, fee, unpaid) in [
+            (1u64, 0u64, Some(2)),
+            (1, 1_000, None),
+            (1, 9_999, None),
+            (1, 10_000, None),
+            (2, 5_000, None),
+            // 40 outputs are ceil(40 * 32 / 34) = 38 actions, and the fee pays for 12.
+            (40, 5_000, Some(26)),
+            // 49 actions, and the fee pays for 12.
+            (52, 5_032, Some(37)),
+            // 57 actions: 22,800 zatoshis. 5,020 zatoshis pay for 12.
+            (60, 5_020, Some(45)),
+            (60, 23_020, None),
+        ] {
+            let spec = TxSpec {
+                inputs: vec![(vec![0x01, 0x51], p2sh(1), COIN)],
+                outputs: vec![(p2sh(1), (COIN - fee) / outputs); outputs as usize],
+                ..TxSpec::standard()
+            };
+            assert_eq!((COIN - fee) % outputs, 0, "{outputs} outputs, fee {fee}");
+            let expected = match unpaid {
+                Some(unpaid) => Err(PolicyReject::UnpaidActions { unpaid, limit: 0 }),
+                None => Ok(()),
+            };
+            assert_eq!(
+                admit_with(&policy, &spec),
+                expected,
+                "{outputs} outputs, fee {fee}"
+            );
+        }
     }
 
     #[test]

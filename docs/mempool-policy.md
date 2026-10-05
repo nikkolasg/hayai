@@ -10,7 +10,7 @@ this node, and of a block that a reorg disconnected.
 
 Code: `crates/hayaid/src/mempool.rs`, `crates/hayai-prepared/src/policy.rs`,
 `crates/hayai-prepared/src/store.rs`,
-`crates/hayai-template/src/zip317.rs` (shared ZIP 317 constants),
+`crates/hayai-template/src/zip317.rs` (shared fee constants),
 `crates/hayai-template/src/live.rs` (template selection).
 
 Local sources: `ZB` = `../zebra` (commit 02f9648), `ZK` =
@@ -61,17 +61,67 @@ The order is the order of zcashd `AcceptToMemoryPool`.
 | A spend of a coinbase output has no transparent output | `UnshieldedCoinbaseSpend` | protocol §7.1.2 | — | yes: same file. Regtest does not have the rule, as Zakura (`MempoolPolicy::coinbase_must_be_shielded`, from `NetworkParams`) |
 | Inputs are standard spends | `NonStandardInput` | zcashd `AreInputsStandard`, `bad-txns-nonstandard-inputs` | redeem script that is not standard: at most 15 sigops | yes: `ZB .../mempool/storage/policy.rs` (`are_inputs_standard`) |
 | Sigops (legacy plus P2SH) | `TooManySigops` | zcashd `MAX_STANDARD_TX_SIGOPS`, `bad-txns-too-many-sigops` | 4,000 | yes: same file |
-| ZIP 317 unpaid actions | `UnpaidActions` | ZIP 317 `block_unpaid_action_limit`; zcashd `-txunpaidactionlimit`, `tx-unpaid-action-limit-exceeded` | 0: a transaction pays the marginal fee of 5,000 zatoshis for each logical action. ZIP 317 gives 50 as the value of its parameter `block_unpaid_action_limit`, and zcashd uses it as the default of `-txunpaidactionlimit`. hayai uses 0 so that it relays the transactions that Zakura and Zebra relay, and no others | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:48` (`BLOCK_UNPAID_ACTION_LIMIT` = 0) and `:166-175` (`mempool_checks` refuses a transaction with an unpaid action) |
-| Minimum relay fee | `FeeBelowMinimumRelay` | zcashd `CFeeRate::GetFeeForRelay` | clamp(100 x size / 1000, 100, 1000) zatoshis. With the unpaid action limit of 0 the lowest fee is 10,000 zatoshis, so the rule above decides first | yes: `ZB .../zip317.rs` (`mempool_checks`) |
+| ZIP 317 unpaid actions | `UnpaidActions` | ZIP 317 `block_unpaid_action_limit`; zcashd `-txunpaidactionlimit`, `tx-unpaid-action-limit-exceeded` | 0: a transaction pays the marginal fee of 400 zatoshis for each logical action, and for 2 actions at least. The unpaid action count is max(0, max(2, logical actions) - floor(fee / 400)) | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:81-98` (`unpaid_actions`) and `:166-175` (`mempool_checks` refuses a transaction with an unpaid action) |
+| Minimum relay fee | `FeeBelowMinimumRelay` | zcashd `CFeeRate::GetFeeForRelay` | clamp(100 x size / 1000, 100, 800) zatoshis. With the unpaid action limit of 0 the lowest fee is 800 zatoshis, so the rule above decides first | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:177-200` (`mempool_checks`) |
 | Shielded counts fit in a block of the next rule set | `AboveBlockLimit` | ZIP 218 (NU7 block limits) | Orchard 330, Ironwood 330, Sapling 300, the three together 330; none before NU7 | yes: `ZK/zakura-consensus/src/block/check.rs:450` |
 
 `MempoolPolicy::of(Network)` differs by network in one value: Regtest does not require
 standard transactions (zcashd `fRequireStandard`; not confirmed by a local source). The
 script, dust and standard input rules then do not apply.
 
-ZIP 317 parameters: marginal fee 5,000 zatoshis, 2 grace actions, weight ratio cap 4
-(`Zip317Params::ZIP317`; confirmed by `ZB .../zip317.rs`). The policy, the store and the
-template use the same `Zip317Params` and the same `logical_actions`.
+## Fee and relay constants
+
+The node has the values of Zakura. Reason: equal relay behaviour with the other nodes. A
+transaction that a Zakura node relays and mines is a transaction that this node relays and
+mines, and the node relays no transaction that a Zakura node refuses for its fee. The
+policy, the store and the template use the same `Zip317Params::ZAKURA` and the same
+`logical_actions`. `ZKF` = `ZK/zakura-chain/src/transaction/unmined/zip317.rs`, `ZKU` =
+`ZK/zakura-chain/src/transaction/unmined.rs`.
+
+| Constant | ZIP 317 value | Zakura value | hayai value |
+|---|---|---|---|
+| Marginal fee, zatoshis for each logical action | 5,000 | 400 (`ZKF:25`, `MARGINAL_FEE`) | 400 (`Zip317Params::ZAKURA.marginal_fee`) |
+| Grace actions | 2 | 2 (`ZKF:28`, `GRACE_ACTIONS`) | 2 (`Zip317Params::ZAKURA.grace_actions`) |
+| Standard size of a transparent input, bytes | 150 | 150 (`ZKF:31`) | 150 (`P2PKH_STANDARD_INPUT_SIZE`) |
+| Standard size of a transparent output, bytes | 34 | 34 (`ZKF:34`) | 34 (`P2PKH_STANDARD_OUTPUT_SIZE`) |
+| Weight ratio cap of the block production | 4 | 13 (`ZKF:37`, `BLOCK_PRODUCTION_WEIGHT_RATIO_CAP`) | 13 (`Zip317Params::ZAKURA.weight_ratio_cap`) |
+| Fee that the weight ratio uses for a lower fee, zatoshis | 1 | 1 (`ZKF:43`) | 1 (`Zip317Params::weight_ratio`) |
+| Unpaid action limit of a block and of a mempool transaction | 50 | 0 (`ZKF:48`, `BLOCK_UNPAID_ACTION_LIMIT`) | 0 (`BLOCK_UNPAID_ACTION_LIMIT`) |
+| Minimum relay fee rate, zatoshis for each 1,000 bytes | none (zcashd: 100) | 100 (`ZKF:56`, `MIN_MEMPOOL_TX_FEE_RATE`) | 100 (`MIN_RELAY_FEE_RATE`) |
+| Upper bound of the minimum relay fee, zatoshis | none (zcashd and Zebra: 1,000) | 800 (`ZKF:62`, `MEMPOOL_TX_FEE_REQUIREMENT_CAP`) | 800 (`MIN_RELAY_FEE_CAP`) |
+| ZIP 401 cost threshold of a transaction | 10,000 (ZIP 401) | 10,000 (`ZKU:65`) | 10,000 (`MEMPOOL_COST_THRESHOLD`) |
+| ZIP 401 low fee penalty, for a fee below the conventional fee | 40,000 (ZIP 401) | 40,000 (`ZKU:73`) | 40,000 (`LOW_FEE_PENALTY`) |
+| ZIP 401 cost limit of the mempool | 80,000,000 (ZIP 401) | 80,000,000 (`ZK/zakurad/src/components/mempool/config.rs:70`) | 80,000,000 (`MEMPOOL_TX_COST_LIMIT`) |
+
+The rules with these constants are the rules of Zakura:
+
+- Conventional fee: 400 x max(2, logical actions) zatoshis (`ZKF:67-76`,
+  `Zip317Params::conventional_fee`). The logical actions are those of ZIP 317, with the
+  Ironwood actions (`ZKF:131-163`, `logical_actions`).
+- Unpaid actions: max(0, max(2, logical actions) - floor(fee / 400)) (`ZKF:81-98`,
+  `Zip317Params::unpaid_actions`).
+- Admission: first the unpaid action rule, then the minimum relay fee (`ZKF:166-200`,
+  `MempoolPolicy::check_fee`).
+- Eviction weight: the cost plus the low fee penalty when the fee is below the
+  conventional fee (`ZKU:484-529`, `PreparedStore::insert`).
+
+A transaction with 1 or 2 logical actions needs a fee of 800 zatoshis.
+
+The Regtest pair measured these cases against zakurad, for one input and outputs of 32
+bytes each. Each node gives the same verdict (`the_policy_cases_of_the_regtest_pair_have_
+the_verdict_of_zakura` in `policy.rs`, scenario c of the pair):
+
+| Outputs | Logical actions | Fee (zatoshis) | Conventional fee | Verdict |
+|---|---|---|---|---|
+| 1 | 1 | 0 | 800 | refused: 2 unpaid actions |
+| 1 | 1 | 1,000 | 800 | accepted |
+| 1 | 1 | 9,999 | 800 | accepted |
+| 1 | 1 | 10,000 | 800 | accepted |
+| 2 | 2 | 5,000 | 800 | accepted |
+| 40 | 38 | 5,000 | 15,200 | refused: 26 unpaid actions |
+| 52 | 49 | 5,032 | 19,600 | refused: 37 unpaid actions |
+| 60 | 57 | 5,020 | 22,800 | refused: 45 unpaid actions |
+| 60 | 57 | 23,020 | 22,800 | accepted |
 
 Rules without a Zcash value:
 
@@ -98,7 +148,7 @@ Differences from zcashd:
 |---|---|---|---|
 | Cost limit of the store | ZIP 401 `mempooltxcostlimit` | 80,000,000 (`MEMPOOL_TX_COST_LIMIT`) | yes: `ZB/zebrad/src/components/mempool/config.rs` |
 | Cost of a transaction: max(serialized size, threshold) | ZIP 401 | 10,000 | yes: `ZB/zebra-chain/src/transaction/unmined.rs:67` |
-| Eviction weight: cost + penalty when fee < ZIP 317 conventional fee | ZIP 401, ZIP 317 | 40,000 | yes: `unmined.rs:75` |
+| Eviction weight: cost + penalty when fee < conventional fee (400 zatoshis for each action) | ZIP 401, ZIP 317 | 40,000 | yes: `ZK/zakura-chain/src/transaction/unmined.rs:484-529` |
 | Eviction: weighted random selection, the new transaction is a candidate | ZIP 401 `EvictTransaction` | — | yes: `ZB .../mempool/storage/verified_set.rs` (`evict_one`) |
 | Recently evicted txids are refused | ZIP 401 `RecentlyEvicted` | 60 min, 40,000 entries | yes: `ZB .../mempool/storage.rs:51`, `eviction_list.rs` |
 | The list holds the txid, not the wtxid | ZIP 401 | — | yes: `ZB .../mempool/storage.rs` (`RandomlyEvicted`) |
@@ -115,7 +165,7 @@ Differences from ZIP 401:
 
 | Step of ZIP 317 | Template | Local source |
 |---|---|---|
-| `weight_ratio` = min(max(1, fee) / conventional fee, `weight_ratio_cap`) | `Zip317Params::weight_ratio`, fixed point with 32 fractional bits | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs` (`conventional_fee_weight_ratio`) |
+| `weight_ratio` = min(max(1, fee) / conventional fee, `weight_ratio_cap`) | `Zip317Params::weight_ratio` with the cap 13 of Zakura, fixed point with 32 fractional bits (Zakura: `f32`) | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs` (`conventional_fee_weight_ratio`) |
 | Pass 1: each candidate that pays the conventional fee, one time. Add it when the block stays in the size limit and the sigop limit | The candidates with a weight ratio of 1 or more come first in the order | yes: `ZK/zakura-rpc/src/methods/types/get_block_template/zip317.rs` |
 | Pass 2: each other candidate, one time. Add it when the block stays in the two limits and holds at most `block_unpaid_action_limit` unpaid actions | The candidates with a weight ratio below 1 follow. The budget is 0 unpaid actions (`BLOCK_UNPAID_ACTION_LIMIT`), so the pass adds no candidate with an unpaid action; the mempool admits none | yes: same file (`BlockTemplateLimits::try_add`), with the value 0 of Zakura and Zebra. ZIP 317 gives 50 as the default |
 | Size limit | 2,000,000 bytes minus the header, the transaction count and the coinbase with the largest scriptSig | yes: same file (`block_template_overhead_bytes`) |

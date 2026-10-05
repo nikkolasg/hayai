@@ -51,7 +51,7 @@ variable "data_volume_throughput" {
 }
 
 variable "admin_cidr" {
-  description = "CIDR that reaches the admin ports (Grafana 3000, Prometheus 9090, Alertmanager 9093, metrics 9999 and 19101, Regtest RPC 18345). null: no admin port is open, use an SSM port forward."
+  description = "CIDR that reaches the admin ports (Grafana 3000, Prometheus 9090, Alertmanager 9093, metrics 9999 and 19101, Regtest RPC 18345 with cookie authentication and no TLS). null: no admin port is open, use an SSM port forward."
   type        = string
   default     = null
 

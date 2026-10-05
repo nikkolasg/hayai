@@ -338,6 +338,13 @@ pub struct PeerInfo {
     pub direction: Direction,
     pub established: bool,
     pub protocol: PeerProtocol,
+    /// The user agent and the protocol version of the `version` message of the peer.
+    pub user_agent: Option<String>,
+    pub version: Option<u32>,
+    /// The time from the last answered `ping` of this node to its `pong`.
+    pub ping_time: Option<Duration>,
+    /// The age of the `ping` of this node that has no `pong` yet.
+    pub ping_wait: Option<Duration>,
 }
 
 struct Peer {
@@ -1034,11 +1041,25 @@ impl Relay {
                     direction: s.direction(),
                     established: s.is_established(),
                     protocol: s.protocol(),
+                    user_agent: s.peer_version().map(|v| v.user_agent.clone()),
+                    version: s.peer_version().map(|v| v.version),
+                    ping_time: s.ping_time(),
+                    ping_wait: s.ping_wait(),
                 }
             })
             .collect();
         out.sort_by_key(|p| p.id);
         out
+    }
+
+    /// Sends a `ping` to each established peer that has no `ping` without a `pong`.
+    /// [`Relay::peers`] shows the times.
+    pub fn ping_peers(&self) {
+        let now = Instant::now();
+        for peer in self.established_peers() {
+            let action = peer.session().ping_now(now);
+            self.perform(&peer, action.into_iter().collect());
+        }
     }
 
     /// Closes every connection and stops the background threads.

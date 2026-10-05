@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use hayai_consensus::{RegtestConfig, Upgrade};
+use hayai_consensus::coinbase::CoinbaseTerms;
+use hayai_consensus::{
+    ConsensusError, RegtestConfig, RegtestDisbursement, RegtestFundingStreams, Upgrade,
+};
 
 use crate::params::{parse_hash, NetworkKind};
 
@@ -62,6 +65,16 @@ pub struct RegtestSection {
     /// must be at or above it.
     #[serde(default)]
     pub mandatory_checkpoint_height: u32,
+    /// The outputs that the coinbase of the NU6.1 activation block must have, as
+    /// `lockbox_disbursements` of the Regtest parameters of Zakura: `address` (P2SH) and
+    /// `amount` (zatoshis). A network with an `nu6_1` height needs one entry or more.
+    #[serde(default)]
+    pub lockbox_disbursements: Vec<RegtestDisbursement>,
+    /// The funding streams, as `funding_streams` of the Regtest parameters of Zakura:
+    /// `height_range` (`start`, `end`) and `recipients` (`receiver`, `numerator`,
+    /// `addresses`).
+    #[serde(default)]
+    pub funding_streams: Vec<RegtestFundingStreams>,
     /// An NSM reissuance height for the tests of a short chain
     /// (`RegtestConfig::with_test_reissuance_height`). A configuration file cannot set it.
     #[serde(skip)]
@@ -81,7 +94,9 @@ pub struct ActivationHeights {
 }
 
 impl RegtestSection {
-    fn consensus(&self) -> Result<RegtestConfig, ConfigError> {
+    /// The network of the section. Its values stay in memory until the process ends.
+    fn network(&self) -> Result<NetworkKind, ConfigError> {
+        let invalid = |e: &dyn std::fmt::Display| ConfigError::Invalid(format!("[regtest]: {e}"));
         let heights = self.activation_heights;
         let activations: Vec<(Upgrade, u32)> = [
             (Upgrade::Nu6, heights.nu6),
@@ -100,11 +115,25 @@ impl RegtestSection {
             .collect::<Result<Vec<_>, ConfigError>>()?;
         let config =
             RegtestConfig::new(&activations, checkpoints, self.mandatory_checkpoint_height)
-                .map_err(|e| ConfigError::Invalid(format!("[regtest]: {e}")))?;
-        Ok(match self.test_reissuance_height {
+                .and_then(|c| c.with_lockbox_disbursements(self.lockbox_disbursements.clone()))
+                .and_then(|c| c.with_funding_streams(&self.funding_streams))
+                .map_err(|e| invalid(&e))?;
+        let network = match self.test_reissuance_height {
             Some(height) => config.with_test_reissuance_height(height),
             None => config,
-        })
+        }
+        .network();
+        // No node accepts the NU6.1 activation block of a network without a lockbox
+        // disbursement (Zakura `subsidy_is_valid`), so the chain of such a network ends
+        // below that height.
+        if let Some(height) = heights.nu6_1 {
+            if let Err(e @ ConsensusError::NoLockboxDisbursement { .. }) =
+                CoinbaseTerms::at(network, height)
+            {
+                return Err(invalid(&format!("{e}: set lockbox_disbursements")));
+            }
+        }
+        Ok(network)
     }
 }
 
@@ -206,12 +235,36 @@ impl Default for StateSection {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RpcSection {
-    /// JSON-RPC listen address (`getblocktemplate`, `submitblock`, `getblockcount`,
-    /// `getbestblockhash`, `generate`). Absent: no RPC server.
+    /// JSON-RPC listen address. Absent: no RPC server.
     pub listen_addr: Option<SocketAddr>,
+    /// Each request must have the credentials of the cookie file, as in Zakura
+    /// (`docs/hayaid.md`, JSON-RPC server).
+    #[serde(default = "default_true")]
+    pub enable_cookie_auth: bool,
+    /// Directory of the cookie file `.cookie`. Absent: `[state] data_dir`.
+    pub cookie_dir: Option<PathBuf>,
+}
+
+impl Default for RpcSection {
+    fn default() -> Self {
+        Self {
+            listen_addr: None,
+            enable_cookie_auth: true,
+            cookie_dir: None,
+        }
+    }
+}
+
+impl RpcSection {
+    /// The listen address when each host that reaches it can call each method: the
+    /// cookie authentication is off and the address is not a loopback address.
+    pub fn open_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+            .filter(|addr| !self.enable_cookie_auth && !addr.ip().is_loopback())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -240,6 +293,19 @@ impl Default for TraceSection {
     }
 }
 
+/// What a mining node shows to its hayai peers of its template before it finds a block.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanePublication {
+    /// Each template change goes out as a batch and a candidate. The node refuses a
+    /// private transaction.
+    All,
+    /// As `All`, without the private transactions (`sendprivatetransaction`).
+    Public,
+    /// No batch and no candidate of the template. The node takes private transactions.
+    None,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MiningSection {
@@ -254,6 +320,11 @@ pub struct MiningSection {
     /// block commits as a pointer swap.
     #[serde(default = "default_true")]
     pub prebuild_own: bool,
+    /// Full mode with the compact relay: the part of the template that the node publishes
+    /// to its peers in advance (batch lanes and candidates). A found block goes out in
+    /// each case. The lanes of other miners do not depend on this key.
+    #[serde(default = "default_lane_publication")]
+    pub lane_publication: LanePublication,
 }
 
 impl Default for MiningSection {
@@ -263,6 +334,7 @@ impl Default for MiningSection {
             miner_script: None,
             regtest_produce: false,
             prebuild_own: true,
+            lane_publication: default_lane_publication(),
         }
     }
 }
@@ -300,6 +372,9 @@ fn default_mode() -> Mode {
 }
 fn default_true() -> bool {
     true
+}
+fn default_lane_publication() -> LanePublication {
+    LanePublication::All
 }
 fn default_max_peers() -> usize {
     16
@@ -370,7 +445,7 @@ impl Config {
     pub fn consensus_network(&self) -> Result<NetworkKind, ConfigError> {
         match &self.regtest {
             None => Ok(self.network.network),
-            Some(regtest) => Ok(regtest.consensus()?.network()),
+            Some(regtest) => regtest.network(),
         }
     }
 
@@ -380,7 +455,7 @@ impl Config {
             if self.network.network != NetworkKind::Regtest {
                 return invalid("the [regtest] section applies to network = \"regtest\" only");
             }
-            regtest.consensus()?;
+            regtest.network()?;
         }
         match (self.network.mode, self.network.network, &self.shadow) {
             (Mode::Shadow, _, Some(_)) => {}
@@ -443,7 +518,12 @@ pub fn default_toml(network: NetworkKind) -> String {
             "full",
             "127.0.0.1:18344",
             "[]",
-            "listen_addr = \"127.0.0.1:18345\"",
+            "listen_addr = \"127.0.0.1:18345\"\n\
+             # Each request needs the credentials of the cookie file (HTTP Basic). false: no\n\
+             # authentication, each client that reaches the port can call each method.\n\
+             enable_cookie_auth = true\n\
+             # Directory of the cookie file `.cookie`. Absent: data_dir.\n\
+             # cookie_dir = \"hayaid-data\"",
             "127.0.0.1:19101",
             "# Regtest address encoding is the Testnet one.\n\
              miner_address = \"tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV\"\n\
@@ -531,6 +611,9 @@ pub fn default_toml(network: NetworkKind) -> String {
          {mining}\n\
          # Keep the layer of the template's body prebuilt: an own block commits as a swap.\n\
          prebuild_own = true\n\
+         # Template published to the peers in advance (batch lanes and candidates):\n\
+         # all, public (all but the transactions of sendprivatetransaction) or none.\n\
+         lane_publication = \"all\"\n\
          {shadow}\
          {regtest}\
          \n\
@@ -550,7 +633,18 @@ pub fn default_toml(network: NetworkKind) -> String {
                  # Checkpoints: [height, \"hash\"]. The genesis block is always one.\n\
                  # checkpoints = []\n\
                  # A block at or below this height has the checkpoint path only.\n\
-                 # mandatory_checkpoint_height = 0\n"
+                 # mandatory_checkpoint_height = 0\n\
+                 # Outputs of the coinbase of the nu6_1 block, paid by the deferred pool.\n\
+                 # A network with an nu6_1 height needs one entry or more.\n\
+                 # lockbox_disbursements = [{ address = \"t2...\", amount = 0 }]\n\
+                 # Funding streams: a share of the block subsidy in hundredths for each\n\
+                 # receiver (\"ECC\", \"ZcashFoundation\", \"MajorGrants\", \"Deferred\"),\n\
+                 # with one P2SH address for each 6 blocks of the range (18 from nu7).\n\
+                 # The receiver \"Deferred\" is the deferred pool and has no address.\n\
+                 # [[regtest.funding_streams]]\n\
+                 # height_range = { start = 200, end = 206 }\n\
+                 # recipients = [{ receiver = \"Deferred\", numerator = 12 }, \
+                 { receiver = \"MajorGrants\", numerator = 8, addresses = [\"t2...\"] }]\n"
             }
             false => "",
         },
@@ -568,6 +662,7 @@ mod tests {
         assert_eq!(regtest.network.mode, Mode::Full);
         assert!(regtest.network.compact_relay);
         assert!(regtest.mining.regtest_produce);
+        assert_eq!(regtest.mining.lane_publication, LanePublication::All);
         assert_eq!(regtest.state.flush_interval_blocks, 100);
         assert_eq!(regtest.state.backend, Backend::Memory);
         assert_eq!(regtest.state.snapshot_interval_blocks, 10_000);
@@ -575,6 +670,8 @@ mod tests {
             regtest.rpc.listen_addr,
             Some("127.0.0.1:18345".parse().unwrap())
         );
+        assert!(regtest.rpc.enable_cookie_auth);
+        assert_eq!(regtest.rpc.cookie_dir, None);
         let Some(_) = regtest.metrics.listen_addr else {
             panic!("metrics on by default");
         };
@@ -646,6 +743,62 @@ mod tests {
         );
     }
 
+    /// The keys `lockbox_disbursements` and `funding_streams` have the names and the
+    /// meaning of the Regtest parameters of Zakura.
+    #[test]
+    fn the_regtest_section_takes_disbursements_and_funding_streams() {
+        use hayai_consensus::coinbase::OutputKind;
+        use hayai_consensus::funding::Receiver;
+
+        const ADDRESS: &str = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh";
+        let base = "[network]\nnetwork = \"regtest\"\n[mining]\nminer_script = \"51\"\n\
+                    [regtest]\nactivation_heights = { nu6 = 20, nu6_1 = 30 }\n";
+        let disbursement =
+            format!("lockbox_disbursements = [{{ address = \"{ADDRESS}\", amount = 7 }}]\n");
+        let streams = |addresses: &str| {
+            format!(
+                "[[regtest.funding_streams]]\nheight_range = {{ start = 11, end = 17 }}\n\
+                 [[regtest.funding_streams.recipients]]\nreceiver = \"Deferred\"\nnumerator = 12\n\
+                 [[regtest.funding_streams.recipients]]\nreceiver = \"MajorGrants\"\n\
+                 numerator = 8\naddresses = [{addresses}]\n"
+            )
+        };
+        let text = format!("{base}{disbursement}{}", streams(&format!("\"{ADDRESS}\"")));
+        let network = Config::parse(&text)
+            .expect("a section")
+            .consensus_network()
+            .expect("a network");
+        let kinds = |height| -> Vec<OutputKind> {
+            let terms = CoinbaseTerms::at(network, height).expect("terms");
+            terms.required.iter().map(|output| output.kind).collect()
+        };
+        let stream = OutputKind::FundingStream(Receiver::MajorGrants);
+        assert_eq!(kinds(10), vec![]);
+        assert_eq!(kinds(11), vec![stream]);
+        assert_eq!(kinds(16), vec![stream]);
+        assert_eq!(kinds(17), vec![]);
+        assert_eq!(kinds(30), vec![OutputKind::LockboxDisbursement]);
+        let terms = CoinbaseTerms::at(network, 30).expect("terms");
+        assert_eq!((terms.disbursed, terms.required[0].value), (7, 7));
+
+        // An NU6.1 height without a disbursement: Zakura refuses each block at that
+        // height, and the node does not start.
+        rejects(base, "lockbox_disbursements");
+        rejects(&format!("{base}lockbox_disbursements = []\n"), "NU6.1");
+        rejects(
+            &format!("{base}lockbox_disbursements = [{{ address = \"x\", amount = 0 }}]\n"),
+            "P2SH",
+        );
+        rejects(
+            &format!("{base}{disbursement}{}", streams("")),
+            "address periods",
+        );
+        rejects(
+            &format!("{base}{disbursement}unknown_key = 1\n"),
+            "unknown_key",
+        );
+    }
+
     #[test]
     fn mainnet_default_config_is_a_shadow_node_and_full_mode_is_accepted() {
         let mainnet = Config::parse(&default_toml(NetworkKind::Mainnet)).expect("mainnet");
@@ -708,6 +861,22 @@ mod tests {
         assert_eq!(c.state.backend, Backend::Memory);
         assert_eq!(c.trace.dir, Some(PathBuf::from("t")));
         assert_eq!(c.log.level, "info");
+        assert_eq!(c.mining.lane_publication, LanePublication::All);
+        for (value, publication) in [
+            ("all", LanePublication::All),
+            ("public", LanePublication::Public),
+            ("none", LanePublication::None),
+        ] {
+            let c = Config::parse(&format!(
+                "[network]\nnetwork = \"regtest\"\n[mining]\nminer_script = \"51\"\nlane_publication = \"{value}\"\n"
+            ))
+            .expect("parses");
+            assert_eq!(c.mining.lane_publication, publication);
+        }
+        rejects(
+            "[network]\nnetwork = \"regtest\"\n[mining]\nminer_script = \"51\"\nlane_publication = \"some\"\n",
+            "unknown variant",
+        );
     }
 
     fn rejects(text: &str, needle: &str) {
@@ -717,6 +886,42 @@ mod tests {
                 e.to_string().contains(needle),
                 "error {e} does not mention {needle}"
             ),
+        }
+    }
+
+    #[test]
+    fn the_cookie_authentication_is_on_unless_the_config_turns_it_off() {
+        let rpc = |keys: &str| {
+            Config::parse(&format!(
+                "[network]\nnetwork = \"regtest\"\n[rpc]\n{keys}\n[mining]\nminer_script = \"51\"\n"
+            ))
+            .expect("config")
+            .rpc
+        };
+        let default = rpc("listen_addr = \"192.0.2.1:18345\"");
+        assert!(default.enable_cookie_auth);
+        assert_eq!(default.open_addr(), None);
+        assert!(RpcSection::default().enable_cookie_auth);
+
+        let moved = rpc("listen_addr = \"127.0.0.1:18345\"\ncookie_dir = \"/run/hayai\"");
+        assert_eq!(moved.cookie_dir, Some(PathBuf::from("/run/hayai")));
+
+        // Without the cookie, a loopback address is not open to the network. Each other
+        // address is.
+        let off = "enable_cookie_auth = false";
+        let local = rpc(&format!("listen_addr = \"127.0.0.1:18345\"\n{off}"));
+        assert!(!local.enable_cookie_auth);
+        assert_eq!(local.open_addr(), None);
+        assert_eq!(
+            rpc(&format!("listen_addr = \"[::1]:18345\"\n{off}")).open_addr(),
+            None
+        );
+        assert_eq!(rpc(off).open_addr(), None);
+        for addr in ["192.0.2.1:18345", "0.0.0.0:18345", "[::]:18345"] {
+            assert_eq!(
+                rpc(&format!("listen_addr = \"{addr}\"\n{off}")).open_addr(),
+                Some(addr.parse().unwrap())
+            );
         }
     }
 

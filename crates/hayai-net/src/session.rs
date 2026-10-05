@@ -75,6 +75,8 @@ pub struct PeerSession {
     compact_done: bool,
     outstanding_ping: Option<(u64, Instant)>,
     last_ping_at: Instant,
+    /// The time from the last answered `ping` to its `pong`.
+    ping_time: Option<Duration>,
 }
 
 impl PeerSession {
@@ -119,6 +121,7 @@ impl PeerSession {
             compact_done: false,
             outstanding_ping: None,
             last_ping_at: now,
+            ping_time: None,
         };
         (session, version)
     }
@@ -185,8 +188,8 @@ impl PeerSession {
             }
             LegacyMessage::Ping(nonce) => actions.push(Action::Send(LegacyMessage::Pong(nonce))),
             LegacyMessage::Pong(nonce) => {
-                if matches!(self.outstanding_ping, Some((n, _)) if n == nonce) {
-                    self.outstanding_ping = None;
+                if let Some((_, sent)) = self.outstanding_ping.take_if(|(n, _)| *n == nonce) {
+                    self.ping_time = Some(sent.elapsed());
                 }
             }
             // BIP 155 requires `sendaddrv2` before `verack`; unknown commands and rejects
@@ -259,6 +262,28 @@ impl PeerSession {
         Ok(())
     }
 
+    /// The time from the last answered `ping` of this node to its `pong`.
+    pub fn ping_time(&self) -> Option<Duration> {
+        self.ping_time
+    }
+
+    /// The age of the `ping` of this node that has no `pong` yet.
+    pub fn ping_wait(&self) -> Option<Duration> {
+        self.outstanding_ping.map(|(_, sent)| sent.elapsed())
+    }
+
+    /// A `ping` to send now, outside the keepalive period. `None` before the handshake
+    /// ends and while a `ping` has no `pong`.
+    pub fn ping_now(&mut self, now: Instant) -> Option<Action> {
+        let (true, None) = (self.established, self.outstanding_ping) else {
+            return None;
+        };
+        let nonce = rand::random::<u64>();
+        self.outstanding_ping = Some((nonce, now));
+        self.last_ping_at = now;
+        Some(Action::Send(LegacyMessage::Ping(nonce)))
+    }
+
     /// Timeouts and keepalive; call periodically.
     pub fn on_tick(&mut self, now: Instant) -> Result<Vec<Action>, SessionError> {
         if !self.established {
@@ -280,10 +305,7 @@ impl PeerSession {
                 if now.duration_since(self.last_ping_at) < self.config.ping_interval {
                     return Ok(Vec::new());
                 }
-                let nonce = rand::random::<u64>();
-                self.outstanding_ping = Some((nonce, now));
-                self.last_ping_at = now;
-                Ok(vec![Action::Send(LegacyMessage::Ping(nonce))])
+                Ok(self.ping_now(now).into_iter().collect())
             }
         }
     }
@@ -514,8 +536,29 @@ mod tests {
         let [Action::Send(LegacyMessage::Ping(nonce))] = got.as_slice() else {
             panic!("expected a ping");
         };
+        let Some(_) = s.ping_wait() else {
+            panic!("the ping has no pong yet");
+        };
+        let None = s.ping_time() else {
+            panic!("no pong yet");
+        };
         assert_eq!(s.on_message(LegacyMessage::Pong(*nonce)), Ok(vec![]));
         assert_eq!(s.on_tick(now + Duration::from_secs(17)), Ok(vec![]));
+        let (Some(_), None) = (s.ping_time(), s.ping_wait()) else {
+            panic!("the pong gives the ping time and ends the wait");
+        };
+        // A ping on request, outside the period: one at a time.
+        let Some(Action::Send(LegacyMessage::Ping(_))) = s.ping_now(now) else {
+            panic!("expected a ping on request");
+        };
+        let None = s.ping_now(now) else {
+            panic!("a second ping before the pong");
+        };
+        // No ping on request before the handshake ends.
+        let (mut s, now) = start(None);
+        let None = s.ping_now(now) else {
+            panic!("a ping before the handshake");
+        };
     }
 
     #[test]

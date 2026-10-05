@@ -185,7 +185,7 @@ fn eviction_never_strands_the_inserted_transaction() {
     // Room for the parent and the other transaction, not for a third (ZIP 401: each has
     // the cost 10,000).
     let limit = 2 * hayai_prepared::MEMPOOL_COST_THRESHOLD as usize;
-    let store = PreparedStore::new(h.cfg.epoch(), limit, Zip317Params::ZIP317);
+    let store = PreparedStore::new(h.cfg.epoch(), limit, Zip317Params::ZAKURA);
     store.insert(parent.clone()).unwrap();
     store.insert(other.clone()).unwrap();
     let result = store.insert(child.clone());

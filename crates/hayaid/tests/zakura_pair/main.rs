@@ -7,7 +7,8 @@
 //!     [--hayaid PATH] [--work DIR] [--port-base N] [--minutes N] [--hayaid-log LEVEL]
 //! ```
 //!
-//! `LIST` is a comma-separated list of `a`, `b`, `c`, `d`, `e`, `g`, `nu61`, `nu7`, or `all`.
+//! `LIST` is a comma-separated list of `a`, `b`, `c`, `d`, `e`, `g`, `nu61`, `rpc`, `nu7`, or
+//! `all`.
 //! `all` does not have `nu7`: that scenario needs the hayaid and the test binary of the
 //! Zakura backend.
 //! Without `--zakurad` the binary runs nothing: `cargo test --workspace` has no Zakura
@@ -15,6 +16,7 @@
 
 mod nodes;
 mod rpc;
+mod rpc_compare;
 mod scenarios;
 mod txs;
 
@@ -78,13 +80,25 @@ pub struct Args {
 }
 
 impl Args {
-    pub fn pair(&self, name: &str, zakura_disbursement: Option<u64>) -> Result<Pair, String> {
+    /// A pair without funding streams, with a lockbox disbursement of `disbursement`
+    /// zatoshis in the NU6.1 activation block.
+    pub fn pair(&self, name: &str, disbursement: Option<u64>) -> Result<Pair, String> {
+        self.pair_with(name, disbursement, false)
+    }
+
+    pub fn pair_with(
+        &self,
+        name: &str,
+        disbursement: Option<u64>,
+        funding_streams: bool,
+    ) -> Result<Pair, String> {
         Pair::new(Setup {
             hayaid_bin: self.hayaid.clone(),
             zakurad_bin: self.zakurad.clone(),
             dir: self.work.join(name),
             ports: Ports::from_base(self.port_base),
-            zakura_disbursement,
+            disbursement,
+            funding_streams,
             hayai_log: self.hayai_log.clone(),
         })
     }
@@ -147,7 +161,7 @@ fn main() {
         args.zakurad.display(),
         args.work.display()
     );
-    let all = ["a", "b", "c", "d", "e", "nu61", "g"];
+    let all = ["a", "b", "c", "d", "e", "nu61", "rpc", "g"];
     let selected: Vec<&str> = match scenarios.as_str() {
         "all" => all.to_vec(),
         list => list.split(',').collect(),
@@ -163,6 +177,7 @@ fn main() {
             "e" => scenarios::e(&args, &mut report),
             "g" => scenarios::g(&args, &mut report),
             "nu61" => scenarios::nu61(&args, &mut report),
+            "rpc" => rpc_compare::run(&args, &mut report),
             "nu7" => scenarios::nu7(&args, &mut report),
             other => Err(format!("unknown scenario {other}")),
         };

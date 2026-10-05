@@ -1,8 +1,11 @@
 //! The JSON-RPC shim end to end over HTTP: template shape, long polling, submission,
-//! malformed requests.
+//! malformed requests, cookie authentication. The servers of the tests whose subject is
+//! not the authentication have no cookie.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -10,9 +13,12 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use hayai_consensus::Network;
 use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_rpc::cookie::{self, COOKIE_FILE};
+use hayai_rpc::http::MAX_HEAD;
 use hayai_rpc::{
-    BlockGenerator, BlockSubmitSink, HttpServer, MetricsServer, NodeQuery, Registry, Rpc,
-    RpcConfig, SubmitOutcome, SubmittedBlock, TemplateFeed, TipSource, TipState,
+    BlockGenerator, BlockInfo, BlockSubmitSink, ChainTip, Cookie, HttpServer, MetricsServer,
+    NodeQuery, NodeState, PeerRow, Registry, Rpc, RpcConfig, SubmitOutcome, SubmittedBlock,
+    TemplateFeed, TipSource, TipState,
 };
 use hayai_template::messages::{Hash32, HexBytes, Submit};
 use hayai_template::submission::rebuild_block;
@@ -181,7 +187,7 @@ fn harness() -> Harness {
     config.long_poll_set_delay = Duration::from_millis(150);
     config.long_poll_max = Duration::from_millis(600);
     let rpc = Rpc::new(config, feed.clone(), sink.clone(), Arc::new(Chain));
-    let server = HttpServer::serve("127.0.0.1:0", rpc).unwrap();
+    let server = HttpServer::serve("127.0.0.1:0", rpc, None).unwrap();
     Harness {
         live: Mutex::new(live),
         feed,
@@ -721,7 +727,7 @@ fn generate_is_served_only_with_a_generator() {
         Arc::new(Chain),
         producer.clone(),
     );
-    let server = HttpServer::serve("127.0.0.1:0", rpc).unwrap();
+    let server = HttpServer::serve("127.0.0.1:0", rpc, None).unwrap();
     let mut c = Client::connect(server.addr());
     let v = c.call("generate", json!([2]));
     assert_eq!(
@@ -740,8 +746,11 @@ fn generate_is_served_only_with_a_generator() {
 }
 
 /// A chain of the blocks 0 to 99 with the hash `[height; 32]`, and a mempool that takes a
-/// transaction of one byte.
-struct State;
+/// transaction of one byte. `calls` has the calls that change the node.
+#[derive(Default)]
+struct State {
+    calls: Mutex<Vec<String>>,
+}
 
 impl NodeQuery for State {
     fn block_hash(&self, height: u32) -> Option<BlockHash> {
@@ -775,26 +784,120 @@ impl NodeQuery for State {
         id[0] = 0xaa;
         vec![id]
     }
-    fn send_transaction(&self, bytes: Bytes) -> Result<[u8; 32], String> {
+    fn send_transaction(&self, bytes: Bytes, private: bool) -> Result<[u8; 32], String> {
+        self.calls.lock().unwrap().push(format!("send {private}"));
         match bytes[..] {
             [first] => Ok([first; 32]),
             _ => Err("the policy refuses the transaction".into()),
         }
     }
+    fn block_info(&self, _hash: &BlockHash) -> Option<BlockInfo> {
+        None
+    }
+    /// One block for each 2 s, with the `nBits` of the Regtest limit: a work of 17.
+    fn header_context(&self, height: u32) -> Option<(u32, u32)> {
+        (height < 100).then_some((1_000 + 2 * height, 0x200f_0f0f))
+    }
+    fn chain_tips(&self) -> Vec<ChainTip> {
+        vec![
+            ChainTip {
+                height: 99,
+                hash: BlockHash([99; 32]),
+                branch_len: 0,
+                status: "active",
+            },
+            ChainTip {
+                height: 98,
+                hash: BlockHash([0xf0; 32]),
+                branch_len: 2,
+                status: "valid-fork",
+            },
+        ]
+    }
+    fn node_state(&self) -> NodeState {
+        NodeState {
+            version: (1, 2, 3),
+            user_agent: "/mock:1.2.3/".into(),
+            protocol_version: 170_160,
+            services: (1 << 26) | 1,
+            connections: 2,
+            relay_fee_rate: 100,
+        }
+    }
+    fn peers(&self) -> Vec<PeerRow> {
+        vec![
+            PeerRow {
+                addr: "127.0.0.1:18344".parse().unwrap(),
+                user_agent: Some("/peer:1/".into()),
+                version: Some(170_190),
+                inbound: true,
+                ping_time: Some(0.25),
+                ping_wait: None,
+            },
+            PeerRow {
+                addr: "[::1]:18344".parse().unwrap(),
+                user_agent: None,
+                version: None,
+                inbound: false,
+                ping_time: None,
+                ping_wait: Some(1.5),
+            },
+        ]
+    }
+    fn mempool_size(&self) -> (usize, usize) {
+        (1, 250)
+    }
+    fn add_node(&self, addr: SocketAddr) -> bool {
+        let mut calls = self.calls.lock().unwrap();
+        let call = format!("addnode {addr}");
+        let new = !calls.contains(&call);
+        calls.push(call);
+        new
+    }
+    fn ping(&self) {
+        self.calls.lock().unwrap().push("ping".into());
+    }
+    fn stop(&self) {
+        self.calls.lock().unwrap().push("stop".into());
+    }
 }
+
+/// The methods of the module `info`.
+const INFO_METHODS: [&str; 18] = [
+    "getinfo",
+    "getmininginfo",
+    "getblocksubsidy",
+    "getnetworksolps",
+    "getnetworkhashps",
+    "getdifficulty",
+    "getnetworkinfo",
+    "getpeerinfo",
+    "getmempoolinfo",
+    "getblockheader",
+    "getchaintips",
+    "validateaddress",
+    "z_validateaddress",
+    "addnode",
+    "ping",
+    "stop",
+    "getbestblockheightandhash",
+    "getdeprecationinfo",
+];
 
 #[test]
 fn the_query_methods_are_served_only_with_a_node_query() {
     let h = harness();
     let mut c = Client::connect(h.server.addr());
-    for method in [
+    let query_methods = [
         "getblockhash",
         "getblock",
         "getblockchaininfo",
         "z_gettreestate",
         "getrawmempool",
         "sendrawtransaction",
-    ] {
+        "sendprivatetransaction",
+    ];
+    for method in query_methods.into_iter().chain(INFO_METHODS) {
         assert_eq!(
             c.call(method, json!([]))["error"]["code"],
             -32601,
@@ -808,9 +911,9 @@ fn the_query_methods_are_served_only_with_a_node_query() {
         h.sink.clone(),
         Arc::new(Chain),
         None,
-        Some(Arc::new(State)),
+        Some(Arc::new(State::default())),
     );
-    let server = HttpServer::serve("127.0.0.1:0", rpc).unwrap();
+    let server = HttpServer::serve("127.0.0.1:0", rpc, None).unwrap();
     let mut c = Client::connect(server.addr());
     let hash = |height: u8| BlockHash([height; 32]).to_string();
 
@@ -820,8 +923,11 @@ fn the_query_methods_are_served_only_with_a_node_query() {
     for block in [json!(7), json!("7"), json!(hash(7))] {
         assert_eq!(c.call("getblock", json!([block, 0]))["result"], "07b1");
     }
-    assert_eq!(c.call("getblock", json!([7, 1]))["error"]["code"], -8);
-    assert_eq!(c.call("getblock", json!([7]))["error"]["code"], -8);
+    // The verbosity 1 is the default. It needs the place of the block in the chain, which
+    // this node does not give. No other verbosity exists.
+    assert_eq!(c.call("getblock", json!([7, 1]))["error"]["code"], -5);
+    assert_eq!(c.call("getblock", json!([7]))["error"]["code"], -5);
+    assert_eq!(c.call("getblock", json!([7, 2]))["error"]["code"], -8);
 
     let info = c.call("getblockchaininfo", json!([]))["result"].clone();
     assert_eq!(info["chain"], "regtest");
@@ -876,6 +982,247 @@ fn the_query_methods_are_served_only_with_a_node_query() {
         c.call("sendrawtransaction", json!(["zz"]))["error"]["code"],
         -22
     );
+}
+
+/// The methods of the module `info` on the node of [`State`]: what the server makes of the
+/// answers of the node, and which calls reach the node.
+#[test]
+fn the_info_methods_have_the_fields_of_zakura() {
+    let h = harness();
+    let serve = |network: Network| {
+        let state = Arc::new(State::default());
+        let rpc = Rpc::with_parts(
+            RpcConfig::new(network),
+            h.feed.clone(),
+            h.sink.clone(),
+            Arc::new(Chain),
+            None,
+            Some(state.clone()),
+        );
+        (HttpServer::serve("127.0.0.1:0", rpc, None).unwrap(), state)
+    };
+    let (server, state) = serve(Network::Regtest);
+    let mut c = Client::connect(server.addr());
+    let (tip_height, tip_hash) = Chain.tip();
+
+    assert_eq!(
+        c.call("getbestblockheightandhash", json!([]))["result"],
+        json!({ "height": tip_height, "hash": tip_hash.0 })
+    );
+    assert_eq!(c.call("getdeprecationinfo", json!([]))["result"], json!({}));
+    assert_eq!(
+        c.call("getmempoolinfo", json!([]))["result"],
+        json!({ "size": 1, "bytes": 250, "usage": 250 })
+    );
+    assert_eq!(
+        c.call("getpeerinfo", json!([]))["result"],
+        json!([
+            { "addr": "127.0.0.1:18344", "subver": "/peer:1/", "version": 170_190,
+              "inbound": true, "pingtime": 0.25 },
+            { "addr": "[::1]:18344", "inbound": false, "pingwait": 1.5 },
+        ])
+    );
+    assert_eq!(
+        c.call("getchaintips", json!([]))["result"],
+        json!([
+            { "height": 99, "hash": BlockHash([99; 32]).to_string(), "branchlen": 0,
+              "status": "active" },
+            { "height": 98, "hash": BlockHash([0xf0; 32]).to_string(), "branchlen": 2,
+              "status": "valid-fork" },
+        ])
+    );
+    let network_info = c.call("getnetworkinfo", json!([]))["result"].clone();
+    assert_eq!(
+        network_info,
+        json!({
+            "version": 1_020_300,
+            "subversion": "/mock:1.2.3/",
+            "protocolversion": 170_160,
+            "localservices": "0000000004000001",
+            "timeoffset": 0,
+            "connections": 2,
+            "networks": [
+                { "name": "ipv4", "limited": false, "reachable": true, "proxy": "",
+                  "proxy_randomize_credentials": false },
+                { "name": "ipv6", "limited": false, "reachable": true, "proxy": "",
+                  "proxy_randomize_credentials": false },
+                { "name": "onion", "limited": false, "reachable": false, "proxy": "",
+                  "proxy_randomize_credentials": false },
+            ],
+            "relayfee": 1e-6,
+            "localaddresses": [],
+            "warnings": "",
+        })
+    );
+
+    // The work of a Regtest block is 17, and the blocks of the node have 2 s each: 8
+    // solutions for each second over each window. One block has no rate.
+    for params in [
+        json!([]),
+        json!([120]),
+        json!([10, 50]),
+        json!([0, 99]),
+        json!([5, -1]),
+    ] {
+        assert_eq!(
+            c.call("getnetworksolps", params.clone())["result"],
+            8,
+            "{params}"
+        );
+        assert_eq!(c.call("getnetworkhashps", params)["result"], 8);
+    }
+    assert_eq!(c.call("getnetworksolps", json!([120, 0]))["result"], 0);
+    // A parameter error has the code -1, as in zcashd and Zakura.
+    assert_eq!(c.call("getnetworksolps", json!(["x"]))["error"]["code"], -1);
+
+    // The template of the harness is on another block than the tip of the node, so the
+    // difficulty is the difficulty of the bits of the tip block: the Regtest limit.
+    assert_eq!(c.call("getdifficulty", json!([]))["result"], 1.0);
+    let info = c.call("getinfo", json!([]))["result"].clone();
+    assert_eq!(
+        info,
+        json!({
+            "version": 1_020_300,
+            "build": "v1.2.3",
+            "subversion": "/mock:1.2.3/",
+            "protocolversion": 170_160,
+            "blocks": 99,
+            "connections": 2,
+            "difficulty": 1.0,
+            "testnet": true,
+            "paytxfee": 0.0,
+            "relayfee": 1e-6,
+        })
+    );
+    // The subsidy of Regtest, and the Mainnet streams of the first NU6 block and of the
+    // first NU6.1 block (Zakura names the streams of NU6 only with the NU6 names).
+    assert_eq!(
+        c.call("getblocksubsidy", json!([]))["result"],
+        json!({
+            "miner": 6.25,
+            "founders": 0.0,
+            "fundingstreamstotal": 0.0,
+            "lockboxtotal": 0.0,
+            "totalblocksubsidy": 6.25,
+        })
+    );
+    assert_eq!(c.call("getblocksubsidy", json!([-1]))["error"]["code"], -1);
+
+    // `ping` reaches the node. `stop` and `addnode` do so on Regtest.
+    assert_eq!(c.call("ping", json!([]))["result"], Value::Null);
+    assert_eq!(c.call("ping", json!([]))["error"], Value::Null);
+    assert_eq!(
+        c.call("addnode", json!(["127.0.0.1:18344", "add"]))["result"],
+        Value::Null
+    );
+    let again = c.call("addnode", json!(["127.0.0.1:18344", "add"]));
+    assert_eq!(again["error"]["code"], -23, "{again}");
+    for params in [
+        json!(["127.0.0.1:18344", "remove"]),
+        json!(["node.example", "add"]),
+        json!(["127.0.0.1:18344"]),
+    ] {
+        assert_eq!(c.call("addnode", params)["error"]["code"], -1);
+    }
+    assert_eq!(
+        c.call("sendprivatetransaction", json!(["07"]))["result"],
+        "07".repeat(32)
+    );
+    assert_eq!(
+        c.call("sendrawtransaction", json!(["07"]))["result"],
+        "07".repeat(32)
+    );
+    assert_eq!(
+        c.call("stop", json!([]))["result"],
+        "hayaid server stopping"
+    );
+    assert_eq!(
+        *state.calls.lock().unwrap(),
+        [
+            "ping",
+            "ping",
+            "addnode 127.0.0.1:18344",
+            "addnode 127.0.0.1:18344",
+            "send true",
+            "send false",
+            "stop"
+        ]
+    );
+
+    // On another network `stop` and `addnode` do not reach the node.
+    for network in [Network::Testnet, Network::Mainnet] {
+        let (server, state) = serve(network);
+        let mut c = Client::connect(server.addr());
+        let stop = c.call("stop", json!([]));
+        assert_eq!(stop["error"]["code"], -32601, "{stop}");
+        assert_eq!(
+            c.call("addnode", json!(["127.0.0.1:18344", "add"]))["error"]["code"],
+            -1
+        );
+        assert_eq!(*state.calls.lock().unwrap(), Vec::<String>::new());
+        // The difficulty of a network without a template on the tip comes from the bits
+        // of the tip block: the Regtest bits of this node are above the limit of the
+        // other networks.
+        let difficulty = c.call("getdifficulty", json!([]))["result"].clone();
+        assert!(
+            matches!(difficulty.as_f64(), Some(d) if d > 0.0 && d < 1.0),
+            "{difficulty}"
+        );
+        if network == Network::Mainnet {
+            let nu6 = c.call("getblocksubsidy", json!([2_726_400]))["result"].clone();
+            assert_eq!(
+                nu6,
+                json!({
+                    "miner": 1.25,
+                    "founders": 0.0,
+                    "fundingstreamstotal": 0.125,
+                    "lockboxtotal": 0.1875,
+                    "totalblocksubsidy": 1.5625,
+                    "fundingstreams": [{
+                        "recipient": "Zcash Community Grants NU6",
+                        "specification": "https://zips.z.cash/zip-1015",
+                        "value": 0.125,
+                        "valueZat": 12_500_000,
+                        "address": "t3cFfPt1Bcvgez9ZbMBFWeZsskxTkPzGCow",
+                    }],
+                    "lockboxstreams": [{
+                        "recipient": "Lockbox NU6",
+                        "specification": "https://zips.z.cash/zip-1015",
+                        "value": 0.1875,
+                        "valueZat": 18_750_000,
+                    }],
+                })
+            );
+            let nu6_1 = c.call("getblocksubsidy", json!([3_146_400]))["result"].clone();
+            assert_eq!(nu6_1["fundingstreams"][0]["recipient"], "Major Grants");
+            assert_eq!(
+                nu6_1["lockboxstreams"][0]["specification"],
+                "https://zips.z.cash/zip-0214"
+            );
+            // The founders' reward of the first block after the slow start.
+            let early = c.call("getblocksubsidy", json!([20_000]))["result"].clone();
+            assert_eq!(
+                early,
+                json!({
+                    "miner": 10.0,
+                    "founders": 2.5,
+                    "fundingstreamstotal": 0.0,
+                    "lockboxtotal": 0.0,
+                    "totalblocksubsidy": 12.5,
+                })
+            );
+        }
+        let info = c.call("getmininginfo", json!([]))["result"].clone();
+        assert_eq!(info["testnet"], network != Network::Mainnet);
+        assert_eq!(
+            info["chain"],
+            if network == Network::Mainnet {
+                "main"
+            } else {
+                "test"
+            }
+        );
+    }
 }
 
 #[test]
@@ -938,4 +1285,147 @@ fn a_revert_wakes_long_polls_as_a_tip_event() {
         .unwrap();
     assert!(start.elapsed() < Duration::from_secs(1));
     assert_eq!(template.id, update.template().id);
+}
+
+// ----- cookie authentication -----
+
+/// An empty directory in the temporary directory of the target directory.
+fn scratch(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("hayai-rpc-tests")
+        .join(name);
+    if let Err(e) = fs::remove_dir_all(&dir) {
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "{e}");
+    }
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A server with the cookie file in `dir` and a generator, which shows that a method ran.
+fn cookie_server(h: &Harness, dir: &Path) -> (Arc<HttpServer>, Arc<Producer>) {
+    let producer = Arc::new(Producer {
+        asked: Mutex::new(Vec::new()),
+    });
+    let rpc = Rpc::with_generator(
+        RpcConfig::new(Network::Regtest),
+        h.feed.clone(),
+        h.sink.clone(),
+        Arc::new(Chain),
+        producer.clone(),
+    );
+    let cookie = Cookie::create(dir).unwrap();
+    let server = HttpServer::serve("127.0.0.1:0", rpc, Some(cookie)).unwrap();
+    (server, producer)
+}
+
+/// `generate 2` on a new connection, with the given `Authorization` header.
+fn generate_with(addr: SocketAddr, authorization: Option<&str>) -> (u16, Vec<u8>) {
+    let body = r#"{"id": 1, "method": "generate", "params": [2]}"#;
+    let authorization = match authorization {
+        Some(value) => format!("Authorization: {value}\r\n"),
+        None => String::new(),
+    };
+    Client::connect(addr).raw(&format!(
+        "POST / HTTP/1.1\r\nHost: x\r\n{authorization}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    ))
+}
+
+#[test]
+fn a_request_needs_the_credentials_of_the_cookie_file() {
+    let h = harness();
+    let dir = scratch("credentials");
+    let (server, producer) = cookie_server(&h, &dir);
+    let file = dir.join(COOKIE_FILE);
+
+    // No header, and a secret of the correct length with one different character.
+    let content = fs::read_to_string(&file).unwrap();
+    let last = match content.ends_with('A') {
+        true => 'B',
+        false => 'A',
+    };
+    let wrong = format!("{}{last}", &content[..content.len() - 1]);
+    fs::write(dir.join("wrong"), wrong).unwrap();
+    let wrong = cookie::authorization(&dir.join("wrong")).unwrap();
+    for authorization in [
+        None,
+        Some(wrong.as_str()),
+        Some("Basic"),
+        Some("Basic AAAA"),
+    ] {
+        let (status, body) = generate_with(server.addr(), authorization);
+        assert_eq!(status, 401, "{authorization:?}");
+        assert_eq!(body, b"");
+    }
+    assert_eq!(*producer.asked.lock().unwrap(), Vec::<u32>::new());
+
+    let right = cookie::authorization(&file).unwrap();
+    let (status, body) = generate_with(server.addr(), Some(&right));
+    assert_eq!(status, 200);
+    let answer: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(answer["result"].as_array().map(Vec::len), Some(2));
+    assert_eq!(*producer.asked.lock().unwrap(), vec![2]);
+    server.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn the_cookie_file_is_private_replaces_a_stale_file_and_ends_with_the_server() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = harness();
+    let dir = scratch("file");
+    let file = dir.join(COOKIE_FILE);
+    assert_eq!(file.file_name().unwrap(), ".cookie");
+    // A file that a run without a clean shutdown left, with a mode that is too wide.
+    fs::write(&file, "__cookie__:stale").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let (server, _) = cookie_server(&h, &dir);
+    let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "{mode:o}");
+    let content = fs::read_to_string(&file).unwrap();
+    let secret = content.strip_prefix("__cookie__:").expect("the user name");
+    // 32 bytes in base64, as Zakura.
+    assert_eq!(secret.len(), 44);
+    assert!(secret.ends_with('='));
+    assert!(secret
+        .trim_end_matches('=')
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/'));
+    // The directory has the cookie file only: no temporary file stays.
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+
+    server.shutdown();
+    assert!(!file.exists());
+
+    // A cookie directory that the node cannot make is an error.
+    fs::write(dir.join("plain"), "").unwrap();
+    let Err(_) = Cookie::create(&dir.join("plain").join("sub")) else {
+        panic!("a file is not a directory");
+    };
+}
+
+#[test]
+fn a_head_above_the_limit_is_refused() {
+    let h = harness();
+    let body = r#"{"id": 1, "method": "getblockcount", "params": []}"#;
+    let request = |fill: usize| {
+        format!(
+            "POST / HTTP/1.1\r\nHost: x\r\nAuthorization: Basic {}\r\nContent-Length: {}\r\n\r\n{body}",
+            "A".repeat(fill),
+            body.len()
+        )
+    };
+    let (status, _) = Client::connect(h.server.addr()).raw(&request(MAX_HEAD / 2));
+    assert_eq!(status, 200);
+    let (status, _) = Client::connect(h.server.addr()).raw(&request(MAX_HEAD));
+    assert_eq!(status, 431);
+    // The headers together have the bound: no single line is above it.
+    let many = format!("X-Fill: {}\r\n", "a".repeat(1000)).repeat(17);
+    let (status, _) = Client::connect(h.server.addr()).raw(&format!(
+        "POST / HTTP/1.1\r\n{many}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    ));
+    assert_eq!(status, 431);
 }

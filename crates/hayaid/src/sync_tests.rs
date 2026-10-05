@@ -781,7 +781,7 @@ fn the_mempool_refuses_what_the_policy_and_the_tip_do_not_permit() {
 
     // The transaction has 3 logical actions and pays for none, or for 2 of them: the
     // unpaid action limit is 0.
-    for (fee, unpaid) in [(0, 3), (14_999, 1)] {
+    for (fee, unpaid) in [(0, 3), (1_199, 1)] {
         let reason = a
             .submit_tx(shielding(&mature, fee, 0))
             .expect_err("unpaid actions");
@@ -933,6 +933,56 @@ fn submit_when_keys_are_ready(node: &Node, tx: &Arc<hayai_wire::RawTx>) {
         Err(Reject::Prepare(PrepareError::Unsupported(_))) => false,
         Err(reason) => panic!("the transaction is refused: {reason}"),
     });
+}
+
+/// A producer on a Regtest network with configured funding streams and a configured
+/// lockbox disbursement mines across the NU6.1 height: each block is a block of its
+/// template. A second node synchronizes the chain and validates each block. The coinbase
+/// has the funding stream output in the range of the streams and the disbursement output
+/// in the NU6.1 activation block, and the deferred pool pays the disbursement.
+#[test]
+fn a_chain_with_configured_funding_streams_crosses_nu6_1() {
+    const ADDRESS: &str = "t2HifwjUj9uyxr9bknR8LFuQbc98c3vkXtu";
+    // The deferred pool gets 75,000,000 zatoshis in each of the blocks 11 and 12.
+    let extra = format!(
+        r#"[regtest]
+activation_heights = {{ nu6 = 5, nu6_1 = 13 }}
+lockbox_disbursements = [{{ address = "{ADDRESS}", amount = 150000000 }}]
+
+[[regtest.funding_streams]]
+height_range = {{ start = 11, end = 17 }}
+recipients = [
+    {{ receiver = "Deferred", numerator = 12 }},
+    {{ receiver = "MajorGrants", numerator = 8, addresses = ["{ADDRESS}"] }},
+]
+"#
+    );
+    let dir = scratch();
+    let a = start_with(dir.path(), "a", true, true, &extra);
+    let x = start_with(dir.path(), "x", false, true, &extra);
+    generate(&a, 18);
+    x.relay.connect(addr(&a)).expect("x dials a");
+    wait_tip(&x, a.tip.tip());
+    let chain = fetch_chain(&a);
+    let outputs = |height: u32| -> Vec<u64> {
+        let branch = match height {
+            ..5 => BranchId::Nu5,
+            5..13 => BranchId::Nu6,
+            13.. => BranchId::Nu6_1,
+        };
+        let block = RawBlock::parse(chain[height as usize - 1].clone(), branch).expect("a block");
+        let coinbase = block.txs[0].tx.transparent_bundle().expect("a coinbase");
+        coinbase
+            .vout
+            .iter()
+            .map(|output| output.value().into_u64())
+            .collect()
+    };
+    assert_eq!(outputs(10), [625_000_000]);
+    assert_eq!(outputs(11), [500_000_000, 50_000_000]);
+    assert_eq!(outputs(13), [500_000_000, 50_000_000, 150_000_000]);
+    assert_eq!(outputs(16), [500_000_000, 50_000_000]);
+    assert_eq!(outputs(17), [625_000_000]);
 }
 
 /// A chain crosses two upgrades, NU6 at height 108 and NU6.2 at height 116, with a
@@ -2007,6 +2057,390 @@ fn the_template_goes_back_after_a_failed_verification_at_the_tip() {
         .filter(|row| row["event"] == "block_validated" && row["result"] == "invalid")
         .count();
     assert_eq!(rejected, 1);
+}
+
+/// A compact-relay peer that records each message of the node. It asks for nothing by
+/// itself: a test sends its requests with [`Tap::send`].
+struct Tap {
+    stream: TcpStream,
+    /// The messages of the node, in the order of the wire, without `ping`.
+    seen: Arc<parking_lot::Mutex<Vec<LegacyMessage>>>,
+}
+
+impl Tap {
+    /// Connects to `node`, offers the compact relay with the lanes and the candidates, and
+    /// waits until the node has the session.
+    fn connect(node: &Node) -> Self {
+        let mut stream = TcpStream::connect(addr(node)).expect("connect");
+        // A reader that gets no message for this time ends: no test hangs on the socket.
+        stream.set_read_timeout(Some(WAIT)).expect("a read timeout");
+        let LegacyMessage::Version(mut hello) = version(0) else {
+            unreachable!("version() gives a version message");
+        };
+        hello.services = hayai_net::RelayConfig::new(NET).services();
+        send(&mut stream, &LegacyMessage::Version(hello)).expect("version");
+        let sessions = |node: &Node| {
+            let lanes = |peer: &hayai_net::PeerInfo| matches!(peer.protocol, PeerProtocol::CompactRelay(n) if n.candidates());
+            node.relay.peers().into_iter().filter(lanes).count()
+        };
+        let before = sessions(node);
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (record, mut reader) = (seen.clone(), stream.try_clone().expect("clone"));
+        thread::spawn(move || {
+            while let Ok(message) = read_message(&mut reader, NET, usize::MAX) {
+                let answer = match &message {
+                    LegacyMessage::Version(_) => Some(LegacyMessage::Verack),
+                    LegacyMessage::Ping(nonce) => Some(LegacyMessage::Pong(*nonce)),
+                    // The tap has no header for the header sync of the node.
+                    LegacyMessage::GetHeaders(_) => Some(LegacyMessage::Headers(Vec::new())),
+                    LegacyMessage::CompactVer(_) => {
+                        Some(LegacyMessage::CompactVer(hayai_net::CompactVer::CURRENT))
+                    }
+                    _ => None,
+                };
+                if let Some(answer) = answer {
+                    let Ok(()) = send(&mut reader, &answer) else {
+                        return;
+                    };
+                }
+                if !matches!(message, LegacyMessage::Ping(_)) {
+                    record.lock().push(message);
+                }
+            }
+        });
+        wait_for("the compact session of the tap", || sessions(node) > before);
+        Self { stream, seen }
+    }
+
+    fn send(&mut self, message: LegacyMessage) {
+        send(&mut self.stream, &message).expect("the node reads the tap");
+    }
+
+    /// The messages that the node sent before it answered a `ping` of this call: each
+    /// message that the node queued before the call is in the result.
+    fn messages(&mut self) -> Vec<LegacyMessage> {
+        let nonce = rand::random();
+        self.send(LegacyMessage::Ping(nonce));
+        let seen = self.seen.clone();
+        wait_for("the pong", || {
+            seen.lock().contains(&LegacyMessage::Pong(nonce))
+        });
+        let all = self.seen.lock().clone();
+        let end = all
+            .iter()
+            .position(|message| *message == LegacyMessage::Pong(nonce))
+            .expect("the pong");
+        all[..end].to_vec()
+    }
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// A node with the compact relay and `[mining] lane_publication = publication`.
+fn start_publishing(
+    dir: &Path,
+    name: &str,
+    produce: bool,
+    publication: crate::config::LanePublication,
+) -> Node {
+    let mut config = config_with(dir, name, produce, true, "");
+    config.mining.lane_publication = publication;
+    Node::start(&config).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// The node of the lane tests: a producer with 105 blocks. Returns the node and two
+/// mature coins.
+fn lane_node(
+    dir: &Path,
+    publication: crate::config::LanePublication,
+) -> (Node, [(hayai_coins::OutPoint, u64); 2]) {
+    let a = start_publishing(dir, "a", true, publication);
+    generate(&a, 105);
+    let chain = fetch_chain(&a);
+    (a, [coinbase_coin(&chain[0]), coinbase_coin(&chain[1])])
+}
+
+/// What the lane tests read on the wire of the tap.
+#[derive(Default)]
+struct Wire {
+    batches: Vec<hayai_relay::BatchAnnounce>,
+    candidates: usize,
+    candidate_blocks: usize,
+    compact_blocks: usize,
+    announced: Vec<hayai_wire::WtxId>,
+}
+
+fn wire(messages: &[LegacyMessage]) -> Wire {
+    use hayai_relay::Message;
+
+    let mut wire = Wire::default();
+    for message in messages {
+        match message {
+            LegacyMessage::Compact(Message::BatchAnnounce(batch)) => {
+                wire.batches.push(batch.clone())
+            }
+            LegacyMessage::Compact(Message::CandidateAnnounce(_)) => wire.candidates += 1,
+            LegacyMessage::Compact(Message::CandidateBlock(_)) => wire.candidate_blocks += 1,
+            LegacyMessage::Compact(Message::CompactBlock(_)) => wire.compact_blocks += 1,
+            LegacyMessage::Compact(Message::TxAnnounce(announce)) => {
+                wire.announced.extend_from_slice(&announce.ids)
+            }
+            _ => {}
+        }
+    }
+    wire
+}
+
+/// `lane_publication = "all"`: the node publishes its template to a hayai peer as batches
+/// and candidates. This is the control of the two tests below: the tap reads the lane.
+#[test]
+fn a_miner_publishes_its_template_as_a_lane() {
+    let dir = scratch();
+    let (a, [coin, _]) = lane_node(dir.path(), crate::config::LanePublication::All);
+    let mut tap = Tap::connect(&a);
+    let tx = shielding(&coin, 15_000, 0);
+    a.submit_tx(tx.clone()).expect("valid");
+    wait_template(&a, 1);
+    generate(&a, 1);
+    let wire = wire(&tap.messages());
+    assert!(wire.candidates >= 1, "no candidate on the wire");
+    assert!(
+        wire.batches.iter().any(|batch| batch.ids == [tx.wtxid()]),
+        "no batch with the transaction: {:?}",
+        wire.batches
+    );
+    assert_eq!(wire.announced, [tx.wtxid()]);
+    assert_eq!(wire.candidate_blocks + wire.compact_blocks, 1);
+    a.shutdown().expect("clean shutdown");
+}
+
+/// `lane_publication = "none"`: no batch and no candidate leaves the node, and its block
+/// still goes out over the compact relay. The node still takes the lane of another miner
+/// and sends it on.
+#[test]
+fn a_miner_without_publication_sends_no_batch_and_no_candidate() {
+    let dir = scratch();
+    let (a, [first, second]) = lane_node(dir.path(), crate::config::LanePublication::None);
+    let mut tap = Tap::connect(&a);
+    let tx = shielding(&first, 15_000, 0);
+    a.submit_tx(tx.clone()).expect("valid");
+    wait_template(&a, 1);
+    generate(&a, 1);
+    let alone = wire(&tap.messages());
+    assert!(alone.batches.is_empty(), "{:?}", alone.batches);
+    assert_eq!((alone.candidates, alone.candidate_blocks), (0, 0));
+    // The transaction and the block went out as before.
+    assert_eq!(alone.announced, [tx.wtxid()]);
+    assert_eq!(alone.compact_blocks, 1);
+
+    // A second node publishes its template. Its lane reaches the tap through the first
+    // node, and it follows the blocks of the first node.
+    let b = start(dir.path(), "b", false, true);
+    b.relay.connect(addr(&a)).expect("b dials a");
+    wait_tip(&b, a.tip.tip());
+    let tx = shielding(&second, 15_000, 0);
+    a.submit_tx(tx.clone()).expect("valid");
+    wait_for("the lane of the second node on the tap", || {
+        let seen = wire(&tap.messages());
+        seen.candidates >= 1 && seen.batches.iter().any(|batch| batch.ids == [tx.wtxid()])
+    });
+    generate(&a, 1);
+    wait_tip(&b, a.tip.tip());
+    let chain = fetch_chain(&b);
+    assert_eq!((tx_count(&chain, 106), tx_count(&chain, 107)), (2, 2));
+    for node in [a, b] {
+        node.shutdown().expect("clean shutdown");
+    }
+}
+
+/// A private transaction is in the template and in the block. Before the block, no
+/// message of the node has it: no announcement, no batch, and no answer to `mempool`,
+/// `getdata` and `TxRequest`. `publication` is `public` or `none`.
+fn a_private_transaction_stays_off_the_wire(publication: crate::config::LanePublication) {
+    use hayai_relay::{Message, TxRequest};
+
+    let dir = scratch();
+    let (a, [public_coin, private_coin]) = lane_node(dir.path(), publication);
+    // The second node publishes no lane: each batch on the tap is a batch of the first.
+    let b = start_publishing(dir.path(), "b", false, crate::config::LanePublication::None);
+    b.relay.connect(addr(&a)).expect("b dials a");
+    wait_tip(&b, a.tip.tip());
+    let mut tap = Tap::connect(&a);
+
+    let public = shielding(&public_coin, 15_000, 0);
+    let private = shielding(&private_coin, 15_000, 0);
+    a.submit_tx(public.clone()).expect("valid");
+    a.submit_private_tx(private.clone()).expect("valid");
+    assert!(a.mempool.is_private(&private.wtxid()));
+    // A second private admission does not change the mark.
+    let Err(crate::mempool::Reject::Known) = a.submit_private_tx(private.clone()) else {
+        panic!("the store has the transaction");
+    };
+    assert!(a.mempool.is_private(&private.wtxid()));
+    wait_template(&a, 2);
+
+    // The tap asks for the transaction on each path.
+    let id = private.wtxid();
+    tap.send(LegacyMessage::Mempool);
+    tap.send(LegacyMessage::GetData(vec![
+        InvItem::Wtx(id),
+        InvItem::Tx(id.txid),
+    ]));
+    tap.send(LegacyMessage::Compact(Message::TxRequest(TxRequest {
+        ids: vec![id],
+    })));
+    let before = tap.messages();
+    let txid: &[u8; 32] = private.txid.as_ref();
+    // The answer to `getdata` names the two items as not found, and the answer to
+    // `mempool` has the public transaction only. No other message has the id or the
+    // bytes of the private transaction.
+    let not_found = LegacyMessage::NotFound(vec![InvItem::Wtx(id), InvItem::Tx(id.txid)]);
+    assert!(before.contains(&not_found), "{before:?}");
+    assert!(before.contains(&LegacyMessage::Inv(vec![InvItem::Wtx(public.wtxid())])));
+    assert_eq!(wire(&before).announced, [public.wtxid()]);
+    // The mempool of the other node has the public transaction only.
+    wait_for("the public transaction on b", || {
+        b.mempool.contains(&public.wtxid())
+    });
+    assert!(!b.mempool.contains(&id));
+
+    generate(&a, 1);
+    wait_tip(&b, a.tip.tip());
+    // Each message that the node sent up to the commit of the block.
+    let after = tap.messages();
+    let at = after
+        .iter()
+        .position(|message| {
+            matches!(
+                message,
+                LegacyMessage::Compact(Message::CompactBlock(_) | Message::CandidateBlock(_))
+            )
+        })
+        .expect("the block on the wire");
+    for message in after[..at].iter().filter(|message| **message != not_found) {
+        let bytes = encode(NET, message);
+        assert!(
+            !contains(&bytes, txid) && !contains(&bytes, &private.bytes[..64]),
+            "the private transaction is on the wire before its block: {message:?}"
+        );
+    }
+    let seen = wire(&after);
+    assert_eq!(seen.announced, [public.wtxid()]);
+    match publication {
+        crate::config::LanePublication::None => {
+            assert!(seen.batches.is_empty());
+            assert_eq!(seen.candidates, 0);
+        }
+        _ => {
+            // The lane has the public transaction only.
+            assert!(seen.candidates >= 1);
+            let ids: Vec<_> = seen.batches.iter().flat_map(|b| b.ids.clone()).collect();
+            assert_eq!(ids, [public.wtxid()]);
+        }
+    }
+    // The block has the bytes of the private transaction for a peer that does not have
+    // them, and the mark ends with the block.
+    let block = &after[at];
+    assert!(contains(&encode(NET, block), &private.bytes));
+    assert!(!a.mempool.is_private(&id));
+    let chain = fetch_chain(&b);
+    assert_eq!(tx_count(&chain, 106), 3);
+    assert!(parse(&chain[105]).txs.iter().any(|tx| tx.wtxid() == id));
+    for node in [a, b] {
+        node.shutdown().expect("clean shutdown");
+    }
+}
+
+#[test]
+fn a_private_transaction_is_not_in_the_published_lane() {
+    a_private_transaction_stays_off_the_wire(crate::config::LanePublication::Public);
+}
+
+#[test]
+fn a_private_transaction_of_a_miner_without_publication_stays_off_the_wire() {
+    a_private_transaction_stays_off_the_wire(crate::config::LanePublication::None);
+}
+
+/// One JSON-RPC call over HTTP to `node`, with the credentials of its cookie file. The
+/// read has a bound of 60 s.
+fn rpc_call(node: &Node, method: &str, params: Value) -> Value {
+    use std::io::Read;
+
+    let body = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })
+        .to_string();
+    let cookie = node.rpc_cookie.as_ref().expect("the node has a cookie");
+    let authorization = hayai_rpc::cookie::authorization(cookie).expect("cookie file");
+    let mut stream =
+        TcpStream::connect(node.rpc_addr.expect("the node serves RPC")).expect("connect");
+    stream.set_read_timeout(Some(WAIT)).expect("a read timeout");
+    write!(
+        stream,
+        "POST / HTTP/1.1\r\nHost: x\r\nAuthorization: {authorization}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("write");
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).expect("answer");
+    let (_, json) = answer.split_once("\r\n\r\n").expect("an HTTP body");
+    serde_json::from_str(json).expect("JSON")
+}
+
+/// `sendprivatetransaction` over the RPC server: a node with `lane_publication = "all"`
+/// refuses it, and each other node stores the transaction with the private mark.
+/// `getrawmempool` and `getmempoolinfo` show the transaction of the mempool.
+#[test]
+fn sendprivatetransaction_needs_a_node_that_takes_private_transactions() {
+    use crate::config::LanePublication;
+
+    for (publication, takes) in [
+        (LanePublication::All, false),
+        (LanePublication::Public, true),
+        (LanePublication::None, true),
+    ] {
+        let dir = scratch();
+        let rpc = "[rpc]\nlisten_addr = \"127.0.0.1:0\"\n";
+        let mut config = config_with(dir.path(), "a", true, true, rpc);
+        config.mining.lane_publication = publication;
+        let a = Node::start(&config).expect("node a");
+        generate(&a, 105);
+        let tx = shielding(&coinbase_coin(&fetch_chain(&a)[0]), 15_000, 0);
+        let hexdata = serde_json::json!([hex::encode(&tx.bytes)]);
+        let mut txid: [u8; 32] = *tx.txid.as_ref();
+        txid.reverse();
+        let txid = hex::encode(txid);
+
+        let answer = rpc_call(&a, "sendprivatetransaction", hexdata.clone());
+        let empty = serde_json::json!({ "size": 0, "bytes": 0, "usage": 0 });
+        if !takes {
+            assert_eq!(answer["error"]["code"], -26, "{answer}");
+            let message = answer["error"]["message"].as_str().expect("a message");
+            assert!(message.contains("lane_publication"), "{message}");
+            assert_eq!(
+                rpc_call(&a, "getmempoolinfo", serde_json::json!([]))["result"],
+                empty
+            );
+            // The same transaction is a public transaction for this node.
+            let answer = rpc_call(&a, "sendrawtransaction", hexdata);
+            assert_eq!(answer["result"], txid, "{answer}");
+        } else {
+            assert_eq!(answer["result"], txid, "{answer}");
+        }
+        assert_eq!(a.mempool.is_private(&tx.wtxid()), takes);
+        assert_eq!(
+            rpc_call(&a, "getrawmempool", serde_json::json!([]))["result"],
+            serde_json::json!([txid])
+        );
+        let size = tx.bytes.len();
+        assert_eq!(
+            rpc_call(&a, "getmempoolinfo", serde_json::json!([]))["result"],
+            serde_json::json!({ "size": 1, "bytes": size, "usage": size })
+        );
+        a.shutdown().expect("clean shutdown");
+    }
 }
 
 /// What two nodes with the same chain have in common: the tip, the tree roots, the

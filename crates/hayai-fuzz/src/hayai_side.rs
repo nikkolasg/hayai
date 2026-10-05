@@ -258,7 +258,7 @@ fn run(bytes: &[u8], ctx: &Context) -> Verdict {
         base.history = Some(tree);
     }
     let chain = Chain::new(base);
-    let store = PreparedStore::new(RuleEpoch::of(&rules), STORE_LIMIT, Zip317Params::ZIP317);
+    let store = PreparedStore::new(RuleEpoch::of(&rules), STORE_LIMIT, Zip317Params::ZAKURA);
     let cfg = ValidateConfig {
         network,
         rules,

@@ -20,6 +20,8 @@
 //! Template as lane. In full mode with the compact relay, every template change goes to the
 //! relay as a batch of its additions and a candidate (`hayai_relay::LanePublisher`,
 //! `Relay::publish_candidate`), so peers rebuild this node's blocks from a reference.
+//! `mining.lane_publication` is the choice of the miner: the whole template, the template
+//! without the private transactions (`Mempool::admit_private`), or nothing.
 //!
 //! Prebuilt bodies. While idle, at most once per [`PREBUILD_INTERVAL`], the driver
 //! prebuilds the body of the newest template (`mining.prebuild_own`) and of up to
@@ -51,7 +53,7 @@ use hayai_net::{
 use hayai_prepared::{PreparedStore, VerifyingKeys, MEMPOOL_TX_COST_LIMIT};
 use hayai_relay::{LaneId, LanePublisher};
 use hayai_rpc::{
-    BlockSubmitSink, HttpServer, MetricsServer, Registry, Rpc, RpcConfig, SubmitOutcome,
+    BlockSubmitSink, Cookie, HttpServer, MetricsServer, Registry, Rpc, RpcConfig, SubmitOutcome,
     SubmittedBlock, TemplateFeed, TipSource,
 };
 use hayai_state::history::HistoryState;
@@ -78,9 +80,9 @@ mod full;
 
 use self::fault::{check_body, fault_of, Fault};
 use crate::backing::{SpentLog, UpstreamBacking};
-use crate::config::{Backend, Config, Mode};
+use crate::config::{Backend, Config, LanePublication, Mode};
 use crate::headers::{HeaderIndex, NodeHeaderCheck, SeedBlock};
-use crate::mempool::Mempool;
+use crate::mempool::{Mempool, PublicTxs};
 use crate::metrics::{register_build_info, stage_durations, NodeMetrics, STAGES};
 use crate::mining::{miner_script, Producer};
 use crate::params::{NetParams, NetworkKind, REGTEST_POW_LIMIT_BITS};
@@ -777,7 +779,13 @@ impl Driver {
             TemplateUpdate::Reverted { template, .. } => template,
         };
         if let Some(lane) = &mut self.lane {
-            let ids: Vec<WtxId> = template.txs.iter().map(|c| c.wtxid).collect();
+            // A private transaction is in the template and not in the lane.
+            let ids: Vec<WtxId> = template
+                .txs
+                .iter()
+                .map(|c| c.wtxid)
+                .filter(|id| !self.mempool.is_private(id))
+                .collect();
             self.relay
                 .publish_candidate(lane.publish(template.tip.parent_hash, template.id, &ids));
         }
@@ -1111,6 +1119,8 @@ impl Driver {
         changes
             .dropped
             .extend(self.store.remove_expired(height + 1));
+        mempool.forget_private(&layer.wtxids);
+        mempool.forget_private(&changes.dropped);
         drop(tip_change);
         self.tip.set(height, hash);
 
@@ -1676,6 +1686,8 @@ fn await_keys(
 pub struct Node {
     pub p2p_addr: Option<SocketAddr>,
     pub rpc_addr: Option<SocketAddr>,
+    /// The cookie file of the RPC server. `None`: no RPC server, or no authentication.
+    pub rpc_cookie: Option<PathBuf>,
     pub metrics_addr: Option<SocketAddr>,
     pub relay: Arc<Relay>,
     pub tip: Arc<TipWatch>,
@@ -1683,6 +1695,9 @@ pub struct Node {
     pub mempool: Arc<Mempool>,
     events: Sender<Event>,
     done: Receiver<Result<(), String>>,
+    /// The sender of `stop_requests`: the channel stays open without an RPC server.
+    _stop_tx: Sender<()>,
+    stop_requests: Receiver<()>,
     driver: JoinHandle<()>,
     stop: Arc<AtomicBool>,
     workers: Vec<JoinHandle<()>>,
@@ -1853,7 +1868,7 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     let store = PreparedStore::new(
         r.params.epoch_at(base_height + 1).map_err(no_rules)?,
         MEMPOOL_TX_COST_LIMIT,
-        Zip317Params::ZIP317,
+        Zip317Params::ZAKURA,
     );
     let started = Instant::now();
     let mut finalized = 0;
@@ -2134,7 +2149,7 @@ impl Node {
         let store = Arc::new(PreparedStore::new(
             params.epoch_at(next).map_err(no_rules)?,
             MEMPOOL_TX_COST_LIMIT,
-            Zip317Params::ZIP317,
+            Zip317Params::ZAKURA,
         ));
         let feed = TemplateFeed::new(Duration::from_secs(60));
         let script_pubkey = miner_script(&config.mining, params.kind).map_err(NodeError)?;
@@ -2174,7 +2189,10 @@ impl Node {
         ));
         let backlog = Arc::new(Backlog::default());
         let relay_deps = RelayDeps {
-            txs: store.clone(),
+            txs: Arc::new(PublicTxs {
+                store: store.clone(),
+                mempool: mempool.clone(),
+            }),
             tx_sink: mempool.clone(),
             block_sink: Arc::new(BlockInbox {
                 events: events_tx.clone(),
@@ -2224,8 +2242,10 @@ impl Node {
             ))),
             _ => None,
         };
-        let rpc = match (config.rpc.listen_addr, config.network.mode) {
-            (Some(addr), Mode::Full) => {
+        let (stop_tx, stop_requests) = crossbeam_channel::bounded(1);
+        let mut rpc_cookie = None;
+        let rpc = match (config.rpc.listen_addr, &headers) {
+            (Some(addr), Some(headers)) => {
                 let submit = Arc::new(Submitter {
                     params,
                     relay: relay.clone(),
@@ -2240,6 +2260,10 @@ impl Node {
                     store: store.clone(),
                     mempool: mempool.clone(),
                     relay: relay.clone(),
+                    base: chain_base.clone(),
+                    headers: headers.clone(),
+                    private: config.mining.lane_publication != LanePublication::All,
+                    stop: stop_tx.clone(),
                 });
                 let rpc = Rpc::with_parts(
                     RpcConfig::new(params.kind),
@@ -2251,10 +2275,28 @@ impl Node {
                         .map(|p| p as Arc<dyn hayai_rpc::BlockGenerator>),
                     Some(query),
                 );
-                Some(HttpServer::serve(addr, rpc).map_err(|e| fatal("RPC listen", e))?)
+                let cookie = match config.rpc.enable_cookie_auth {
+                    true => {
+                        let dir = config.rpc.cookie_dir.as_deref().unwrap_or(data_dir);
+                        Some(Cookie::create(dir).map_err(|e| fatal("RPC cookie file", e))?)
+                    }
+                    false => {
+                        if let Some(addr) = config.rpc.open_addr() {
+                            tracing::warn!(
+                                %addr,
+                                "the RPC server has no authentication and its address is not a \
+                                 loopback address: each host that reaches it can call each method"
+                            );
+                        }
+                        None
+                    }
+                };
+                rpc_cookie = cookie.as_ref().map(|c| c.path().to_path_buf());
+                Some(HttpServer::serve(addr, rpc, cookie).map_err(|e| fatal("RPC listen", e))?)
             }
-            // The configuration check refuses an RPC address in shadow mode.
-            (Some(_), Mode::Shadow) | (None, _) => None,
+            // The configuration check refuses an RPC address in shadow mode, which has no
+            // header chain.
+            (Some(_), None) | (None, _) => None,
         };
         let metrics_server = match config.metrics.listen_addr {
             Some(addr) => Some(
@@ -2322,9 +2364,17 @@ impl Node {
             more_delivered: false,
             template_deferred: false,
             deferred_changes: TipChange::default(),
-            lane: match (config.network.mode, config.network.compact_relay) {
-                (Mode::Full, true) => Some(LanePublisher::new(rand::random())),
-                (Mode::Full, false) | (Mode::Shadow, _) => None,
+            lane: match (
+                config.network.mode,
+                config.network.compact_relay,
+                config.mining.lane_publication,
+            ) {
+                (Mode::Full, true, LanePublication::All | LanePublication::Public) => {
+                    Some(LanePublisher::new(rand::random()))
+                }
+                (Mode::Full, true, LanePublication::None)
+                | (Mode::Full, false, _)
+                | (Mode::Shadow, ..) => None,
             },
             prebuilt: Prebuilt::new(
                 config.mining.prebuild_own && config.network.mode == Mode::Full,
@@ -2377,6 +2427,7 @@ impl Node {
         Ok(Node {
             p2p_addr,
             rpc_addr: rpc.as_ref().map(|s| s.addr()),
+            rpc_cookie,
             metrics_addr: metrics_server.as_ref().map(|s| s.addr()),
             relay,
             tip,
@@ -2384,6 +2435,8 @@ impl Node {
             mempool,
             events: events_tx,
             done,
+            _stop_tx: stop_tx,
+            stop_requests,
             driver,
             stop,
             workers,
@@ -2400,9 +2453,21 @@ impl Node {
         Ok(())
     }
 
+    /// Admits a private transaction of this node into the mempool. The node does not show
+    /// it to a peer before a block contains it.
+    pub fn submit_private_tx(&self, tx: Arc<RawTx>) -> Result<(), crate::mempool::Reject> {
+        self.mempool.admit_private(tx)
+    }
+
     /// Receives the driver's result when it stops on its own (a fatal error).
     pub fn done(&self) -> &Receiver<Result<(), String>> {
         &self.done
+    }
+
+    /// Receives a message when the `stop` method of the RPC server asks the node to stop.
+    /// The owner of the node then calls [`Node::shutdown`].
+    pub fn stop_requested(&self) -> &Receiver<()> {
+        &self.stop_requests
     }
 
     /// Stops the network and the servers, lets the driver flush the coins and sync the

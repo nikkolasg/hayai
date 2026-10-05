@@ -378,6 +378,66 @@ def network_section(bench, system, relay_bytes):
 </section>"""
 
 
+def headline(bench, relay_bytes):
+    """The opening of the page: one sentence, then the new features with one figure each."""
+    T = "transparent-6500x1"
+    warm = bench.get("validate/block", "hayai-warm", T)
+    cold = bench.get("validate/block", "hayai-cold", T)
+    zak = bench.get("validate/block", "zakura-model-cold", T)
+    t_h = bench.get("template/incremental_add", "hayai", "")
+    t_z = bench.get("template/incremental_add", "zakura-zip317", "")
+    c_h = bench.get("coins/lookup_block_inputs", "hayai", "13000")
+    c_z = bench.get("coins/lookup_block_inputs", "zakura-node-3rounds", "13000")
+    sp = bench.get("template/switch_after_block", "hayai-speculative", "orchard-165x2-cold")
+    se = bench.get("template/switch_after_block", "hayai-serial", "orchard-165x2-cold")
+    orch = next((r for r in relay_bytes if r["fixture"].startswith("orchard")), None)
+
+    def times(a, b):
+        r = a / b
+        return f"{r:,.0f}×" if r >= 10 else f"{r:.1f}×"
+
+    full, ref = orch["full_bytes"], orch["batch_ref_bytes"]
+    items = [
+        ("relay", "New protocol", "Block relay by reference",
+         "A new block travels as a header and references to transactions that the peer already holds. The peer rebuilds the block and forwards it at once.",
+         times(full, ref), f"fewer bytes: {fmt_bytes(ref)}, not {fmt_bytes(full)}"),
+        ("lane", "New protocol", "Transaction lanes",
+         "A miner chooses the transactions of its next block, then searches for the proof of work. hayai shares that choice with peers during the search. When the proof of work is found, the block goes out as one short reference.",
+         "61 B", "to name a block that equals its published candidate"),
+        ("verify-once", "Performance", "Each transaction is verified one time",
+         "The node checks a transaction when it arrives and keeps the result. A new block needs only the checks that depend on the chain.",
+         times(zak, warm), f"faster on a new full block: {fmt_time(warm)}, not {fmt_time(zak)}"),
+        ("template", "Mining", "A mining template that is always ready",
+         "Each new transaction updates the template in place, and the node pushes the change to the pool server.",
+         times(t_z, t_h), f"faster update: {fmt_time(t_h)}, not {fmt_time(t_z)}"),
+        ("speculative", "Mining", "Work on a new block before its validation ends",
+         "The pool gets a template on the new block as soon as the node has built it in memory. The node takes it back if a check fails.",
+         times(se, sp), f"sooner on a shielded block of unseen transactions: {fmt_time(sp)}, not {fmt_time(se)} without this feature"),
+        ("state", "Performance", "Chain state in memory",
+         "The coin set and the newest 1,000 blocks stay in memory. A block reads all its coins in one batch.",
+         times(c_z, c_h), f"faster coin lookup: {fmt_time(c_h)}, not {fmt_time(c_z)}"),
+    ]
+    cells = "".join(
+        f"<a class='nf' href='#{fid}'><span class='eyebrow'>{esc(kind)}</span><span class='nft'>{esc(title)}</span>"
+        f"<span class='nfd'>{esc(text)}</span><span class='nfv'><b>{esc(big)}</b> {esc(detail)}</span></a>"
+        for fid, kind, title, text, big, detail in items
+    )
+    return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It validates a new full block <b>{times(zak, warm)} faster</b> than Zakura and stays compatible with every Zcash node.</p>
+<h2 class="new">What is new</h2>
+<div class="nfs">{cells}</div>
+<p class="note">The figures compare hayai with Zakura code on the same machine. The figure of the speculative tip compares hayai with and without that feature. A miner node receives almost every transaction before the block that contains it, so the validation figure is the normal case; with transactions that the node never saw, hayai is {times(zak, cold)} faster ({fmt_time(cold)}, not {fmt_time(zak)}). The Zakura validation time is a model of its scheduling with the same cryptography. Open a feature for its method and its measurements.</p>
+<nav class="toc" aria-label="Contents"><span class="eyebrow">Contents</span><ol>
+<li><a href="#miners">For miners</a></li>
+<li><a href="#network">For the Zcash network</a></li>
+<li><a href="#general">General benchmarks</a></li>
+<li><a href="#features">Features in detail</a></li>
+<li><a href="#compatibility">Compatibility</a></li>
+<li><a href="#safety">Hardening</a></li>
+<li><a href="#method">Method</a></li>
+<li><a href="#status">Status</a></li>
+</ol></nav>"""
+
+
 def audience_cards(bench, system, relay_bytes):
     """The two cards at the top of the page, each with direct Zakura and hayai figures."""
     inp = model_inputs(bench, relay_bytes)
@@ -446,7 +506,7 @@ def general_table(bench, system, relay_bytes):
     T6500 = "transparent-6500x1"
     rows = [
         dict(
-            what="Validate a 2 MB block of transactions the node has already seen",
+            what="Validate a new 2 MB block whose transactions are already in the mempool",
             detail="6,500 transparent transactions. This is the normal case for a miner at the tip.",
             fmt=fmt_time,
             hayai=bench.get("validate/block", "hayai-warm", T6500),
@@ -456,7 +516,7 @@ def general_table(bench, system, relay_bytes):
             foot="Zakura and Zebra keep no result of transparent checks from their memory pools, so their path for known transparent transactions is their cold path. The baseline is a model with the same cryptography and no runtime overhead, so the real nodes take longer.",
         ),
         dict(
-            what="Validate the same block, with transactions the node has not seen",
+            what="Validate the same block when the node saw none of its transactions before",
             detail="Every signature, every coin lookup, every rule. Both nodes use all cores; hayai needs more peak memory.",
             fmt=fmt_time,
             hayai=bench.get("validate/block", "hayai-cold", T6500),
@@ -1167,6 +1227,41 @@ def safety_section():
 </section>"""
 
 
+def status_section():
+    rows = [
+        ("done", "Validation engine", "Consensus rules up to NU6.3 with both cryptography backends, and NU7 with Zakura's crates."),
+        ("done", "The hayaid node", "Header sync, block download, checkpoints, reorg, restart, and a mempool that follows ZIP 317, ZIP 401 and ZIP 203."),
+        ("done", "Relay protocols", "Compact relay, transaction lanes and candidate blocks, with the draft ZIP. The normal protocol stays in use with every other node."),
+        ("done", "Mining interface", "Template push protocol and a getblocktemplate interface."),
+        ("done", "Benchmarks", "Against Zakura and Zebra code, with both cryptography backends."),
+        ("done", "Verification", "Published vectors, comparison with Zakura's library code, a fuzz search and two independent reviews."),
+        ("done", "Pair with a real Zakura node", "Sync, mining, transactions, forks and invalid blocks in both directions on a private chain, across the upgrades up to NU7."),
+        ("done", "Deployment", "Docker, systemd, Terraform for AWS, Prometheus and Grafana."),
+        ("progress", "Continuous integration", "The fast workflow runs on each push. The first runs on hosted runners are in progress."),
+        ("progress", "Operator interface", "The RPC methods that pools and operators use, each compared with a Zakura node."),
+        ("progress", "Lane publication setting", "A miner can publish its candidate, publish nothing, or keep chosen transactions private."),
+        ("progress", "Fee policy values", "The same fee constants as Zakura, so that both nodes relay the same transactions."),
+        ("progress", "Private chain configuration", "Lockbox and funding stream settings on Regtest, to match Zakura at the NU6.1 activation block."),
+        ("todo", "Testnet", "A sync from genesis and 24 h at the tip, next to a Zakura node."),
+        ("todo", "Mainnet replay", "10,000 Mainnet blocks in shadow mode with zero disagreements."),
+        ("todo", "Live latency measurement", "Block and template latency against Zakura on Testnet (docs/testnet-benchmark-plan.md)."),
+        ("todo", "Index for wallets", "Transaction and address indexes, so that lightwalletd or Zaino can use hayai as a full node."),
+        ("todo", "NU7 with the official crates", "It waits for the NU7 branch id in the official Zcash crates."),
+        ("todo", "Log compaction", "The state log and the header log grow without a limit today."),
+    ]
+    label = {"done": "Done", "progress": "In progress", "todo": "To do"}
+    trs = "".join(
+        f"<tr><td><span class='st {k}'>{label[k]}</span></td><td class='what'>{esc(t)}</td><td>{esc(d)}</td></tr>"
+        for k, t, d in rows
+    )
+    n = {k: sum(1 for r in rows if r[0] == k) for k in label}
+    return f"""<section id="status">
+<h2>Status</h2>
+<p>{n['done']} items are done, {n['progress']} are in progress and {n['todo']} are to do. The consensus coverage is listed rule by rule in <code>docs/consensus-rules.md</code>. A rule that is not implemented returns an error. It never passes silently.</p>
+<div class="scroll"><table class="status"><thead><tr><th>State</th><th>Item</th><th>Detail</th></tr></thead><tbody>{trs}</tbody></table></div>
+</section>"""
+
+
 # ---------------------------------------------------------------- page
 
 
@@ -1240,6 +1335,12 @@ figcaption {{ font-family:var(--display); font-weight:600; margin-bottom:6px; }}
 h3 {{ font-family:var(--display); font-weight:600; font-size:18px; margin:28px 0 8px; }}
 ul.safety {{ padding-left:20px; }}
 ul.safety li {{ margin:6px 0; }}
+.st {{ display:inline-block; white-space:nowrap; font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:0.04em; padding:2px 8px; border-radius:10px; border:1px solid currentColor; }}
+.st.done {{ color:var(--good); }}
+.st.progress {{ color:var(--accent); }}
+.st.todo {{ color:var(--muted); }}
+table.status .what {{ font-weight:500; white-space:nowrap; }}
+@media (max-width:620px) {{ table.status .what {{ white-space:normal; }} }}
 table.cmp {{ font-size:13px; margin-top:8px; }}
 table.cmp td, table.cmp th {{ padding:5px 6px; }}
 table.cmp th {{ text-align:right; }}
@@ -1263,6 +1364,23 @@ table.cmp th {{ text-align:right; }}
 .facts {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:16px 0; }}
 .fact {{ border-left:3px solid var(--accent); padding:4px 0 4px 12px; font-size:14px; }}
 .fact .big {{ font-family:var(--display); font-weight:700; font-size:28px; color:var(--accent); font-variant-numeric:tabular-nums; }}
+.lead {{ font-size:clamp(18px,2.4vw,21px); line-height:1.45; margin:28px 0 8px; max-width:62ch; }}
+h2.new {{ margin-top:36px; }}
+.toc {{ border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:14px 0; margin:24px 0 8px; }}
+.toc ol {{ list-style:decimal; display:flex; flex-direction:column; gap:4px; padding:0 0 0 22px; margin:8px 0 0; font-size:15px; }}
+.toc li::marker {{ color:var(--muted); font-variant-numeric:tabular-nums; }}
+.toc a {{ text-decoration:none; }}
+.toc a:hover {{ text-decoration:underline; }}
+.nfs {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:0 28px; margin:4px 0 8px; }}
+.nf {{ display:flex; flex-direction:column; gap:6px; padding:18px 0 20px; border-top:1px solid var(--line); color:var(--fg); text-decoration:none; min-width:0; }}
+.nf:hover .nft {{ color:var(--accent); }}
+.nft {{ font-family:var(--display); font-weight:600; font-size:19px; line-height:1.25; text-wrap:balance; }}
+.nfd {{ color:var(--muted); font-size:15px; }}
+.nfv {{ margin-top:auto; padding-top:6px; font-size:14px; }}
+.nfv b {{ font-family:var(--display); font-weight:700; font-size:30px; color:var(--accent); font-variant-numeric:tabular-nums; margin-right:6px; }}
+.lead b {{ color:var(--accent); font-weight:600; }}
+.facts.top .big {{ font-size:clamp(34px,6vw,44px); line-height:1.1; }}
+.facts.top {{ margin:20px 0 4px; }}
 svg {{ max-width:100%; height:auto; font-family:var(--body); }}
 svg .lbl {{ fill:var(--fg); font-size:13px; }}
 svg .val {{ fill:var(--fg); font-size:12px; font-family:var(--mono); }}
@@ -1273,7 +1391,8 @@ a {{ color:var(--accent); }}
 <main>
 <header class="hero">
 <h1>hayai</h1>
-<p class="tag">A Zcash node core for miners that treats a new block as something it already has.</p>
+<p class="tag">The fast, independent Zcash node for miners.</p>
+{headline(bench, relay_bytes)}
 {audience_cards(bench, system, relay_bytes)}
 </header>
 {miners_section(bench, relay_bytes)}
@@ -1289,22 +1408,14 @@ a {{ color:var(--accent); }}
 <section id="method">
 <h2>Method</h2>
 <ul>
-<li>Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads, {esc(m.get('os', ''))}.</li>
+<li>Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads, Linux.</li>
 <li>A Zakura baseline is one of four kinds, named in each row: Zakura's published crates run in the same process; Zakura's data layout on the same storage engine; Zakura's scheduling rebuilt around the same cryptography; or Zakura's algorithm ported line by line. Each port cites the Zakura source lines in <code>crates/hayai-bench/src/</code>.</li>
 <li>Test blocks are synthetic and deterministic, with real ECDSA signatures and real Orchard proofs (<code>crates/hayai-bench/src/fixtures.rs</code>).</li>
 <li>Times are criterion means. System values are medians of 20 runs, each scenario in a fresh process.</li>
 <li>To reproduce: <code>cargo bench -p hayai-bench</code>, <code>scripts/sysbench.sh</code>, <code>python3 scripts/collect_bench.py</code>, <code>python3 scripts/report.py</code>.</li>
 </ul>
 </section>
-<section id="status">
-<h2>Status</h2>
-<ul>
-<li>Done: the validation engine with the consensus rules up to NU7, the <code>hayaid</code> node with header sync, block download, checkpoints, reorg and a mempool that follows the ZIPs, the legacy protocol with the compact relay extension, the template push protocol with a getblocktemplate interface, the draft ZIP, deployment files, and benchmarks with both cryptography backends.</li>
-<li>Verified so far: tests, published vectors, comparison with Zakura's library code, a fuzz search, two independent reviews, and a pair of hayai and a real Zakura node on a private chain.</li>
-<li>Not verified yet: a run against the public networks. The next gates are a Testnet sync from genesis and a replay of Mainnet blocks in shadow mode (<code>docs/testnet-benchmark-plan.md</code>).</li>
-<li>Consensus coverage is listed rule by rule in <code>docs/consensus-rules.md</code>. A rule that is not implemented returns an error. It never passes silently.</li>
-</ul>
-</section>
+{status_section()}
 </main>
 """
     OUT.write_text(page)

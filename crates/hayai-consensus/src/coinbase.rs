@@ -18,7 +18,7 @@ use hayai_crypto::zcash_transparent::address::TransparentAddress;
 
 use crate::funding::Receiver;
 use crate::subsidy::Subsidy;
-use crate::{founders, funding, lockbox, nsm, rules_at, subsidy, ConsensusError, Network};
+use crate::{founders, funding, lockbox, nsm, rules_at, subsidy, ConsensusError, Network, Upgrade};
 
 /// Why the coinbase must have an output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,16 +169,26 @@ impl CoinbaseTerms {
                 None => terms.subsidy.deferred += stream.value,
             }
         }
-        if let Some(disbursement) = lockbox::disbursement(network, height) {
-            for _ in 0..disbursement.count {
-                require(
-                    OutputKind::LockboxDisbursement,
-                    disbursement.value,
-                    disbursement.address,
-                );
+        let mut disbursed = 0;
+        if network.activation_height(Upgrade::Nu6_1) == Some(height) {
+            let disbursements = lockbox::disbursements(network, height);
+            // Zakura `subsidy_is_valid` (`check.rs:276-283`): a network without a
+            // disbursement has no valid NU6.1 activation block.
+            if disbursements.is_empty() {
+                return Err(ConsensusError::NoLockboxDisbursement { height });
             }
-            terms.disbursed = disbursement.total();
+            for disbursement in disbursements {
+                for _ in 0..disbursement.count {
+                    require(
+                        OutputKind::LockboxDisbursement,
+                        disbursement.value,
+                        disbursement.address,
+                    );
+                }
+                disbursed += disbursement.total();
+            }
         }
+        terms.disbursed = disbursed;
         Ok(terms)
     }
 
@@ -297,30 +307,21 @@ fn unmatched_error(required: &RequiredOutput, unmatched: &[&(u64, &[u8])]) -> Co
     }
 }
 
-/// The `scriptPubKey` that pays the Base58Check P2SH `address` of `network` in the
-/// prescribed way (protocol specification §7.10): `OP_HASH160 <script hash> OP_EQUAL`.
-///
-/// # Panics
-///
-/// When `address` is not a P2SH address of `network`. Every caller passes a constant of
-/// this crate, and a test decodes each one.
-pub(crate) fn address_script(network: Network, address: &str) -> Vec<u8> {
-    let network_type = match network {
-        Network::Mainnet => NetworkType::Main,
-        Network::Testnet => NetworkType::Test,
-        Network::Regtest | Network::ConfiguredRegtest(_) => NetworkType::Regtest,
+/// The `scriptPubKey` that pays the Base58Check P2SH `address` in the prescribed way
+/// (protocol specification §7.10): `OP_HASH160 <script hash> OP_EQUAL`. The address is an
+/// address of `network`. Regtest takes an address of any network, as Zakura does for the
+/// addresses of its Regtest parameters: the script has the hash only.
+pub(crate) fn p2sh_script(network: Network, address: &str) -> Result<Vec<u8>, String> {
+    let decoded = ZcashAddress::try_from_encoded(address).map_err(|error| error.to_string())?;
+    let decoded = match network {
+        Network::Mainnet => decoded.convert_if_network::<TransparentAddress>(NetworkType::Main),
+        Network::Testnet => decoded.convert_if_network::<TransparentAddress>(NetworkType::Test),
+        Network::Regtest | Network::ConfiguredRegtest(_) => decoded.convert::<TransparentAddress>(),
     };
-    let decoded = ZcashAddress::try_from_encoded(address)
-        .map_err(|error| error.to_string())
-        .and_then(|decoded| {
-            decoded
-                .convert_if_network::<TransparentAddress>(network_type)
-                .map_err(|error| format!("{error:?}"))
-        });
     let hash = match decoded {
         Ok(TransparentAddress::ScriptHash(hash)) => hash,
-        Ok(other) => panic!("{address} is not a P2SH address: {other:?}"),
-        Err(error) => panic!("{address} is not an address of {}: {error}", network.name()),
+        Ok(other) => return Err(format!("{other:?} is not a script hash")),
+        Err(error) => return Err(format!("not an address of {}: {error:?}", network.name())),
     };
     const OP_HASH160: u8 = 0xa9;
     const OP_EQUAL: u8 = 0x87;
@@ -329,13 +330,27 @@ pub(crate) fn address_script(network: Network, address: &str) -> Vec<u8> {
     script.push(hash.len() as u8);
     script.extend_from_slice(&hash);
     script.push(OP_EQUAL);
-    script
+    Ok(script)
+}
+
+/// [`p2sh_script`] for an address that is a constant of this crate or an address of a
+/// [`crate::RegtestConfig`].
+///
+/// # Panics
+///
+/// When `address` is not a P2SH address of `network`. A test decodes each constant, and
+/// a `RegtestConfig` checks each of its addresses.
+pub(crate) fn address_script(network: Network, address: &str) -> Vec<u8> {
+    match p2sh_script(network, address) {
+        Ok(script) => script,
+        Err(reason) => panic!("{address} is not a P2SH address: {reason}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Upgrade;
+    use crate::{RegtestConfig, RegtestDisbursement, RegtestFundingStreams, RegtestRecipient};
 
     const MINER: &[u8] = &[0x51];
 
@@ -374,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "is not an address of testnet")]
+    #[should_panic(expected = "not an address of testnet")]
     fn an_address_of_another_network_is_refused() {
         address_script(Network::Testnet, "t3Vz22vK5z2LcKEdg16Yv4FFneEL1zg9ojd");
     }
@@ -775,6 +790,228 @@ mod tests {
                 height: start - 1,
                 scheduled: u128::from(scheduled),
                 issued: scheduled + 1,
+            })
+        );
+    }
+
+    /// A Regtest address, a Mainnet address and a Testnet address: a Regtest network takes
+    /// each one.
+    const A: &str = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh";
+    const B: &str = "t3Vz22vK5z2LcKEdg16Yv4FFneEL1zg9ojd";
+    const C: &str = "t2HifwjUj9uyxr9bknR8LFuQbc98c3vkXtu";
+    const REGTEST_SUBSIDY: u64 = 625_000_000;
+
+    /// A Regtest network with NU6 at height 20 and NU6.1 at `nu6_1`.
+    fn regtest(
+        nu6_1: u32,
+        disbursements: &[(&str, u64)],
+        streams: &[RegtestFundingStreams],
+    ) -> Network {
+        let disbursements = disbursements
+            .iter()
+            .map(|(address, amount)| RegtestDisbursement {
+                address: address.to_string(),
+                amount: *amount,
+            })
+            .collect();
+        RegtestConfig::new(
+            &[(Upgrade::Nu6, 20), (Upgrade::Nu6_1, nu6_1)],
+            Vec::new(),
+            0,
+        )
+        .and_then(|config| config.with_lockbox_disbursements(disbursements))
+        .and_then(|config| config.with_funding_streams(streams))
+        .expect("a valid configuration")
+        .network()
+    }
+
+    /// The outputs of `outputs` with output `index` changed to `value` and `script`, and
+    /// the difference of the value moved to the miner output, so that the value rule holds.
+    fn changed<'a>(
+        outputs: &[(u64, &'a [u8])],
+        index: usize,
+        value: u64,
+        script: &'a [u8],
+    ) -> Vec<(u64, &'a [u8])> {
+        let mut outputs = outputs.to_vec();
+        outputs[0].0 = outputs[0].0 + outputs[index].0 - value;
+        outputs[index] = (value, script);
+        outputs
+    }
+
+    /// The disbursements of a Regtest configuration, with the meaning of Zakura's Regtest
+    /// parameters: each entry is one output of the NU6.1 activation block, and the
+    /// deferred pool pays it.
+    #[test]
+    fn a_configured_regtest_pays_its_disbursements_at_nu6_1() {
+        let network = regtest(30, &[(A, 1_000), (B, 0), (A, 1_000)], &[]);
+        for height in [29, 31] {
+            let terms = CoinbaseTerms::at(network, height).unwrap();
+            assert_eq!((kinds(&terms), terms.disbursed), (vec![], 0), "{height}");
+        }
+        let terms = CoinbaseTerms::at(network, 30).unwrap();
+        assert_eq!(kinds(&terms), vec![OutputKind::LockboxDisbursement; 3]);
+        assert_eq!(terms.disbursed, 2_000);
+        assert_eq!(terms.miner_subsidy(), REGTEST_SUBSIDY);
+        assert_eq!(terms.deferred_pool_after(2_000), Ok(0));
+        assert_eq!(
+            terms.deferred_pool_after(1_999),
+            Err(CoinbaseError::NegativeDeferredPool {
+                before: 1_999,
+                disbursed: 2_000
+            })
+        );
+        let (script_a, script_b, script_c) = (
+            address_script(network, A),
+            address_script(network, B),
+            address_script(network, C),
+        );
+        let kind = OutputKind::LockboxDisbursement;
+        let valid = outputs(&terms, REGTEST_SUBSIDY);
+        assert_eq!(check(&terms, &valid, 0), Ok(()));
+        assert_eq!(
+            check(&terms, &changed(&valid, 1, 999, &script_a), 0),
+            Err(CoinbaseError::WrongAmount {
+                kind,
+                expected: 1_000,
+                found: 999,
+            })
+        );
+        assert_eq!(
+            check(&terms, &changed(&valid, 2, 0, &script_c), 0),
+            Err(CoinbaseError::WrongScript {
+                kind,
+                value: 0,
+                expected: script_b,
+                found: script_c.clone(),
+            })
+        );
+        // Two equal entries need two outputs.
+        assert_eq!(
+            check(&terms, &valid[..3], 0),
+            Err(CoinbaseError::MissingOutput {
+                kind,
+                value: 1_000,
+                script: script_a,
+            })
+        );
+    }
+
+    /// Zakura refuses each block at the NU6.1 activation height of a network without a
+    /// lockbox disbursement, while the block has a subsidy (`subsidy_is_valid`,
+    /// `zakura-consensus/src/block/check.rs:183-185,276-283`). The terms fail in the same
+    /// cases, so the validation refuses the block and the template has no coinbase.
+    #[test]
+    fn a_regtest_without_a_disbursement_has_no_nu6_1_activation_block() {
+        let network = regtest(30, &[], &[]);
+        assert_eq!(
+            CoinbaseTerms::at(network, 30),
+            Err(ConsensusError::NoLockboxDisbursement { height: 30 })
+        );
+        for height in [29, 31] {
+            assert_eq!(kinds(&CoinbaseTerms::at(network, height).unwrap()), vec![]);
+        }
+        // One disbursement of 0 zatoshis is a disbursement.
+        let terms = CoinbaseTerms::at(regtest(30, &[(A, 0)], &[]), 30).unwrap();
+        assert_eq!(kinds(&terms), vec![OutputKind::LockboxDisbursement]);
+        // A block without a subsidy has no required output and no such rule.
+        let late = regtest(9_000, &[], &[]);
+        assert_eq!(subsidy::total_subsidy(late, 9_000), 0);
+        assert_eq!(kinds(&CoinbaseTerms::at(late, 9_000).unwrap()), vec![]);
+    }
+
+    /// The funding streams of a Regtest configuration, with the meaning of Zakura's
+    /// Regtest parameters. An address period of Regtest has 6 blocks: the heights 10, 11
+    /// to 16 and 17 to 21 are 3 periods.
+    #[test]
+    fn a_configured_regtest_pays_its_funding_streams() {
+        let recipient = |receiver, numerator, addresses: &[&str]| RegtestRecipient {
+            receiver,
+            numerator,
+            addresses: addresses.iter().map(|a| a.to_string()).collect(),
+        };
+        let streams = [
+            RegtestFundingStreams {
+                height_range: 10..22,
+                recipients: vec![
+                    recipient(Receiver::Deferred, 12, &[]),
+                    recipient(Receiver::MajorGrants, 8, &[A, C, B]),
+                ],
+            },
+            RegtestFundingStreams {
+                height_range: 23..29,
+                recipients: vec![recipient(Receiver::Ecc, 7, &[B])],
+            },
+        ];
+        let network = regtest(30, &[(A, 0)], &streams);
+        let mg = OutputKind::FundingStream(Receiver::MajorGrants);
+        let ecc = OutputKind::FundingStream(Receiver::Ecc);
+        // (height, required output, deferred)
+        for (height, required, deferred) in [
+            (9, None, 0),
+            (10, Some((mg, 50_000_000, A)), 75_000_000),
+            (11, Some((mg, 50_000_000, C)), 75_000_000),
+            (16, Some((mg, 50_000_000, C)), 75_000_000),
+            (17, Some((mg, 50_000_000, B)), 75_000_000),
+            (21, Some((mg, 50_000_000, B)), 75_000_000),
+            (22, None, 0),
+            (23, Some((ecc, 43_750_000, B)), 0),
+            (28, Some((ecc, 43_750_000, B)), 0),
+            (29, None, 0),
+        ] {
+            let terms = CoinbaseTerms::at(network, height).unwrap();
+            let required: Vec<RequiredOutput> = required
+                .into_iter()
+                .map(|(kind, value, address)| RequiredOutput {
+                    kind,
+                    value,
+                    script: address_script(network, address),
+                })
+                .collect();
+            let paid: u64 = required.iter().map(|output| output.value).sum();
+            assert_eq!(terms.required, required, "{height}");
+            assert_eq!(terms.subsidy.deferred, deferred, "{height}");
+            assert_eq!(block_subsidy_of(network, height), terms.subsidy, "{height}");
+            assert_eq!(terms.miner_subsidy(), REGTEST_SUBSIDY - deferred - paid);
+        }
+
+        // Height 21: NU6, so the coinbase pays the exact value.
+        let terms = CoinbaseTerms::at(network, 21).unwrap();
+        let (script_a, script_b) = (address_script(network, A), address_script(network, B));
+        let valid = outputs(&terms, 500_000_000);
+        assert_eq!(check(&terms, &valid, 0), Ok(()));
+        assert_eq!(
+            check(&terms, &changed(&valid, 1, 0, MINER), 0),
+            Err(CoinbaseError::MissingOutput {
+                kind: mg,
+                value: 50_000_000,
+                script: script_b.clone(),
+            })
+        );
+        assert_eq!(
+            check(&terms, &changed(&valid, 1, 49_999_999, &script_b), 0),
+            Err(CoinbaseError::WrongAmount {
+                kind: mg,
+                expected: 50_000_000,
+                found: 49_999_999,
+            })
+        );
+        // The address of another address period.
+        assert_eq!(
+            check(&terms, &changed(&valid, 1, 50_000_000, &script_a), 0),
+            Err(CoinbaseError::WrongScript {
+                kind: mg,
+                value: 50_000_000,
+                expected: script_b,
+                found: script_a,
+            })
+        );
+        // The deferred part goes to no output.
+        assert_eq!(
+            check(&terms, &outputs(&terms, 575_000_000), 0),
+            Err(CoinbaseError::ValueNotExact {
+                paid: 625_000_000,
+                required: 550_000_000,
             })
         );
     }

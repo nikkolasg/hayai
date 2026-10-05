@@ -292,26 +292,29 @@ fn from_display(text: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-/// The first output of the coinbase of a block, as a coin of the harness.
+/// The miner output of the coinbase of a block, as a coin of the harness: the first output
+/// that pays the coin script. A coinbase can have funding stream outputs before it.
 pub fn coinbase_coin(block_hex: &str, height: u32) -> Result<Coin, String> {
     let bytes = Bytes::from(hex::decode(block_hex).map_err(|e| e.to_string())?);
     let block = hayai_wire::RawBlock::parse(bytes, branch_at(height))
         .map_err(|e| format!("block {height}: {e}"))?;
     let coinbase = &block.txs[0];
-    let output = coinbase
+    let outputs = coinbase
         .tx
         .transparent_bundle()
-        .and_then(|b| b.vout.first())
-        .ok_or("the coinbase has no output")?;
-    if output.script_pubkey().0 .0 != COIN_SCRIPT {
+        .map_or(&[][..], |bundle| bundle.vout.as_slice());
+    let Some(index) = outputs
+        .iter()
+        .position(|output| output.script_pubkey().0 .0 == COIN_SCRIPT)
+    else {
         return Err(format!(
             "the coinbase of block {height} does not pay the coin script"
         ));
-    }
+    };
     Ok(Coin {
         txid: *coinbase.txid.as_ref(),
-        index: 0,
-        value: u64::from(output.value()),
+        index: index as u32,
+        value: u64::from(outputs[index].value()),
     })
 }
 
@@ -406,15 +409,30 @@ impl Draft {
         Ok((hex::encode(bytes), header.hash()))
     }
 
-    /// Adds `delta` zatoshis to the first output of the v5 coinbase.
+    /// Adds `delta` zatoshis to the first output of the v5 coinbase: the miner output.
     pub fn change_coinbase_value(&mut self, delta: i64) -> Result<(), String> {
+        self.change_coinbase_output(0, delta)
+    }
+
+    /// Adds `delta` zatoshis to output `index` of the v5 coinbase.
+    pub fn change_coinbase_output(&mut self, index: usize, delta: i64) -> Result<(), String> {
         let mut bytes = self.coinbase.to_vec();
         if bytes[..4] != 0x8000_0005u32.to_le_bytes() || bytes[20] != 1 {
             return Err("the coinbase is not a v5 transaction with one input".into());
         }
         // Header fields (20 bytes), input count, outpoint, scriptSig, sequence, output count.
         let script_len = usize::from(bytes[57]);
-        let offset = 58 + script_len + 4 + 1;
+        let count = usize::from(bytes[58 + script_len + 4]);
+        if index >= count {
+            return Err(format!(
+                "the coinbase has {count} outputs, no output {index}"
+            ));
+        }
+        let mut offset = 58 + script_len + 4 + 1;
+        for _ in 0..index {
+            // Value (8 bytes), script length (below 253), script.
+            offset += 8 + 1 + usize::from(bytes[offset + 8]);
+        }
         let value = u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("8 bytes"));
         let changed = value
             .checked_add_signed(delta)

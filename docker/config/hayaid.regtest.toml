@@ -20,8 +20,10 @@ flush_interval_blocks = 100
 snapshot_interval_blocks = 10000
 
 [rpc]
-# No authentication: compose publishes this port on HAYAI_ADMIN_BIND only.
+# Cookie authentication: the node writes the credentials to /var/lib/hayai/.cookie at
+# each start. No TLS: compose publishes this port on HAYAI_ADMIN_BIND only.
 listen_addr = "0.0.0.0:18345"
+enable_cookie_auth = true
 
 [metrics]
 listen_addr = "0.0.0.0:19101"

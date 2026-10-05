@@ -1,9 +1,11 @@
 //! JSON-RPC dispatch: `getblocktemplate`, `submitblock`, `getblockcount`,
 //! `getbestblockhash`, and on test networks `generate`, in zcashd's shapes, over JSON-RPC 1.0
 //! or 2.0 as the request chose. With a [`NodeQuery`] the server also has the query methods
-//! `getblockhash`, `getblock` (verbosity 0), `getblockchaininfo`, `z_gettreestate` (the tip),
-//! `getrawmempool` and `sendrawtransaction`.
+//! `getblockhash`, `getblock` (verbosity 0 and 1), `getblockchaininfo`, `z_gettreestate` (the
+//! tip), `getrawmempool`, `sendrawtransaction`, `sendprivatetransaction` and the methods
+//! of [`crate::info`].
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -36,6 +38,12 @@ pub mod codes {
     pub const IN_WARMUP: i64 = -10;
     /// zcashd `RPC_VERIFY_REJECTED`: the mempool refused the transaction.
     pub const VERIFY_REJECTED: i64 = -26;
+    /// zcashd `RPC_MISC_ERROR`.
+    pub const MISC: i64 = -1;
+    /// zcashd `RPC_INVALID_ADDRESS_OR_KEY`: no block has the hash.
+    pub const INVALID_ADDRESS_OR_KEY: i64 = -5;
+    /// zcashd `RPC_CLIENT_NODE_ALREADY_ADDED`.
+    pub const NODE_ALREADY_ADDED: i64 = -23;
 }
 
 /// A block that `submitblock` handed over.
@@ -98,6 +106,85 @@ pub struct TipState {
     pub value_pools: [(&'static str, u64); 6],
 }
 
+/// The chain value pools in zatoshis.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pools {
+    pub transparent: u64,
+    pub sprout: u64,
+    pub sapling: u64,
+    pub orchard: u64,
+    pub lockbox: u64,
+    pub ironwood: u64,
+}
+
+/// The state after one block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockState {
+    /// The roots of the note commitment trees, in the byte order of the tree.
+    pub sapling_root: [u8; 32],
+    pub orchard_root: [u8; 32],
+    /// The number of note commitments in each tree.
+    pub sapling_size: u64,
+    pub orchard_size: u64,
+    pub ironwood_size: u64,
+    pub pools: Pools,
+    /// The pools after the parent block. `None`: the node does not hold that state.
+    pub parent_pools: Option<Pools>,
+}
+
+/// The place of a stored block in the chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockInfo {
+    pub height: u32,
+    /// The number of blocks from this block to the tip, with both. -1: the block is not on
+    /// the committed chain.
+    pub confirmations: i64,
+    /// The next block of the committed chain.
+    pub next: Option<BlockHash>,
+    /// `None`: the node does not hold the state after this block. A node holds the state
+    /// of the blocks that a reorg can disconnect, and not of an older block.
+    pub state: Option<BlockState>,
+}
+
+/// One tip of the header tree, for `getchaintips`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainTip {
+    pub height: u32,
+    pub hash: BlockHash,
+    /// Blocks of the branch that are not on the committed chain.
+    pub branch_len: u32,
+    /// `active`, `valid-fork`, `headers-only` or `invalid`.
+    pub status: &'static str,
+}
+
+/// One connected peer, for `getpeerinfo`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PeerRow {
+    pub addr: SocketAddr,
+    pub user_agent: Option<String>,
+    pub version: Option<u32>,
+    pub inbound: bool,
+    /// Seconds from the last answered `ping` to its `pong`.
+    pub ping_time: Option<f64>,
+    /// Seconds since the `ping` that has no `pong` yet.
+    pub ping_wait: Option<f64>,
+}
+
+/// What the node states of itself, for `getinfo` and `getnetworkinfo`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeState {
+    /// The version of the build as `major.minor.patch`.
+    pub version: (u64, u64, u64),
+    pub user_agent: String,
+    pub protocol_version: u32,
+    /// The service bits of the `version` message.
+    pub services: u64,
+    /// The number of connected peers.
+    pub connections: usize,
+    /// The lowest fee rate of the mempool policy, in zatoshis for each 1,000 bytes.
+    pub relay_fee_rate: u64,
+}
+
 /// The chain and the mempool of the node, for the query methods.
 pub trait NodeQuery: Send + Sync {
     /// The hash of the block at `height` on the committed chain.
@@ -109,7 +196,26 @@ pub trait NodeQuery: Send + Sync {
     fn mempool_txids(&self) -> Vec<[u8; 32]>;
     /// Admits a transaction into the mempool and announces it to the peers. Returns the
     /// transaction id in the byte order of the wire, or the reason of the refusal.
-    fn send_transaction(&self, bytes: Bytes) -> Result<[u8; 32], String>;
+    ///
+    /// `private`: the node does not announce the transaction and does not give it to a
+    /// peer before a block contains it. The transaction is in the block template.
+    fn send_transaction(&self, bytes: Bytes, private: bool) -> Result<[u8; 32], String>;
+    /// The place of the stored block `hash` in the chain. `None`: no stored block.
+    fn block_info(&self, hash: &BlockHash) -> Option<BlockInfo>;
+    /// The time and the `nBits` of the block at `height` on the committed chain.
+    fn header_context(&self, height: u32) -> Option<(u32, u32)>;
+    /// The committed tip first, then each other tip of the header tree.
+    fn chain_tips(&self) -> Vec<ChainTip>;
+    fn node_state(&self) -> NodeState;
+    fn peers(&self) -> Vec<PeerRow>;
+    /// The number of transactions of the mempool and the total of their wire bytes.
+    fn mempool_size(&self) -> (usize, usize);
+    /// Adds a peer address to the address book. `false`: the book has the address.
+    fn add_node(&self, addr: SocketAddr) -> bool;
+    /// Sends a `ping` to each peer.
+    fn ping(&self);
+    /// Asks the node to stop as for SIGINT.
+    fn stop(&self);
 }
 
 #[derive(Clone, Debug)]
@@ -135,20 +241,20 @@ impl RpcConfig {
 }
 
 pub struct Rpc {
-    config: RpcConfig,
-    feed: Arc<TemplateFeed>,
+    pub(crate) config: RpcConfig,
+    pub(crate) feed: Arc<TemplateFeed>,
     submit: Arc<dyn BlockSubmitSink>,
-    tip: Arc<dyn TipSource>,
+    pub(crate) tip: Arc<dyn TipSource>,
     generator: Option<Arc<dyn BlockGenerator>>,
     query: Option<Arc<dyn NodeQuery>>,
 }
 
-struct RpcError {
-    code: i64,
-    message: String,
+pub(crate) struct RpcError {
+    pub(crate) code: i64,
+    pub(crate) message: String,
 }
 
-fn err(code: i64, message: impl Into<String>) -> RpcError {
+pub(crate) fn err(code: i64, message: impl Into<String>) -> RpcError {
     RpcError {
         code,
         message: message.into(),
@@ -255,12 +361,20 @@ impl Rpc {
             "getblockcount" => Ok(json!(self.tip.tip().0)),
             "getbestblockhash" => Ok(json!(self.tip.tip().1.to_string())),
             "generate" => self.generate(&params),
-            "getblockhash" | "getblock" | "getblockchaininfo" | "z_gettreestate"
-            | "getrawmempool" | "sendrawtransaction" => self.query(method, &params),
-            other => Err(err(
-                codes::METHOD_NOT_FOUND,
-                format!("Method not found: {other}"),
-            )),
+            "getblockhash"
+            | "getblock"
+            | "getblockchaininfo"
+            | "z_gettreestate"
+            | "getrawmempool"
+            | "sendrawtransaction"
+            | "sendprivatetransaction" => self.query(method, &params),
+            other => match (crate::info::METHODS.contains(&other), &self.query) {
+                (true, Some(query)) => self.info(query.as_ref(), other, &params),
+                _ => Err(err(
+                    codes::METHOD_NOT_FOUND,
+                    format!("Method not found: {other}"),
+                )),
+            },
         };
         match result {
             Ok(result) => {
@@ -364,49 +478,30 @@ impl Rpc {
                 format!("Method not found: {method}"),
             ));
         };
-        // A block parameter is a height (a number, or a string of digits as zcashd takes
-        // it) or a hash in display hex.
-        let block_hash = |param: Option<&Value>| -> Result<BlockHash, RpcError> {
-            let height = match param {
-                Some(Value::Number(n)) => n.as_u64(),
-                Some(Value::String(s)) if s.len() == 64 => {
-                    let mut bytes: [u8; 32] = hex::decode(s)
-                        .ok()
-                        .and_then(|b| b.try_into().ok())
-                        .ok_or_else(|| {
-                        err(codes::INVALID_PARAMETER, "block hash is not hex")
-                    })?;
-                    bytes.reverse();
-                    return Ok(BlockHash(bytes));
-                }
-                Some(Value::String(s)) => s.parse::<u64>().ok(),
-                _ => None,
-            };
-            let height = height
-                .and_then(|h| u32::try_from(h).ok())
-                .ok_or_else(|| err(codes::INVALID_PARAMETER, "a block height or hash is needed"))?;
-            query
-                .block_hash(height)
-                .ok_or_else(|| err(codes::INVALID_PARAMETER, "Block height out of range"))
-        };
-        let display = |mut bytes: [u8; 32]| {
-            bytes.reverse();
-            hex::encode(bytes)
-        };
+        let block_hash = |param: Option<&Value>| block_param(query.as_ref(), param);
         match method {
             "getblockhash" => Ok(json!(block_hash(params.first())?.to_string())),
             "getblock" => {
-                if !matches!(params.get(1), Some(Value::Number(n)) if n.as_u64() == Some(0)) {
-                    return Err(err(
-                        codes::INVALID_PARAMETER,
-                        "getblock has verbosity 0 only",
-                    ));
-                }
+                // The default verbosity is 1, as in zcashd and Zakura.
+                let verbosity = match params.get(1) {
+                    None | Some(Value::Null) => Some(1),
+                    Some(Value::Number(n)) => n.as_u64(),
+                    Some(_) => None,
+                };
                 let hash = block_hash(params.first())?;
-                let bytes = query
-                    .block_bytes(&hash)
-                    .ok_or_else(|| err(codes::INVALID_PARAMETER, "Block not found"))?;
-                Ok(json!(hex::encode(bytes)))
+                match verbosity {
+                    Some(0) => {
+                        let bytes = query
+                            .block_bytes(&hash)
+                            .ok_or_else(|| err(codes::INVALID_PARAMETER, "Block not found"))?;
+                        Ok(json!(hex::encode(bytes)))
+                    }
+                    Some(1) => self.block_object(query.as_ref(), &hash),
+                    _ => Err(err(
+                        codes::INVALID_PARAMETER,
+                        "getblock has the verbosity 0 and 1",
+                    )),
+                }
             }
             "getblockchaininfo" => {
                 let state = query.tip_state();
@@ -447,17 +542,17 @@ impl Rpc {
                 .into_iter()
                 .map(display)
                 .collect::<Vec<_>>())),
-            "sendrawtransaction" => {
+            "sendrawtransaction" | "sendprivatetransaction" => {
                 let Some(Value::String(hexdata)) = params.first() else {
                     return Err(err(
                         codes::INVALID_PARAMETER,
-                        "sendrawtransaction takes the transaction as a hex string",
+                        format!("{method} takes the transaction as a hex string"),
                     ));
                 };
                 let bytes = hex::decode(hexdata)
                     .map_err(|_| err(codes::DESERIALIZATION, "TX decode failed"))?;
                 query
-                    .send_transaction(Bytes::from(bytes))
+                    .send_transaction(Bytes::from(bytes), method == "sendprivatetransaction")
                     .map(|txid| json!(display(txid)))
                     .map_err(|reason| err(codes::VERIFY_REJECTED, reason))
             }
@@ -542,6 +637,39 @@ impl Rpc {
         }
         Some(rebuilt)
     }
+}
+
+/// A hash in display hex: the bytes in reverse order.
+pub(crate) fn display(mut bytes: [u8; 32]) -> String {
+    bytes.reverse();
+    hex::encode(bytes)
+}
+
+/// The hash of the block that `param` names: a height (a number, or a string of digits as
+/// zcashd takes it) of the committed chain, or a hash in display hex.
+pub(crate) fn block_param(
+    query: &dyn NodeQuery,
+    param: Option<&Value>,
+) -> Result<BlockHash, RpcError> {
+    let height = match param {
+        Some(Value::Number(n)) => n.as_u64(),
+        Some(Value::String(s)) if s.len() == 64 => {
+            let mut bytes: [u8; 32] = hex::decode(s)
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .ok_or_else(|| err(codes::INVALID_PARAMETER, "block hash is not hex"))?;
+            bytes.reverse();
+            return Ok(BlockHash(bytes));
+        }
+        Some(Value::String(s)) => s.parse::<u64>().ok(),
+        _ => None,
+    };
+    let height = height
+        .and_then(|h| u32::try_from(h).ok())
+        .ok_or_else(|| err(codes::INVALID_PARAMETER, "a block height or hash is needed"))?;
+    query
+        .block_hash(height)
+        .ok_or_else(|| err(codes::INVALID_PARAMETER, "Block height out of range"))
 }
 
 /// The height that the scriptSig of the first transaction of `block` starts with

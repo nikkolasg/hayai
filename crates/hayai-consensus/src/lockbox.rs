@@ -5,12 +5,13 @@
 //! activation block takes 78,750 ZEC out of the pool in ten equal outputs (ZIP 271,
 //! ZIP 1016). Zakura checks the same outputs (`zakura-consensus/src/block/check.rs:
 //! 268-290`) with the constants of `zakura-chain/src/parameters/network/subsidy/constants/
-//! {mainnet.rs:25-33,testnet.rs:34-42}`. Regtest has no NU6.1 height and no disbursement.
+//! {mainnet.rs:25-33,testnet.rs:34-42}`. A Regtest network takes its disbursements from
+//! its configuration ([`crate::RegtestConfig::with_lockbox_disbursements`]).
 
 use crate::{Network, Upgrade};
 
-/// The one-time lockbox disbursement outputs of one coinbase: `count` outputs of `value`
-/// zatoshis each to `address`.
+/// Lockbox disbursement outputs of one coinbase: `count` outputs of `value` zatoshis each
+/// to `address`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Disbursement {
     /// `ZIP271DisbursementChunks`.
@@ -37,16 +38,26 @@ const fn nu6_1_disbursement(address: &'static str) -> Disbursement {
     }
 }
 
-/// The lockbox disbursement that the coinbase at `height` must pay. `None` at every height
-/// but the NU6.1 activation height of Mainnet and Testnet.
-pub fn disbursement(network: Network, height: u32) -> Option<Disbursement> {
+/// The lockbox disbursements that the coinbase at `height` must pay. Empty at every height
+/// but the NU6.1 activation height, and empty at that height on a Regtest network without
+/// a configured disbursement.
+pub fn disbursements(network: Network, height: u32) -> Vec<Disbursement> {
     if network.activation_height(Upgrade::Nu6_1) != Some(height) {
-        return None;
+        return Vec::new();
     }
     match network {
-        Network::Mainnet => Some(nu6_1_disbursement("t3ev37Q2uL1sfTsiJQJiWJoFzQpDhmnUwYo")),
-        Network::Testnet => Some(nu6_1_disbursement("t2RnBRiqrN1nW4ecZs1Fj3WWjNdnSs4kiX8")),
-        Network::Regtest | Network::ConfiguredRegtest(_) => None,
+        Network::Mainnet => vec![nu6_1_disbursement("t3ev37Q2uL1sfTsiJQJiWJoFzQpDhmnUwYo")],
+        Network::Testnet => vec![nu6_1_disbursement("t2RnBRiqrN1nW4ecZs1Fj3WWjNdnSs4kiX8")],
+        Network::Regtest => Vec::new(),
+        Network::ConfiguredRegtest(config) => config
+            .lockbox_disbursements()
+            .iter()
+            .map(|disbursement| Disbursement {
+                count: 1,
+                value: disbursement.amount,
+                address: &disbursement.address,
+            })
+            .collect(),
     }
 }
 
@@ -76,9 +87,11 @@ mod tests {
                 "t2RnBRiqrN1nW4ecZs1Fj3WWjNdnSs4kiX8",
             ),
         ] {
-            assert_eq!(disbursement(network, height - 1), None);
-            assert_eq!(disbursement(network, height + 1), None);
-            let disbursement = disbursement(network, height).unwrap();
+            assert_eq!(disbursements(network, height - 1), vec![]);
+            assert_eq!(disbursements(network, height + 1), vec![]);
+            let [disbursement] = disbursements(network, height)[..] else {
+                panic!("one disbursement at the NU6.1 activation height");
+            };
             assert_eq!(disbursement.count, 10);
             assert_eq!(disbursement.value, 7_875 * 100_000_000);
             assert_eq!(disbursement.total(), 78_750 * 100_000_000);
@@ -87,7 +100,7 @@ mod tests {
             assert_eq!((script.len(), script[0], script[22]), (23, 0xa9, 0x87));
         }
         for height in [0, 1, 3_146_400, 3_536_500] {
-            assert_eq!(disbursement(Network::Regtest, height), None);
+            assert_eq!(disbursements(Network::Regtest, height), vec![]);
         }
     }
 

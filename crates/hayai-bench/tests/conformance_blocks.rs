@@ -437,7 +437,7 @@ fn stages(
         keys: keys.clone(),
         header: HeaderPolicy::TrustShortContext,
     };
-    let store = PreparedStore::new(epoch, STORE_LIMIT, Zip317Params::ZIP317);
+    let store = PreparedStore::new(epoch, STORE_LIMIT, Zip317Params::ZAKURA);
     // At or below the mandatory checkpoint a block has only the checkpoint path, with the
     // checkpoint list of the network.
     let network = net.network();
