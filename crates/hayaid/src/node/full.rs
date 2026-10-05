@@ -179,13 +179,22 @@ impl Driver {
             return Ok(None);
         };
         let tip = self.chain.tip();
-        let mandatory = self.params.kind.mandatory_checkpoint_height();
+        // The end of the checkpoint range: the last checkpoint of the list, and at least
+        // the mandatory checkpoint. With full validation between two checkpoints the node
+        // would need the verifying keys of each epoch during the first synchronization.
+        let mandatory = self
+            .params
+            .kind
+            .checkpoints()
+            .last_height()
+            .unwrap_or(0)
+            .max(self.params.kind.mandatory_checkpoint_height());
         let mut jobs = Vec::new();
         for delivered in sync.delivered() {
             let (height, hash) = (delivered.block.height, delivered.block.hash);
             let checkpointed = sync.checkpointed(height);
-            // A block at or below the mandatory checkpoint has only the checkpoint path:
-            // it waits until the header chain reaches a checkpoint above it.
+            // A block at or below the end of the checkpoint range has only the checkpoint
+            // path: it waits until the header chain reaches a checkpoint at or above it.
             if !checkpointed && height <= mandatory {
                 break;
             }
