@@ -80,7 +80,8 @@ jobs:
           key: fixtures-${{ hashFiles('crates/hayai-bench/src/fixtures.rs') }}
       # The same package set and features as the clippy job.
       - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked --no-run
-      - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- --skip slow::
+      # The quotes are necessary: a plain YAML value cannot end with a colon.
+      - run: "cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- --skip slow::"
 
   deny:
     runs-on: ubuntu-24.04
