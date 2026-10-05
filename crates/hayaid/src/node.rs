@@ -1092,6 +1092,9 @@ impl Driver {
             .finalize_excess(LAYER_WINDOW)
             .map_err(|e| fatal("finalize", e))?;
         self.since_snapshot += finalized as u32;
+        self.metrics
+            .finalized_height
+            .set(f64::from(self.chain.base().read().height));
         self.since_flush += 1;
         if self.since_flush >= self.flush_interval {
             self.flush_coins("coins flush")?;
@@ -1127,6 +1130,7 @@ impl Driver {
         let elapsed = ctx.started.elapsed();
         self.metrics.verified_height.set(f64::from(height));
         self.metrics.committed_height.set(f64::from(height));
+        self.metrics.verified_blocks.inc();
         self.metrics.commit_duration.observe_duration(elapsed);
         self.metrics
             .mempool_transactions
@@ -1706,32 +1710,50 @@ pub struct Node {
     tracer: Tracer,
 }
 
+/// The data of the coinbase input after the height: the marker of hayai, then `: ` and
+/// `[mining] extra_coinbase_data` when the file has that key.
+fn miner_data(extra: Option<&str>) -> Vec<u8> {
+    match extra {
+        Some(extra) => [MINER_DATA, b": ", extra.as_bytes()].concat(),
+        None => MINER_DATA.to_vec(),
+    }
+}
+
 /// The peer manager of a full node: the limits of `[network]`, and the address book in
-/// `data_dir`.
+/// the directory of `[network] cache_dir`.
 fn peer_manager(
     network: &crate::config::NetworkSection,
     params: NetParams,
     data_dir: &Path,
 ) -> Result<Arc<PeerManager>, NodeError> {
     let mut config = PeerConfig::new(params.wire());
-    if let Some(outbound) = network.outbound_peers {
+    let limits = network.peer_limits();
+    if let Some(outbound) = limits.outbound {
         config.outbound_target = outbound;
     }
-    if let Some(inbound) = network.max_inbound {
+    if let Some(inbound) = limits.inbound {
         config.max_inbound = inbound;
     }
-    if let Some(per_ip) = network.max_per_ip {
+    if let Some(per_ip) = network.max_connections_per_ip {
         config.max_per_ip = per_ip;
     }
-    if let Some(seeders) = &network.seeders {
+    if let Some(seeders) = network.initial_peers() {
         config.seeders = seeders.clone();
     }
     if let Some(ban_secs) = network.ban_secs {
         config.ban_secs = ban_secs;
     }
-    let path = data_dir.join(PEERS_FILE);
-    let book = AddrBook::load(&path, config.book.clone()).map_err(|e| fatal("address book", e))?;
-    config.book_path = Some(path);
+    let book = match network.peer_cache_dir(data_dir) {
+        Some(dir) => {
+            fs::create_dir_all(dir).map_err(|e| fatal("address book directory", e))?;
+            let path = dir.join(PEERS_FILE);
+            let book =
+                AddrBook::load(&path, config.book.clone()).map_err(|e| fatal("address book", e))?;
+            config.book_path = Some(path);
+            book
+        }
+        None => AddrBook::new(config.book.clone()),
+    };
     Ok(PeerManager::new(config, book, PeerEnv::system()))
 }
 
@@ -1740,8 +1762,8 @@ fn require_empty(dir: &Path) -> Result<(), NodeError> {
         Ok(mut entries) => match entries.next() {
             None => Ok(()),
             Some(_) => Err(NodeError(format!(
-                "{} is not empty and data_dir has no {}: it is not the data directory of \
-                 a hayaid node; use an empty data_dir",
+                "{} is not empty and cache_dir has no {}: it is not the data directory of \
+                 a hayaid node; use an empty cache_dir",
                 dir.display(),
                 StateLog::FILE
             ))),
@@ -1798,7 +1820,7 @@ impl Drop for FreshDir {
         if !self.existed {
             if let Err(e) = fs::remove_dir(&self.data_dir) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(path = %self.data_dir.display(), error = %e, "failed first start left data_dir");
+                    tracing::warn!(path = %self.data_dir.display(), error = %e, "failed first start left cache_dir");
                 }
             }
         }
@@ -1944,7 +1966,7 @@ impl Node {
                 .map_err(|e| fatal("configuration", e))?,
         );
         let mode = config.network.mode;
-        let data_dir = &config.state.data_dir;
+        let data_dir = &config.state.cache_dir;
         let coins_dir = data_dir.join("coins");
         let blocks_dir = data_dir.join("blocks");
         let resuming = StateLog::exists(data_dir);
@@ -1953,7 +1975,7 @@ impl Node {
             require_empty(&blocks_dir)?;
         }
 
-        let tracer = match &config.trace.dir {
+        let tracer = match &config.network.zakura.trace_dir {
             Some(dir) => {
                 Tracer::open(dir, &config.trace.node).map_err(|e| fatal("trace dir", e))?
             }
@@ -1982,7 +2004,7 @@ impl Node {
         // From here on a failed first start removes what it created, up to the write of the
         // start record of the state log.
         let mut fresh_dir = (!resuming).then(|| FreshDir::new(data_dir));
-        fs::create_dir_all(data_dir).map_err(|e| fatal("data_dir", e))?;
+        fs::create_dir_all(data_dir).map_err(|e| fatal("cache_dir", e))?;
         let (store_backing, mem, best): (
             Arc<dyn CoinsBacking>,
             Option<Arc<MemBacking>>,
@@ -2148,14 +2170,14 @@ impl Node {
         let next = tip_height + 1;
         let store = Arc::new(PreparedStore::new(
             params.epoch_at(next).map_err(no_rules)?,
-            MEMPOOL_TX_COST_LIMIT,
+            config.mempool.tx_cost_limit as usize,
             Zip317Params::ZAKURA,
         ));
         let feed = TemplateFeed::new(Duration::from_secs(60));
         let script_pubkey = miner_script(&config.mining, params.kind).map_err(NodeError)?;
         let mut template_config = TemplateConfig::new(CoinbaseSpec {
             script_pubkey,
-            miner_data: MINER_DATA.to_vec(),
+            miner_data: miner_data(config.mining.extra_coinbase_data.as_deref()),
             network: params.kind,
         });
         template_config.pow = params.pow();
@@ -2266,7 +2288,10 @@ impl Node {
                     stop: stop_tx.clone(),
                 });
                 let rpc = Rpc::with_parts(
-                    RpcConfig::new(params.kind),
+                    RpcConfig {
+                        metrics: Some(registry.clone()),
+                        ..RpcConfig::new(params.kind)
+                    },
                     feed.clone(),
                     submit,
                     tip.clone(),
@@ -2298,7 +2323,7 @@ impl Node {
             // header chain.
             (Some(_), None) | (None, _) => None,
         };
-        let metrics_server = match config.metrics.listen_addr {
+        let metrics_server = match config.metrics.endpoint_addr {
             Some(addr) => Some(
                 MetricsServer::serve(addr, registry.clone())
                     .map_err(|e| fatal("metrics listen", e))?,
@@ -2307,6 +2332,9 @@ impl Node {
         };
         metrics.verified_height.set(f64::from(tip_height));
         metrics.committed_height.set(f64::from(tip_height));
+        metrics
+            .finalized_height
+            .set(f64::from(chain_base.read().height));
 
         let mut driver = Driver {
             params,
@@ -2420,7 +2448,7 @@ impl Node {
                 metrics,
                 tracer: tracer.clone(),
                 peers: config.network.peers.clone(),
-                max_peers: config.network.max_peers,
+                max_peers: config.network.peer_limits().total,
             },
             stop.clone(),
         )?);
@@ -2567,7 +2595,9 @@ fn spawn_ticker(t: Ticker, stop: Arc<AtomicBool>) -> Result<JoinHandle<()>, Node
                         relay.disconnect(p.id);
                     }
                 }
-                metrics.peers.set(relay.peers().len() as f64);
+                let peer_count = relay.peers().len() as f64;
+                metrics.peers.set(peer_count);
+                metrics.net_peers.set(peer_count);
                 metrics.record_relay(relay.metrics());
                 metrics.mempool_transactions.set(store.len() as f64);
                 metrics.mempool_bytes.set(store.cost_bytes() as f64);
@@ -2657,6 +2687,30 @@ mod tests {
     /// The template time is the clock inside the limits of the header rules: a header with
     /// that time passes `check_contextual` when the clock is far after the tip, at the
     /// tip, and before the median-time-past.
+    /// The longest `extra_coinbase_data` of the configuration fits in the coinbase input
+    /// at a height of 4 bytes, and one byte more does not.
+    #[test]
+    fn the_longest_extra_coinbase_data_fits_in_the_coinbase_input() {
+        use crate::config::MAX_EXTRA_COINBASE_DATA;
+
+        assert_eq!(miner_data(None), b"hayai");
+        assert_eq!(miner_data(Some("pool")), b"hayai: pool");
+        let spec = |extra: usize| CoinbaseSpec {
+            script_pubkey: vec![0x51],
+            miner_data: miner_data(Some(&"x".repeat(extra))),
+            network: NetworkKind::Regtest,
+        };
+        let height = 0x0100_0000;
+        let built = spec(MAX_EXTRA_COINBASE_DATA)
+            .build(height, 0)
+            .expect("the longest text");
+        let tag = [b"hayai: ".as_slice(), &[b'x'; MAX_EXTRA_COINBASE_DATA]].concat();
+        assert!(built.bytes.windows(tag.len()).any(|w| w == tag));
+        let Err(_) = spec(MAX_EXTRA_COINBASE_DATA + 1).build(height, 0) else {
+            panic!("one byte more fits");
+        };
+    }
+
     #[test]
     fn the_template_time_is_inside_the_limits_of_the_header_rules() {
         use hayai_consensus::header::{check_contextual, MAX_FUTURE_BLOCK_TIME_MTP};

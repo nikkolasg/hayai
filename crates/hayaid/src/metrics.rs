@@ -46,6 +46,10 @@ pub fn stage_durations(t: &Timings) -> [Duration; 10] {
 pub struct NodeMetrics {
     pub verified_height: Arc<Gauge>,
     pub committed_height: Arc<Gauge>,
+    /// Height of the base: the newest block whose layer is merged into the finalized state.
+    pub finalized_height: Arc<Gauge>,
+    /// Blocks that the node committed since its start.
+    pub verified_blocks: Arc<Counter>,
     pub verify_success: Arc<Histogram>,
     pub verify_failure: Arc<Histogram>,
     pub mempool_transactions: Arc<Gauge>,
@@ -57,6 +61,8 @@ pub struct NodeMetrics {
     pub store_misses: Arc<Counter>,
     pub blocks_rejected: Arc<Counter>,
     pub peers: Arc<Gauge>,
+    /// The value of `peers` under the name of Zakura.
+    pub net_peers: Arc<Gauge>,
     pub relay_forwarded_on_ids: Arc<Counter>,
     pub relay_forwarded_without_auth_root: Arc<Counter>,
     pub relay_forwarded_after_body: Arc<Counter>,
@@ -89,6 +95,8 @@ pub struct NodeMetrics {
     /// Peers of the block download.
     pub sync_peers: Arc<Gauge>,
     pub sync_requests_in_flight: Arc<Gauge>,
+    /// The value of `sync_requests_in_flight` under the name of Zakura.
+    pub sync_downloads_in_flight: Arc<Gauge>,
     pub sync_held_bytes: Arc<Gauge>,
     /// 1 while a header chain is out of the fork choice because no peer sends its blocks.
     pub sync_bodies_withheld: Arc<Gauge>,
@@ -155,6 +163,16 @@ impl NodeMetrics {
                 "Height of the best chain tip in the in-memory state.",
                 &[],
             ),
+            finalized_height: r.gauge(
+                "state_finalized_block_height",
+                "Height of the newest block of the finalized state.",
+                &[],
+            ),
+            verified_blocks: r.counter(
+                "zcash_chain_verified_block_total",
+                "Blocks that the node committed since its start.",
+                &[],
+            ),
             verify_success: verify("success"),
             verify_failure: verify("failure"),
             mempool_transactions: r.gauge(
@@ -205,6 +223,7 @@ impl NodeMetrics {
                 &[],
             ),
             peers: r.gauge("hayai_peers", "Connected peers.", &[]),
+            net_peers: r.gauge("zcash_net_peers", "Connected peers.", &[]),
             relay_forwarded_on_ids: r.counter(
                 "hayai_relay_forwarded_on_ids_total",
                 "Compact blocks forwarded on a verified id list before the body.",
@@ -343,6 +362,11 @@ impl NodeMetrics {
             ),
             sync_requests_in_flight: r.gauge(
                 "hayai_sync_requests_in_flight",
+                "Block requests without an answer.",
+                &[],
+            ),
+            sync_downloads_in_flight: r.gauge(
+                "sync_downloads_in_flight",
                 "Block requests without an answer.",
                 &[],
             ),

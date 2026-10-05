@@ -844,7 +844,7 @@ See `docs/protocol-compact-relay.md`, section Negotiation and legacy coexistence
   100 points the book bans the IP address for 24 hours and the relay closes every
   connection with it.
 - hayaid in full mode builds the relay with a peer manager (`[network]` keys, the book in
-  `data_dir/peers.dat`). It also dials its configured peers and has its own
+  `peers.dat` in the directory of `[network] cache_dir`). It also dials its configured peers and has its own
   peer limit.
 
 ### Block synchronization (`SyncSink`)

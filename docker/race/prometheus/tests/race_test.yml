@@ -1,0 +1,165 @@
+# promtool test rules tests/race_test.yml (from docker/race/prometheus).
+#
+# Two nodes, one sample each minute. zakurad reaches the last checkpoint (4,023,200) at
+# minute 3 and the tip (headers 4,030,000) at minute 5. hayaid starts at minute 1,
+# reaches the checkpoint at minute 2 and the tip at minute 4.
+rule_files:
+  - ../rules/race.yml
+
+evaluation_interval: 1m
+
+# A rate of the test series has a rounding error in its last digits.
+fuzzy_compare: true
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '1x10'
+      - series: 'up{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '0 1x9'
+      - series: 'zcash_chain_verified_block_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '0 1000000 3000000 4023200 4025000 4029999 4030000x4'
+      - series: 'zcash_chain_verified_block_height{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '_ 2000000 4023300 4026000 4029998 4030000x5'
+      - series: 'sync_block_best_header_tip_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '0 4030000x9'
+      - series: 'hayai_sync_header_height{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '_ 4000000 4030000x8'
+    promql_expr_test:
+      # The start: the first scrape that reached the node. The value does not change.
+      - expr: race:start_timestamp_seconds
+        eval_time: 9m
+        exp_samples:
+          - labels: 'race:start_timestamp_seconds{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 0
+          - labels: 'race:start_timestamp_seconds{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 60
+      # No node is at the checkpoint at minute 1.
+      - expr: race:checkpoint_timestamp_seconds
+        eval_time: 1m
+        exp_samples: []
+      - expr: race:checkpoint_timestamp_seconds
+        eval_time: 9m
+        exp_samples:
+          - labels: 'race:checkpoint_timestamp_seconds{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 180
+          - labels: 'race:checkpoint_timestamp_seconds{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 120
+      - expr: race:seconds_to_checkpoint
+        eval_time: 9m
+        exp_samples:
+          - labels: 'race:seconds_to_checkpoint{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 180
+          - labels: 'race:seconds_to_checkpoint{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 60
+      # At minute 0 each height is 0 and the header chains are below the checkpoint: no
+      # node is at the tip.
+      - expr: race:tip_timestamp_seconds
+        eval_time: 3m
+        exp_samples: []
+      - expr: race:tip_timestamp_seconds
+        eval_time: 9m
+        exp_samples:
+          - labels: 'race:tip_timestamp_seconds{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 300
+          - labels: 'race:tip_timestamp_seconds{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 240
+      - expr: race:seconds_to_tip
+        eval_time: 9m
+        exp_samples:
+          - labels: 'race:seconds_to_tip{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 300
+          - labels: 'race:seconds_to_tip{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 180
+      # One name for the header height of both nodes.
+      - expr: race:header_height
+        eval_time: 2m
+        exp_samples:
+          - labels: 'race:header_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 4030000
+          - labels: 'race:header_height{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 4030000
+
+  # The rules with a rate have a window of 1 minute: one sample each 15 seconds, as the
+  # scrape interval of prometheus.yml.
+  - interval: 15s
+    input_series:
+      - series: 'zcash_chain_verified_block_total{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '0+150x40'
+      - series: 'zcash_net_peers{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '8x40'
+      # The machine of hayaid: 4 CPUs, one of them busy; 1 GB of 16 GB in use; one file
+      # system at two mount points; one disk with one partition; two interfaces.
+      - series: 'node_cpu_seconds_total{job="node", node="hayaid", instance="b.example:9100", cpu="0", mode="idle"}'
+        values: '0+0x40'
+      - series: 'node_cpu_seconds_total{job="node", node="hayaid", instance="b.example:9100", cpu="1", mode="idle"}'
+        values: '0+15x40'
+      - series: 'node_cpu_seconds_total{job="node", node="hayaid", instance="b.example:9100", cpu="2", mode="idle"}'
+        values: '0+15x40'
+      - series: 'node_cpu_seconds_total{job="node", node="hayaid", instance="b.example:9100", cpu="3", mode="idle"}'
+        values: '0+15x40'
+      - series: 'node_memory_MemTotal_bytes{job="node", node="hayaid", instance="b.example:9100"}'
+        values: '16000000000x40'
+      - series: 'node_memory_MemAvailable_bytes{job="node", node="hayaid", instance="b.example:9100"}'
+        values: '15000000000x40'
+      - series: 'node_filesystem_size_bytes{job="node", node="hayaid", instance="b.example:9100", device="/dev/nvme1n1", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '100000x40'
+      - series: 'node_filesystem_avail_bytes{job="node", node="hayaid", instance="b.example:9100", device="/dev/nvme1n1", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '60000x40'
+      - series: 'node_filesystem_size_bytes{job="node", node="hayaid", instance="b.example:9100", device="/dev/nvme1n1", fstype="ext4", mountpoint="/var/lib/docker/volumes"}'
+        values: '100000x40'
+      - series: 'node_filesystem_avail_bytes{job="node", node="hayaid", instance="b.example:9100", device="/dev/nvme1n1", fstype="ext4", mountpoint="/var/lib/docker/volumes"}'
+        values: '60000x40'
+      - series: 'node_filesystem_size_bytes{job="node", node="hayaid", instance="b.example:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: '500x40'
+      - series: 'node_filesystem_avail_bytes{job="node", node="hayaid", instance="b.example:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: '100x40'
+      - series: 'node_disk_written_bytes_total{job="node", node="hayaid", instance="b.example:9100", device="nvme1n1"}'
+        values: '0+1500x40'
+      - series: 'node_disk_written_bytes_total{job="node", node="hayaid", instance="b.example:9100", device="nvme1n1p1"}'
+        values: '0+1500x40'
+      - series: 'node_network_receive_bytes_total{job="node", node="hayaid", instance="b.example:9100", device="ens5"}'
+        values: '0+300x40'
+      - series: 'node_network_receive_bytes_total{job="node", node="hayaid", instance="b.example:9100", device="lo"}'
+        values: '0+9999x40'
+    promql_expr_test:
+      - expr: race:blocks_per_second
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:blocks_per_second{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 10
+      - expr: race:peers
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:peers{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 8
+      # 3 of 4 CPUs are idle.
+      - expr: round(race:machine_cpu_utilisation, 0.001)
+        eval_time: 5m
+        exp_samples:
+          - labels: '{node="hayaid"}'
+            value: 0.25
+      - expr: race:machine_memory_used_bytes
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:machine_memory_used_bytes{job="node", node="hayaid", instance="b.example:9100"}'
+            value: 1000000000
+      # The device with two mount points counts one time, and tmpfs does not count.
+      - expr: race:machine_disk_used_bytes
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:machine_disk_used_bytes{node="hayaid"}'
+            value: 40000
+      # The partition does not count.
+      - expr: race:machine_disk_written_bytes_per_second
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:machine_disk_written_bytes_per_second{node="hayaid"}'
+            value: 100
+      # The loopback interface does not count.
+      - expr: race:machine_network_receive_bytes_per_second
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:machine_network_receive_bytes_per_second{node="hayaid"}'
+            value: 20

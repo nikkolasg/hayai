@@ -1,0 +1,36 @@
+# zakurad of the sync race on Testnet (docker/race/compose.node.yml, profile zakurad).
+# A full sync from the public network, from an empty data directory.
+#
+# Each key that is not in this file has the default of zakurad: the DNS seeders of
+# Testnet, the P2P stack of Testnet ("dual": the legacy stack and the Zakura stack with
+# its bootstrap peers), checkpoint sync. The other node of the race is not a peer of
+# this node.
+
+[network]
+network = "Testnet"
+listen_addr = "[::]:18233"
+cache_dir = "/home/zebra/.cache/zakura"
+# The same two limits as in hayaid.testnet.toml: 37 outbound and 75 inbound peers of
+# the legacy stack, 1 connection for each IP address.
+peerset_initial_target_size = 25
+max_connections_per_ip = 1
+
+[state]
+cache_dir = "/home/zebra/.cache/zakura"
+
+[rpc]
+# The loopback address of the host, with the cookie file.
+listen_addr = "127.0.0.1:18232"
+enable_cookie_auth = true
+cookie_dir = "/home/zebra/.cache/zakura"
+
+[metrics]
+# The firewall opens this port to the monitoring machine only.
+endpoint_addr = "0.0.0.0:9999"
+
+[mining]
+# No miner uses this node. hayaid needs the key, so both files have it.
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+
+[tracing]
+use_color = false

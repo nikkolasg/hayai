@@ -1,0 +1,21 @@
+# Prometheus of the sync race (docker/race/compose.monitor.yml).
+#
+# The targets come from /prometheus/targets.json, which the container writes at its
+# start from the variables of compose. Each target has the label `node` (zakurad or
+# hayaid): the node, or the node-exporter of the machine of that node. The rules and the
+# dashboard group by this label.
+#
+# Rate windows in the rules are 4 scrape intervals (1m at 15s).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # The labels of a target set its job: zakurad, hayaid or node.
+  - job_name: race
+    file_sd_configs:
+      - files: [/prometheus/targets.json]

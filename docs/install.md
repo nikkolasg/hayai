@@ -148,7 +148,7 @@ To make Regtest the default, set `COMPOSE_PROFILES=regtest` in `docker/.env`.
 2. Edit `/etc/hayai/hayaid.toml`:
    - Testnet and Mainnet: set `[network] peers` and `[shadow] rpc_addr` to the P2P and RPC
      addresses of the local zakurad.
-   - Set `[metrics] listen_addr` to an address that Prometheus reaches.
+   - Set `[metrics] endpoint_addr` to an address that Prometheus reaches.
 3. Wait until zakurad is at the tip of the network.
 4. Start the service:
 
@@ -209,7 +209,7 @@ port forwards only. `terraform destroy` removes the instance and the data volume
 |---|---|---|
 | Log | `docker compose logs -f hayaid-testnet` (`hayaid-mainnet` on Mainnet) | `journalctl -u hayaid -f` |
 | The node started | Log line `hayaid started` with the P2P, RPC and metrics addresses | same |
-| Metrics endpoint | `curl -s http://127.0.0.1:19101/metrics \| head` | same address as `[metrics] listen_addr` |
+| Metrics endpoint | `curl -s http://127.0.0.1:19101/metrics \| head` | same address as `[metrics] endpoint_addr` |
 | Tip height | `curl -s http://127.0.0.1:19101/metrics \| grep '^state_memory_best_committed_block_height'` | same |
 | Tip height (Regtest RPC) | `curl -s -u "$(docker compose exec -T hayaid-regtest cat /var/lib/hayai/.cookie)" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18345/` | same, with `-u "$(sudo cat /var/lib/hayai/.cookie)"` |
 | Peers | `curl -s http://127.0.0.1:19101/metrics \| grep '^hayai_peers'`: 1 in shadow mode (the Zakura node) | same |
@@ -220,9 +220,9 @@ port forwards only. `terraform destroy` removes the instance and the data volume
 
 ## Restart and upgrade
 
-hayaid resumes from `data_dir` (`docs/hayaid.md`, Restart). A restart and an upgrade need no
+hayaid resumes from `cache_dir` (`docs/hayaid.md`, Restart). A restart and an upgrade need no
 reset. The node replays the blocks above its last flush from the block files, so a start
-takes longer after a crash than after a clean stop. The node refuses a `data_dir` of another
+takes longer after a crash than after a clean stop. The node refuses a `cache_dir` of another
 network or mode.
 
 Docker Compose (Testnet; for Mainnet, use `hayaid-mainnet`; for Regtest, use `hayaid-regtest`):
@@ -255,7 +255,7 @@ scripts/install.sh --network testnet          # builds, installs, keeps the conf
 sudo systemctl start hayaid
 ```
 
-To start a node from a new start state, stop it and remove the content of `data_dir`
+To start a node from a new start state, stop it and remove the content of `cache_dir`
 (`/var/lib/hayai`) except the traces. In Docker Compose:
 
 ```
@@ -298,9 +298,9 @@ starts. Bare metal: stop the service and copy `/var/lib/hayai` with `tar`.
 
 | Symptom | Cause | Action |
 |---|---|---|
-| `hayaid: /var/lib/hayai/coins is not empty and data_dir has no state.log ...` | The directory holds files of another program, or an incomplete copy | Remove the cause, or use an empty `data_dir` |
-| `hayaid: state log: ... belongs to a regtest/full node` | The configuration names another network or mode than the first start | Correct the configuration, or use an empty `data_dir` |
-| `hayaid: shadow seed: upstream connection: Connection refused` | zakurad does not answer on its RPC address | Check zakurad (`docker compose logs zakurad`). The failed start left `data_dir` as it was; start again |
+| `hayaid: /var/lib/hayai/coins is not empty and cache_dir has no state.log ...` | The directory holds files of another program, or an incomplete copy | Remove the cause, or use an empty `cache_dir` |
+| `hayaid: state log: ... belongs to a regtest/full node` | The configuration names another network or mode than the first start | Correct the configuration, or use an empty `cache_dir` |
+| `hayaid: shadow seed: upstream connection: Connection refused` | zakurad does not answer on its RPC address | Check zakurad (`docker compose logs zakurad`). The failed start left `cache_dir` as it was; start again |
 | `docker compose up` waits and `hayaid-testnet` does not start | zakurad is not healthy: it is not at the Testnet tip yet | Wait. Follow `docker compose logs -f zakurad` |
 | systemd: `Start request repeated too quickly` | Five failed starts in 10 minutes | Read `journalctl -u hayaid`, fix the cause, then `sudo systemctl reset-failed hayaid` |
 | ``unknown field `sapling_params_dir` `` | The configuration is from a version that read the Sapling parameter files | Remove the line. The Sapling verifying keys are in the binary |

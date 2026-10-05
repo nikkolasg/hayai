@@ -35,12 +35,12 @@ fn config_with(
     let text = format!(
         r#"
 [network]
-network = "regtest"
+network = "Regtest"
 listen_addr = "127.0.0.1:0"
 peers = [{peers}]
 
 [state]
-data_dir = "{data}"
+cache_dir = "{data}"
 backend = "{backend}"
 flush_interval_blocks = 4
 
@@ -48,10 +48,12 @@ flush_interval_blocks = 4
 listen_addr = "127.0.0.1:0"
 
 [metrics]
-listen_addr = "127.0.0.1:0"
+endpoint_addr = "127.0.0.1:0"
+
+[network.zakura]
+trace_dir = "{trace}"
 
 [trace]
-dir = "{trace}"
 node = "{name}"
 
 [mining]
@@ -305,10 +307,17 @@ fn a_node_resumes_after_a_clean_stop_and_after_a_crash_on_both_backends() {
         let node = Node::start(&cfg).expect("first start");
         let tip = generate(&node, 1_030);
         assert_eq!(tip.0, 1_030);
+        let finalized = "\nstate_finalized_block_height 30\n";
+        assert!(metrics_text(&node).contains(finalized), "{backend}");
         node.shutdown().expect("clean stop");
 
         let node = Node::start(&cfg).expect("restart");
         assert_eq!(node.tip.tip(), tip, "{backend}: clean restart");
+        // The restart puts the base at the same block, and counts its own commits only.
+        let text = metrics_text(&node);
+        assert!(text.contains(finalized), "{backend}: {text}");
+        assert!(text.contains("\nzcash_chain_verified_block_height 1030\n"));
+        assert!(text.contains("\nzcash_chain_verified_block_total 0\n"));
         let tip = generate(&node, 5);
         assert_eq!(
             tip.0, 1_035,
@@ -341,7 +350,7 @@ fn a_data_dir_of_another_network_or_mode_and_foreign_files_are_refused() {
     assert!(dir.path().join("a-data/state.log").is_file());
     // Mainnet full mode on the Regtest data_dir.
     let other = Config::parse(&format!(
-        "[network]\nnetwork = \"mainnet\"\n[state]\ndata_dir = \"{}\"\n[mining]\nminer_script = \"51\"\n",
+        "[network]\nnetwork = \"Mainnet\"\n[state]\ncache_dir = \"{}\"\n[mining]\nminer_script = \"51\"\n",
         dir.path().join("a-data").display()
     ))
     .expect("config");
@@ -367,7 +376,7 @@ fn a_data_dir_of_another_network_or_mode_and_foreign_files_are_refused() {
 fn a_mainnet_full_node_starts_at_the_mainnet_genesis_block() {
     let dir = scratch();
     let cfg = Config::parse(&format!(
-        "[network]\nnetwork = \"mainnet\"\n[state]\ndata_dir = \"{}\"\n[mining]\nminer_address = \"t1Hsc1LR8yKnbbe3twRp88p6vFfC5t7DLbs\"\n",
+        "[network]\nnetwork = \"Mainnet\"\n[state]\ncache_dir = \"{}\"\n[mining]\nminer_address = \"t1Hsc1LR8yKnbbe3twRp88p6vFfC5t7DLbs\"\n",
         dir.path().join("data").display()
     ))
     .expect("config");
@@ -379,6 +388,58 @@ fn a_mainnet_full_node_starts_at_the_mainnet_genesis_block() {
         "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
     );
     node.shutdown().expect("stop");
+}
+
+/// The metrics with the names of Zakura (`docs/zakura-compat.md`, Metrics) on a chain of
+/// 10 blocks: each name is in the output, with the value of the chain or of the requests.
+#[test]
+fn the_metrics_with_the_names_of_zakura_have_the_values_of_the_node() {
+    let dir = scratch();
+    let a = Node::start(&config(dir.path(), "a", &[], true)).expect("node a");
+    let rpc_a = client(&a);
+    generate(&a, 10);
+    assert_eq!(rpc(&rpc_a, "getblockcount", json!([]))["result"], 10);
+    assert_eq!(
+        rpc(&rpc_a, "getblockhash", json!([11]))["error"]["code"],
+        -8
+    );
+    assert_eq!(rpc(&rpc_a, "nomethod", json!([]))["error"]["code"], -32601);
+    let text = metrics_text(&a);
+    for line in [
+        "zcash_chain_verified_block_height 10",
+        "state_memory_best_committed_block_height 10",
+        "state_finalized_block_height 0",
+        "zcash_chain_verified_block_total 10",
+        "sync_block_verify_duration_seconds_count{result=\"success\"} 10",
+        "zcash_mempool_size_transactions 0",
+        "zcash_mempool_size_bytes 0",
+        "zcash_net_peers 0",
+        "sync_downloads_in_flight 0",
+        "rpc_requests_total{method=\"generate\",status=\"success\"} 1",
+        "rpc_requests_total{method=\"getblockcount\",status=\"success\"} 1",
+        "rpc_requests_total{method=\"getblockhash\",status=\"error\"} 1",
+        "rpc_requests_total{method=\"unknown\",status=\"error\"} 1",
+        "rpc_errors_total{method=\"getblockhash\",error_code=\"-8\"} 1",
+        "rpc_errors_total{method=\"unknown\",error_code=\"-32601\"} 1",
+        "rpc_request_duration_seconds_count{method=\"generate\"} 1",
+        "rpc_active_requests 0",
+    ] {
+        assert!(text.contains(&format!("\n{line}\n")), "{line}\n{text}");
+    }
+    // The node reads these values from the process and from the template: the test
+    // reads the name and the type only.
+    for name in [
+        "process_resident_memory_bytes gauge",
+        "process_cpu_seconds_total counter",
+        "mining_template_rebuilt counter",
+    ] {
+        assert!(text.contains(&format!("\n# TYPE {name}\n")), "{name}");
+    }
+    assert!(
+        !text.contains("nomethod"),
+        "an unknown method is not a label"
+    );
+    a.shutdown().expect("a shuts down");
 }
 
 fn metrics_text(node: &Node) -> String {

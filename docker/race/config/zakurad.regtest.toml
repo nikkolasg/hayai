@@ -1,0 +1,32 @@
+# zakurad for the local dry run of the race files (docs/sync-race.md, Dry run). Regtest,
+# loopback addresses only, no seeder, no bootstrap peer and no peer cache: the node has
+# no peer.
+
+[network]
+network = "Regtest"
+listen_addr = "127.0.0.1:38233"
+p2p_stack = "legacy"
+cache_dir = false
+initial_mainnet_peers = []
+initial_testnet_peers = []
+
+[network.zakura]
+bootstrap_peers = []
+listen_addr = "127.0.0.1:38234"
+
+[state]
+cache_dir = "/home/zebra/.cache/zakura"
+
+[rpc]
+listen_addr = "127.0.0.1:38232"
+enable_cookie_auth = true
+cookie_dir = "/home/zebra/.cache/zakura"
+
+[metrics]
+endpoint_addr = "127.0.0.1:39999"
+
+[mining]
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+
+[tracing]
+use_color = false

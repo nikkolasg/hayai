@@ -28,6 +28,23 @@ Date: 2026-10-04. `docs/install.md` gives the procedures.
 | `docker/observability/grafana/provisioning/` | Prometheus data source and the dashboard provider. |
 | `docker/observability/grafana/dashboards/hayaid.json` | Dashboard: tip height, blocks per minute, validation time and stages, commit time, prepared store size and hit rate, template rebuilds, relay counters, shadow verdicts and trust limits, dropped trace rows, host CPU, memory and disk, process memory and CPU, coins cache, template latency, build info. |
 
+## Sync race
+
+`docs/sync-race.md` is the runbook.
+
+| File | Content |
+|---|---|
+| `docker/race/compose.node.yml` | One node machine: profile `zakurad` or profile `hayaid`, and node-exporter. Host network, no restart, the same CPU and memory limits for both node services (`RACE_CPUS`, `RACE_MEMORY`, default none). |
+| `docker/race/compose.monitor.yml` | The monitoring machine: Prometheus (targets from `RACE_ZAKURAD_HOST` and `RACE_HAYAID_HOST`) and Grafana. |
+| `docker/race/config/zakurad.testnet.toml`, `hayaid.testnet.toml` | The two nodes on Testnet: full sync, DNS seeders of the defaults, the same peer limits, RPC on loopback with the cookie, metrics on 9999 and 19101. |
+| `docker/race/config/zakurad.regtest.toml`, `hayaid.regtest.toml` | The dry run on one machine: Regtest, 127.0.0.1, no peer. |
+| `docker/race/prometheus/prometheus.yml` | One scrape job with the targets of the file service discovery; each target has the label `node`. |
+| `docker/race/prometheus/rules/race.yml` | Recording rules `race:*`: heights, blocks per second, peers, the first time at the last checkpoint and at the tip, machine CPU, memory, disk and network. |
+| `docker/race/prometheus/tests/race_test.yml` | `promtool test rules` cases for each rule. |
+| `docker/race/grafana/dashboards/sync-race.json` | Dashboard "sync race": both nodes on the same panels. |
+| `scripts/race_deploy.sh` | `build`, `start`, `status`, `stop`, `collect`, `swap`, `clean` for three hosts with Docker and SSH. |
+| `deploy/terraform/aws-race/` | Three instances (A and B equal, C small), security groups, first-boot scripts that build the image and start the node at `start_at`. |
+
 ## Bare metal
 
 | File | Content |
@@ -53,6 +70,6 @@ Date: 2026-10-04. `docs/install.md` gives the procedures.
 
 | File | Content |
 |---|---|
-| `.github/workflows/ci.yml` | Jobs: fmt; msrv check of the node crates on the workspace `rust-version`; clippy `-D warnings` and release tests on both backends; benches compile; cargo-deny; Docker build and compose check; Prometheus, Alertmanager and dashboard checks; Terraform fmt and validate; shellcheck. |
+| `.github/workflows/ci.yml` | Jobs: fmt; msrv check of the node crates on the workspace `rust-version`; clippy `-D warnings` and release tests on both backends; benches compile; cargo-deny; Docker build and compose check; Prometheus, Alertmanager and dashboard checks (also the sync race); Terraform fmt and validate of both root modules; shellcheck. |
 | `deny.toml` | Licenses (MIT, Apache-2.0, BSD, ISC, Unicode, Zlib, CC0, one MPL-2.0 exception), RustSec advisories (none ignored), sources. The `multitable` git dependency, which has no license, is excluded from the graph; it is a feature of hayai-bench that is off by default. |
-| `scripts/check_metric_names.py` | Fails when a rule or the dashboard uses a metric name that `crates/hayaid/src/metrics.rs` does not register. |
+| `scripts/check_metric_names.py` | Fails when a rule or a dashboard uses a metric name that hayaid does not register, or when the sync race reads a name that is not in its lists (hayaid, Zakura, node-exporter). |

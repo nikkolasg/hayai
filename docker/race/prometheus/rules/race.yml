@@ -1,0 +1,107 @@
+# Recording rules of the sync race (docs/sync-race.md). Each series has the label `node`
+# (zakurad or hayaid). The dashboard reads these series only.
+#
+# The node metrics have the same name on both nodes (docs/zakura-compat.md, Metrics),
+# but for the header height: Zakura and hayai have one name each.
+#
+# A timestamp rule keeps its first value: `last_over_time(rule) or timestamp(condition)`
+# gives the stored value while there is one, and the time of the first evaluation with a
+# true condition before that. The resolution is the evaluation interval (15 s). A new
+# race needs an empty Prometheus volume.
+
+groups:
+  - name: race-nodes
+    interval: 15s
+    rules:
+      - record: race:block_height
+        expr: zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+
+      - record: race:header_height
+        expr: >-
+          hayai_sync_header_height{job="hayaid"}
+          or sync_block_best_header_tip_height{job="zakurad"}
+
+      - record: race:blocks_per_second
+        expr: rate(zcash_chain_verified_block_total{job=~"zakurad|hayaid"}[1m])
+
+      - record: race:peers
+        expr: zcash_net_peers{job=~"zakurad|hayaid"}
+
+      # The first scrape that reached the node.
+      - record: race:start_timestamp_seconds
+        expr: >-
+          last_over_time(race:start_timestamp_seconds[1d])
+          or timestamp(up{job=~"zakurad|hayaid"} == 1)
+
+      # The first evaluation at or above the last Testnet checkpoint (4,023,200).
+      - record: race:checkpoint_timestamp_seconds
+        expr: >-
+          last_over_time(race:checkpoint_timestamp_seconds[1d])
+          or timestamp(zcash_chain_verified_block_height{job=~"zakurad|hayaid"} >= 4023200)
+
+      # The first evaluation at the tip. The reference height is the highest of the
+      # header chains of the two nodes and of the network tip that zakurad estimates
+      # from the time (sync_estimated_network_tip_height). A node is at the tip when the
+      # reference is above the last checkpoint and the block height of the node is
+      # 2 blocks or less below it.
+      - record: race:tip_timestamp_seconds
+        expr: >-
+          last_over_time(race:tip_timestamp_seconds[1d])
+          or timestamp(
+            zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+            >= on() group_left()
+            (max(hayai_sync_header_height or sync_block_best_header_tip_height
+            or sync_estimated_network_tip_height) - 2)
+            and on()
+            (max(hayai_sync_header_height or sync_block_best_header_tip_height
+            or sync_estimated_network_tip_height) > 4023200)
+          )
+
+      - record: race:seconds_to_checkpoint
+        expr: race:checkpoint_timestamp_seconds - race:start_timestamp_seconds
+
+      - record: race:seconds_to_tip
+        expr: race:tip_timestamp_seconds - race:start_timestamp_seconds
+
+  - name: race-machines
+    interval: 15s
+    rules:
+      # Share of the CPU time of the machine that is not idle, 0 to 1.
+      - record: race:machine_cpu_utilisation
+        expr: 1 - avg by (node) (rate(node_cpu_seconds_total{job="node", mode="idle"}[1m]))
+
+      - record: race:machine_memory_used_bytes
+        expr: >-
+          node_memory_MemTotal_bytes{job="node"}
+          - node_memory_MemAvailable_bytes{job="node"}
+
+      # Used bytes of the file system of the node data (node-exporter has the two data
+      # volumes as mount points), one time for each device.
+      - record: race:machine_disk_used_bytes
+        expr: >-
+          sum by (node) (max by (node, device) (
+            node_filesystem_size_bytes{job="node", fstype=~"ext4|xfs|btrfs"}
+            - node_filesystem_avail_bytes{job="node", fstype=~"ext4|xfs|btrfs"}
+          ))
+
+      # Whole disks only: a partition has the bytes of its disk a second time.
+      - record: race:machine_disk_read_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_disk_read_bytes_total{job="node",
+          device=~"nvme[0-9]+n[0-9]+|sd[a-z]+|vd[a-z]+|xvd[a-z]+"}[1m]))
+
+      - record: race:machine_disk_written_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_disk_written_bytes_total{job="node",
+          device=~"nvme[0-9]+n[0-9]+|sd[a-z]+|vd[a-z]+|xvd[a-z]+"}[1m]))
+
+      # Interfaces of the machine, without the loopback and the Docker interfaces.
+      - record: race:machine_network_receive_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_network_receive_bytes_total{job="node",
+          device!~"lo|docker.*|veth.*|br-.*"}[1m]))
+
+      - record: race:machine_network_transmit_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_network_transmit_bytes_total{job="node",
+          device!~"lo|docker.*|veth.*|br-.*"}[1m]))

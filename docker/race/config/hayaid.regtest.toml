@@ -1,0 +1,35 @@
+# hayaid for the local dry run of the race files (docs/sync-race.md, Dry run). Regtest,
+# loopback addresses only, no seeder and no configured peer: the node has no peer.
+
+[network]
+network = "Regtest"
+mode = "full"
+listen_addr = "127.0.0.1:38344"
+peers = []
+initial_testnet_peers = []
+cache_dir = false
+
+[network.zakura]
+trace_dir = "/var/lib/hayai/traces"
+
+[state]
+cache_dir = "/var/lib/hayai"
+
+[rpc]
+listen_addr = "127.0.0.1:38345"
+enable_cookie_auth = true
+
+[metrics]
+endpoint_addr = "127.0.0.1:39101"
+
+[trace]
+node = "hayaid"
+
+[mining]
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+# The dry run makes blocks with the `generate` method.
+regtest_produce = true
+
+[tracing]
+filter = "info"
+use_color = false

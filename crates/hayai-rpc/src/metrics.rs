@@ -72,6 +72,15 @@ impl Gauge {
         self.0.store(value.to_bits(), Ordering::Relaxed);
     }
 
+    /// Adds `delta` to the value in one atomic step.
+    pub fn add(&self, delta: f64) {
+        let _ = self
+            .0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
+                Some((f64::from_bits(bits) + delta).to_bits())
+            });
+    }
+
     pub fn get(&self) -> f64 {
         f64::from_bits(self.0.load(Ordering::Relaxed))
     }

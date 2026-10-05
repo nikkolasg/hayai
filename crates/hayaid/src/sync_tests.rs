@@ -45,21 +45,23 @@ fn config_with(dir: &Path, name: &str, produce: bool, compact: bool, extra: &str
     let text = format!(
         r#"
 [network]
-network = "regtest"
+network = "Regtest"
 listen_addr = "127.0.0.1:0"
 compact_relay = {compact}
 outbound_peers = 0
 
 [state]
-data_dir = "{data}"
+cache_dir = "{data}"
 flush_interval_blocks = 8
 
 [sync]
 request_timeout_ms = 1500
 header_timeout_ms = 2000
 
+[network.zakura]
+trace_dir = "{trace}"
+
 [trace]
-dir = "{trace}"
 node = "{name}"
 
 [mining]
@@ -342,7 +344,7 @@ fn a_node_synchronizes_from_three_peers_from_the_genesis_block() {
     wait_tip(&b, tip);
     wait_tip(&c, tip);
 
-    let x = start(dir.path(), "x", false, true);
+    let x = start_with(dir.path(), "x", false, true, METRICS);
     for peer in [&a, &b, &c] {
         x.relay.connect(addr(peer)).expect("x dials a peer");
     }
@@ -353,6 +355,7 @@ fn a_node_synchronizes_from_three_peers_from_the_genesis_block() {
     for node in [&b, &c, &x] {
         wait_tip(node, tip);
     }
+    wait_sync_report(&x, tip.0);
     for node in [a, b, c, x] {
         node.shutdown().expect("clean shutdown");
     }
@@ -1563,24 +1566,26 @@ fn a_header_that_fails_a_time_rule_costs_its_peer_nothing() {
     late[0].0.time += 3 * 60 * 60;
     chain.extend(late);
     let peer = ScriptedPeer::serve([127, 0, 0, 12], chain, Script::default());
-    let x = start(dir.path(), "x", false, false);
+    let x = start_with(dir.path(), "x", false, false, METRICS);
     x.relay.connect(peer.addr).expect("x dials the peer");
     wait_tip(&x, tip);
     assert!(!x.relay.peer_manager().is_banned(peer.addr.ip()));
     assert_eq!(x.relay.peer_manager().score(peer.addr.ip()), 0);
-    // The next ticks of the block synchronization write a `sync_progress` row.
-    thread::sleep(Duration::from_millis(600));
+    // The peer sends the late header with the 30 others in one message, so the report
+    // at the header height 30 comes after the node refused it.
+    wait_sync_report(&x, 30);
     x.shutdown().expect("clean shutdown");
     a.shutdown().expect("clean shutdown");
+    // A report writes no row in the second after another row: the rows have the height
+    // 30 or a lower one, and never the height of the late header.
     let headers = rows(dir.path(), "x", "block_sync.jsonl")
         .iter()
         .filter(|row| row["event"] == "sync_progress")
         .map(|row| row["headers_height"].as_u64().expect("a height"))
         .max();
-    assert_eq!(
-        headers,
-        Some(30),
-        "the late header is not in the header chain"
+    assert!(
+        matches!(headers, Some(..=30)),
+        "the late header is in the header chain: {headers:?}"
     );
 }
 
@@ -1749,6 +1754,21 @@ fn the_driver_queue_has_a_bound_for_each_peer() {
         false,
     );
     assert_eq!(queue.len(), crate::sync::MAX_QUEUED_PER_PEER + 1);
+}
+
+/// The `[metrics]` section of a node whose test reads its metrics.
+const METRICS: &str = "[metrics]\nendpoint_addr = \"127.0.0.1:0\"\n";
+
+/// Waits, with the bound of `wait_for`, until the tick of the block synchronization of
+/// `node` reported a header chain of `height`. The report sets the metric
+/// `hayai_sync_header_height` and then writes the `sync_progress` row in one call, and
+/// the shutdown of the node ends that call. Without this wait a node that reaches its tip
+/// and stops in less than one tick has no report.
+fn wait_sync_report(node: &Node, height: u32) {
+    wait_for(
+        &format!("a sync report at the header height {height}"),
+        || metric(node, "hayai_sync_header_height") == f64::from(height),
+    );
 }
 
 /// The value of the metric `name` of `node`.
@@ -2633,13 +2653,7 @@ mod slow {
             },
         );
 
-        let x = start_with(
-            dir.path(),
-            "x",
-            true,
-            false,
-            "[metrics]\nlisten_addr = \"127.0.0.1:0\"\n",
-        );
+        let x = start_with(dir.path(), "x", true, false, METRICS);
         x.relay
             .connect(silent.addr)
             .expect("x dials the silent peer");
@@ -2650,7 +2664,7 @@ mod slow {
         wait_tip(&x, tip);
         assert_eq!(metric(&x, "hayai_sync_bodies_withheld"), 1.0);
         assert_eq!(metric(&x, "hayai_sync_withheld_chains_total"), 1.0);
-        assert_eq!(metric(&x, "hayai_sync_header_height"), 120.0);
+        wait_sync_report(&x, 120);
         // The honest peer has no score and no stall.
         let honest = x
             .relay

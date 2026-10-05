@@ -1,0 +1,126 @@
+#cloud-config
+# Rendered by main.tf for machine A (role zakurad) and machine B (role hayaid). First
+# boot: install Docker, then race-bootstrap.service mounts the data volume on
+# /var/lib/docker, clones the sources, builds the image of the role and starts
+# node-exporter. race-start.service starts the node at the start time, with
+# docker/race/compose.node.yml.
+
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - docker-buildx
+  - git
+  - chrony
+
+write_files:
+  - path: /usr/local/sbin/race-bootstrap
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # Data volume (gp3), formatted on first use and mounted on /var/lib/docker.
+      dev=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}
+      for _ in $(seq 1 120); do
+        [ -e "$dev" ] && break
+        sleep 5
+      done
+      [ -e "$dev" ] || { echo "race-bootstrap: data volume $dev did not appear" >&2; exit 1; }
+      blkid "$dev" >/dev/null || mkfs.ext4 -L race-data "$dev"
+      if ! grep -q '^LABEL=race-data ' /etc/fstab; then
+        echo 'LABEL=race-data /var/lib/docker ext4 defaults,nofail 0 2' >>/etc/fstab
+      fi
+      if ! mountpoint -q /var/lib/docker; then
+        systemctl stop docker.socket docker.service
+        mkdir -p /var/lib/docker
+        mount /var/lib/docker
+        systemctl start docker.service
+      fi
+
+      # The race files, and the source of hayaid on machine B.
+      install -d -m 0755 /opt/race
+      if [ ! -d /opt/race/hayai/.git ]; then
+        git clone '${hayai_repo}' /opt/race/hayai
+      fi
+      git -C /opt/race/hayai checkout --detach '${hayai_ref}'
+
+      # The image of the role.
+      if [ '${role}' = zakurad ]; then
+        if [ ! -d /opt/race/zakura/.git ]; then
+          git clone '${zakura_repo}' /opt/race/zakura
+        fi
+        git -C /opt/race/zakura checkout --detach '${zakura_ref}'
+        revision=$(git -C /opt/race/zakura rev-parse HEAD)
+        docker build -t '${image}' -f /opt/race/zakura/docker/Dockerfile --target runtime \
+          --build-arg "SHORT_SHA=$${revision:0:8}" \
+          --label "org.opencontainers.image.revision=$revision" /opt/race/zakura
+      else
+        revision=$(git -C /opt/race/hayai rev-parse HEAD)
+        docker build -t '${image}' -f /opt/race/hayai/docker/Dockerfile \
+          --build-arg CRYPTO_BACKEND=zakura \
+          --label "org.opencontainers.image.revision=$revision" /opt/race/hayai
+      fi
+
+      cd /opt/race/hayai/docker/race
+      printf '%s\n' 'RACE_ZAKURA_IMAGE=zakurad:race' 'RACE_HAYAI_IMAGE=hayaid:race' \
+        'RACE_CPUS=${node_cpus}' 'RACE_MEMORY=${node_memory}' >.env
+      docker compose -f compose.node.yml up -d node-exporter
+      touch /var/lib/race-bootstrap.done
+
+  - path: /usr/local/sbin/race-start
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Starts the node of this machine at the start time of the race, or when the
+      # bootstrap is done after that time. /var/log/race-start.log records both times.
+      set -euo pipefail
+      planned=$(date -u -d '${start_at} UTC' +%s)
+      while [ ! -e /var/lib/race-bootstrap.done ] || [ "$(date +%s)" -lt "$planned" ]; do
+        sleep 1
+      done
+      actual=$(date +%s)
+      cd /opt/race/hayai/docker/race
+      {
+        echo "profile=${role}"
+        echo "planned_start_epoch=$planned"
+        echo "actual_start_epoch=$actual"
+        echo "late_seconds=$((actual - planned))"
+        echo "image_id=$(docker image inspect -f '{{.Id}}' '${image}')"
+        echo "image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' '${image}')"
+      } >/var/log/race-start.log
+      docker compose -f compose.node.yml --profile '${role}' up -d '${role}'
+      touch /var/lib/race-start.done
+
+  - path: /etc/systemd/system/race-bootstrap.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=sync race first-boot setup (data volume, sources, image of ${role})
+      After=network-online.target docker.service
+      Wants=network-online.target
+      ConditionPathExists=!/var/lib/race-bootstrap.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/race-bootstrap
+      TimeoutStartSec=infinity
+
+  - path: /etc/systemd/system/race-start.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=sync race start of ${role} at ${start_at} UTC
+      After=network-online.target docker.service chrony.service
+      # The node starts one time. A node that stops stays stopped.
+      ConditionPathExists=!/var/lib/race-start.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/race-start
+      TimeoutStartSec=infinity
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, start, --no-block, race-bootstrap.service]
+  - [systemctl, start, --no-block, race-start.service]

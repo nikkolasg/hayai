@@ -86,6 +86,42 @@ pub struct RecordLog {
     ends: Vec<u64>,
 }
 
+/// The payloads of the records of `bytes`, oldest first, the end offset of each record,
+/// and whether a torn record follows the last one.
+#[allow(clippy::type_complexity)]
+fn scan(bytes: &[u8], path: &Path) -> Result<(Vec<Vec<u8>>, Vec<u64>, bool), PersistError> {
+    let mut records = Vec::new();
+    let mut ends = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let Some(header) = bytes.get(pos..pos + RECORD_HEADER) else {
+            return Ok((records, ends, true));
+        };
+        let word = |i: usize| u32::from_le_bytes(header[i..i + 4].try_into().expect("4"));
+        if word(0) != RECORD_MAGIC {
+            return corrupt(format!("{}: bad record magic at {pos}", path.display()));
+        }
+        let len = word(4) as usize;
+        let end = pos + RECORD_HEADER + len;
+        let Some(payload) = bytes.get(pos + RECORD_HEADER..end) else {
+            return Ok((records, ends, true));
+        };
+        if crc32c::crc32c(payload) != word(8) {
+            if end == bytes.len() {
+                return Ok((records, ends, true));
+            }
+            return corrupt(format!(
+                "{}: record at {pos} fails its checksum",
+                path.display()
+            ));
+        }
+        records.push(payload.to_vec());
+        ends.push(end as u64);
+        pos = end;
+    }
+    Ok((records, ends, false))
+}
+
 impl RecordLog {
     /// Opens `path`, creating it when it does not exist. Returns the log and the payloads
     /// of its records, oldest first.
@@ -99,42 +135,11 @@ impl RecordLog {
             .map_err(io(path))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).map_err(io(path))?;
-        let mut records = Vec::new();
-        let mut ends = Vec::new();
-        let mut pos = 0usize;
-        let mut torn = false;
-        while pos < bytes.len() {
-            let Some(header) = bytes.get(pos..pos + RECORD_HEADER) else {
-                torn = true;
-                break;
-            };
-            let word = |i: usize| u32::from_le_bytes(header[i..i + 4].try_into().expect("4"));
-            if word(0) != RECORD_MAGIC {
-                return corrupt(format!("{}: bad record magic at {pos}", path.display()));
-            }
-            let len = word(4) as usize;
-            let end = pos + RECORD_HEADER + len;
-            let Some(payload) = bytes.get(pos + RECORD_HEADER..end) else {
-                torn = true;
-                break;
-            };
-            if crc32c::crc32c(payload) != word(8) {
-                if end == bytes.len() {
-                    torn = true;
-                    break;
-                }
-                return corrupt(format!(
-                    "{}: record at {pos} fails its checksum",
-                    path.display()
-                ));
-            }
-            records.push(payload.to_vec());
-            ends.push(end as u64);
-            pos = end;
-        }
+        let (records, ends, torn) = scan(&bytes, path)?;
+        let pos = ends.last().copied().unwrap_or(0);
         if torn {
             tracing::warn!(path = %path.display(), offset = pos, "torn last record cut");
-            file.set_len(pos as u64).map_err(io(path))?;
+            file.set_len(pos).map_err(io(path))?;
             file.sync_all().map_err(io(path))?;
         }
         Ok((
@@ -545,6 +550,19 @@ impl StateLog {
         dir.join(Self::FILE).exists()
     }
 
+    /// The network and the height of the newest complete record of the log in `dir`. The
+    /// function does not change the file, so it is safe while a node runs on `dir`.
+    pub fn newest(dir: &Path) -> Result<(NetworkKind, u32), PersistError> {
+        let path = dir.join(Self::FILE);
+        let bytes = std::fs::read(&path).map_err(io(&path))?;
+        let (records, _, _) = scan(&bytes, &path)?;
+        let Some(newest) = records.last() else {
+            return corrupt(format!("{} holds no start record", path.display()));
+        };
+        let record = StateRecord::decode(newest)?;
+        Ok((record.network, record.base.height))
+    }
+
     /// Creates the log with the start record. The file must not exist.
     pub fn create(dir: &Path, start: &StateRecord) -> Result<Self, PersistError> {
         let path = dir.join(Self::FILE);
@@ -706,6 +724,32 @@ mod tests {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/hayaid-persist");
         std::fs::create_dir_all(&base).expect("scratch base");
         tempfile::tempdir_in(base).expect("scratch dir")
+    }
+
+    /// `StateLog::newest` reads the height of the newest complete record and leaves a torn
+    /// record in the file.
+    #[test]
+    fn the_newest_record_is_read_without_a_change_of_the_file() {
+        let dir = dir();
+        let Err(PersistError::Io { .. }) = StateLog::newest(dir.path()) else {
+            panic!("a directory without a state log");
+        };
+        let mut log = StateLog::create(dir.path(), &record(0, 1)).expect("create");
+        assert_eq!(
+            StateLog::newest(dir.path()).expect("start record"),
+            (NetworkKind::Regtest, 0)
+        );
+        log.write(&record(8, 2)).expect("write");
+        drop(log);
+        let path = dir.path().join(StateLog::FILE);
+        let mut bytes = std::fs::read(&path).expect("read");
+        bytes.extend_from_slice(&RECORD_MAGIC.to_le_bytes());
+        std::fs::write(&path, &bytes).expect("torn record");
+        assert_eq!(
+            StateLog::newest(dir.path()).expect("newest record"),
+            (NetworkKind::Regtest, 8)
+        );
+        assert_eq!(std::fs::read(&path).expect("read"), bytes);
     }
 
     #[test]

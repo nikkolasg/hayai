@@ -1151,6 +1151,9 @@ impl Sync {
         self.metrics
             .sync_requests_in_flight
             .set(f64::from(progress.in_flight));
+        self.metrics
+            .sync_downloads_in_flight
+            .set(f64::from(progress.in_flight));
         self.metrics.sync_held_bytes.set(progress.held_bytes as f64);
         // One row for each second in which a value changed.
         let recent = match self.progress {

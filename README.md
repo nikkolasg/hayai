@@ -11,6 +11,8 @@ Everything above `hayai-crypto` builds on either backend.
 - `docs/report.html` — benchmarks against Zakura. `scripts/report.py` renders it from `bench-results/`.
 - `docs/hayaid.md` — the node binary: modes, configuration, traces, metrics, limits.
 - `docs/install.md` — installation with Docker Compose, systemd or Terraform on AWS; checks, upgrade, backup.
+- `docs/zakura-compat.md` — hayaid for an operator of zakurad: command line, each configuration key, metrics.
+- `docs/sync-race.md` — runbook of the sync race of zakurad and hayaid on Testnet.
 - `docs/deploy.md` — the deployment, observability and CI files.
 
 ## Quick start

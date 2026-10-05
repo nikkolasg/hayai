@@ -1,0 +1,50 @@
+#cloud-config
+# Rendered by main.tf for machine C. First boot: install Docker, clone the race files and
+# start Prometheus and Grafana with docker/race/compose.monitor.yml.
+
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+
+write_files:
+  - path: /usr/local/sbin/race-monitor
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      install -d -m 0755 /opt/race
+      if [ ! -d /opt/race/hayai/.git ]; then
+        git clone '${hayai_repo}' /opt/race/hayai
+      fi
+      git -C /opt/race/hayai checkout --detach '${hayai_ref}'
+      cd /opt/race/hayai/docker/race
+      printf '%s\n' 'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env
+      # Grafana admin password, generated once.
+      install -d -m 0755 secrets
+      if [ ! -f secrets/grafana_admin_password ]; then
+        (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
+      fi
+      docker compose -f compose.monitor.yml up -d
+
+  - path: /etc/systemd/system/race-monitor.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=sync race monitoring (Prometheus and Grafana)
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/race-monitor
+      TimeoutStartSec=infinity
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, --no-block, race-monitor.service]

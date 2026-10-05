@@ -1025,6 +1025,32 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
   (no RPC of zakurad or zebrad gives the Sprout tree); a penalty-free request to a peer
   whose chain is not known.
 
+## 2026-10-05 — Setup of Zakura: command line, configuration keys, metrics, sync race (hayai-90w, hayai-hg9)
+
+- One name for one setting: where Zakura has the concept, the configuration of hayaid has
+  the section, the key and the value format of `zakurad`, and the old name is gone.
+  `docs/zakura-compat.md` has the table of each key.
+- A key of `zakurad` that hayaid does not use is not an unknown key. The parser takes it
+  out before serde reads the file: a warning for a tuning key, an error for a key of the
+  consensus rules, the network or a data location unless its value is the behaviour of
+  hayaid. One report has all lines.
+- hayaid reads no `ZAKURA_*` variable. It reads `XDG_CONFIG_HOME` and `HOME` for the
+  default configuration path only, which is the rule of `zakurad`.
+- A metric has a name of Zakura only with the meaning of Zakura. Lesson from a run of
+  the real zakurad: its Docker build exports no `process_*` metric, and its duration
+  metrics are summaries, not histograms. Read the `/metrics` output of the reference, not
+  only its dashboards.
+- The race files use the host network for each container and no mount of the host root:
+  node-exporter reads the data file system through the two data volumes.
+- Lesson: a test must not assert on a row or a metric that only a timer writes. The
+  `sync_progress` row comes from the tick of the block synchronization; a node that
+  reaches its tip and stops in less than one tick has none. The tests wait, with a bound,
+  for the metric that the same report sets (`wait_sync_report`).
+- Lesson: bash starts a background job with SIGINT ignored, and a Python child keeps
+  that until it sets its handler. Stop such a job with SIGTERM and a bound.
+- Not done: a run on the public Testnet, `terraform apply`, a run of
+  `scripts/race_deploy.sh` against real hosts.
+
 ## 2026-10-05 — NU7 rule set (hayai-sm3)
 
 - NU7 is one more rule set (`rules::nu7`) and exists only when the crypto backend has the

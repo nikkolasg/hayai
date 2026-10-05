@@ -7,7 +7,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use hayai_consensus::{rules_at, Network};
@@ -21,6 +21,7 @@ use hayai_wire::RawBlock;
 use serde_json::{json, Value};
 
 use crate::feed::{TemplateFeed, Wake};
+use crate::metrics::{Registry, DURATION_BUCKETS};
 use crate::template::block_template;
 
 /// JSON-RPC and zcashd error codes that this module uses.
@@ -218,7 +219,7 @@ pub trait NodeQuery: Send + Sync {
     fn stop(&self);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RpcConfig {
     /// The network: with a height it gives the rule set, and thus the consensus branch id,
     /// of a template or of a submitted block.
@@ -228,6 +229,10 @@ pub struct RpcConfig {
     /// Minimum time that a long poll waits before it answers a transaction-set-only change
     /// (zcashd checks the mempool every 10 s; Zakura every 5 s).
     pub long_poll_set_delay: Duration,
+    /// The registry of the request metrics, which have the names and the labels of
+    /// Zakura: `rpc_requests_total`, `rpc_request_duration_seconds`, `rpc_errors_total`
+    /// and `rpc_active_requests`. `None`: the server counts no request.
+    pub metrics: Option<Arc<Registry>>,
 }
 
 impl RpcConfig {
@@ -236,7 +241,45 @@ impl RpcConfig {
             network,
             long_poll_max: Duration::from_secs(60),
             long_poll_set_delay: Duration::from_secs(5),
+            metrics: None,
         }
+    }
+}
+
+/// Counts one request in `registry`. `method` is the name in the request, or `unknown`
+/// for a method that the server does not have: the number of series has a bound.
+fn count_request(registry: &Registry, method: &str, elapsed: Duration, error: Option<i64>) {
+    let method = match error {
+        Some(codes::METHOD_NOT_FOUND) => "unknown",
+        _ => method,
+    };
+    let status = match error {
+        Some(_) => "error",
+        None => "success",
+    };
+    registry
+        .counter(
+            "rpc_requests_total",
+            "RPC requests by method and status.",
+            &[("method", method), ("status", status)],
+        )
+        .inc();
+    registry
+        .histogram(
+            "rpc_request_duration_seconds",
+            "Time from the dispatch of an RPC request to its result.",
+            &[("method", method)],
+            &DURATION_BUCKETS,
+        )
+        .observe_duration(elapsed);
+    if let Some(code) = error {
+        registry
+            .counter(
+                "rpc_errors_total",
+                "RPC errors by method and JSON-RPC error code.",
+                &[("method", method), ("error_code", &code.to_string())],
+            )
+            .inc();
     }
 }
 
@@ -355,27 +398,19 @@ impl Rpc {
                 return error_response(&id, v2, codes::INVALID_REQUEST, "params must be an array")
             }
         };
-        let result = match method.as_str() {
-            "getblocktemplate" => self.get_block_template(&params),
-            "submitblock" => self.submit_block(&params),
-            "getblockcount" => Ok(json!(self.tip.tip().0)),
-            "getbestblockhash" => Ok(json!(self.tip.tip().1.to_string())),
-            "generate" => self.generate(&params),
-            "getblockhash"
-            | "getblock"
-            | "getblockchaininfo"
-            | "z_gettreestate"
-            | "getrawmempool"
-            | "sendrawtransaction"
-            | "sendprivatetransaction" => self.query(method, &params),
-            other => match (crate::info::METHODS.contains(&other), &self.query) {
-                (true, Some(query)) => self.info(query.as_ref(), other, &params),
-                _ => Err(err(
-                    codes::METHOD_NOT_FOUND,
-                    format!("Method not found: {other}"),
-                )),
-            },
-        };
+        let started = Instant::now();
+        let active = self.config.metrics.as_ref().map(|registry| {
+            registry.gauge("rpc_active_requests", "RPC requests in progress.", &[])
+        });
+        if let Some(active) = &active {
+            active.add(1.0);
+        }
+        let result = self.dispatch(method, &params);
+        if let (Some(registry), Some(active)) = (&self.config.metrics, &active) {
+            let error = result.as_ref().err().map(|e| e.code);
+            count_request(registry, method, started.elapsed(), error);
+            active.add(-1.0);
+        }
         match result {
             Ok(result) => {
                 if v2 {
@@ -385,6 +420,30 @@ impl Rpc {
                 }
             }
             Err(e) => error_response(&id, v2, e.code, e.message),
+        }
+    }
+
+    fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, RpcError> {
+        match method {
+            "getblocktemplate" => self.get_block_template(params),
+            "submitblock" => self.submit_block(params),
+            "getblockcount" => Ok(json!(self.tip.tip().0)),
+            "getbestblockhash" => Ok(json!(self.tip.tip().1.to_string())),
+            "generate" => self.generate(params),
+            "getblockhash"
+            | "getblock"
+            | "getblockchaininfo"
+            | "z_gettreestate"
+            | "getrawmempool"
+            | "sendrawtransaction"
+            | "sendprivatetransaction" => self.query(method, params),
+            other => match (crate::info::METHODS.contains(&other), &self.query) {
+                (true, Some(query)) => self.info(query.as_ref(), other, params),
+                _ => Err(err(
+                    codes::METHOD_NOT_FOUND,
+                    format!("Method not found: {other}"),
+                )),
+            },
         }
     }
 
