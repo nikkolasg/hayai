@@ -62,22 +62,24 @@ rpc() { # rpc NAME METHOD PARAMS_JSON -> prints the result as JSON
 hayaid_config() { # NAME P2P RPC METRICS PEERS PRODUCE COMPACT
   cat >"${WORK}/$1.toml" <<EOF
 [network]
-network = "regtest"
+network = "Regtest"
 listen_addr = "127.0.0.1:$2"
 peers = [$5]
 compact_relay = $7
 
 [state]
-data_dir = "${WORK}/$1-data"
+cache_dir = "${WORK}/$1-data"
 
 [rpc]
 listen_addr = "127.0.0.1:$3"
 
 [metrics]
-listen_addr = "127.0.0.1:$4"
+endpoint_addr = "127.0.0.1:$4"
+
+[network.zakura]
+trace_dir = "${WORK}/$1-trace"
 
 [trace]
-dir = "${WORK}/$1-trace"
 node = "$1"
 
 [mining]
@@ -142,7 +144,15 @@ else
   STATUS=1
 fi
 
-kill -INT "${SAMPLER}" 2>/dev/null || true
+# SIGTERM and not SIGINT: bash starts a background job with SIGINT ignored, and Python
+# keeps that state until sample_procs.py sets its handler. A SIGINT before that point is
+# lost. The wait has a bound of 5 s; then SIGKILL stops the sampler.
+kill -TERM "${SAMPLER}" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  kill -0 "${SAMPLER}" 2>/dev/null || break
+  sleep 0.1
+done
+kill -KILL "${SAMPLER}" 2>/dev/null || true
 wait "${SAMPLER}" 2>/dev/null || true
 cleanup
 PIDS=()

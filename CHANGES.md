@@ -1025,6 +1025,32 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
   (no RPC of zakurad or zebrad gives the Sprout tree); a penalty-free request to a peer
   whose chain is not known.
 
+## 2026-10-05 — Setup of Zakura: command line, configuration keys, metrics, sync race (hayai-90w, hayai-hg9)
+
+- One name for one setting: where Zakura has the concept, the configuration of hayaid has
+  the section, the key and the value format of `zakurad`, and the old name is gone.
+  `docs/zakura-compat.md` has the table of each key.
+- A key of `zakurad` that hayaid does not use is not an unknown key. The parser takes it
+  out before serde reads the file: a warning for a tuning key, an error for a key of the
+  consensus rules, the network or a data location unless its value is the behaviour of
+  hayaid. One report has all lines.
+- hayaid reads no `ZAKURA_*` variable. It reads `XDG_CONFIG_HOME` and `HOME` for the
+  default configuration path only, which is the rule of `zakurad`.
+- A metric has a name of Zakura only with the meaning of Zakura. Lesson from a run of
+  the real zakurad: its Docker build exports no `process_*` metric, and its duration
+  metrics are summaries, not histograms. Read the `/metrics` output of the reference, not
+  only its dashboards.
+- The race files use the host network for each container and no mount of the host root:
+  node-exporter reads the data file system through the two data volumes.
+- Lesson: a test must not assert on a row or a metric that only a timer writes. The
+  `sync_progress` row comes from the tick of the block synchronization; a node that
+  reaches its tip and stops in less than one tick has none. The tests wait, with a bound,
+  for the metric that the same report sets (`wait_sync_report`).
+- Lesson: bash starts a background job with SIGINT ignored, and a Python child keeps
+  that until it sets its handler. Stop such a job with SIGTERM and a bound.
+- Not done: a run on the public Testnet, `terraform apply`, a run of
+  `scripts/race_deploy.sh` against real hosts.
+
 ## 2026-10-05 — NU7 rule set (hayai-sm3)
 
 - NU7 is one more rule set (`rules::nu7`) and exists only when the crypto backend has the
@@ -1203,3 +1229,80 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
     file first and stop when it is absent.
   - The server reads the body of a request before it answers 401. An answer before the
     read can be lost when the server closes a connection with data that it did not read.
+
+## 2026-10-05 — `tip-height` prints the restart tip (owner decision, hayai-l91)
+
+- `hayaid::node::stored_tip` is the rule of the restart without the validation: best block
+  of the coins store, record of `state.log` for it, then the stored blocks that extend it.
+  `replay` and `stored_tip` share `replay_end` and `stored_child`, and `StateLog::open` and
+  `StateLog::resume_point` share `select`. A change of the restart rule goes into these.
+- Each store has a read that writes nothing: `hayai_coins::stored_best_block` (header of the
+  snapshot and scan of the log, or a read-only open of RocksDB), `BlockStore::open_read_only`.
+- Lessons:
+  - A read-only open of RocksDB 11.8 makes no `LOG` file and takes no `LOCK`. A test that
+    compares the files before and after showed it: no logger option is necessary.
+  - `zakurad tip-height` writes its error to stdout and exits with the status 0, and it does
+    not take `regtest` as a network. hayaid keeps stderr and the status 1.
+
+## 2026-10-05 — Comparison of zakurad and hayaid for each block (race package, version 2)
+
+- `docs/zakura-measurements.md` is the reference for what each node measures. A panel or
+  a table pairs two metrics only when that document gives the verdict CLOSE, and the
+  panel states the difference. A quantity that one node does not measure has no pair.
+- A metric with a name of Zakura must have the definition of Zakura. Three of them did
+  not (`state_finalized_block_height`, `sync_block_verify_duration_seconds`,
+  `sync_downloads_in_flight`), and `mining_template_rebuilt` counted another event.
+  Lesson: read the code point of the Zakura metric before the use of its name.
+- The block clock (`docs/hayaid.md`): one `Instant` for the reception of a block goes
+  with the block from the reader thread or the relay to the commit and to the first
+  template. A trace field and the gauge of the same quantity come from one clock reading,
+  so a test can compare them for equality.
+- Gauges of the last block have the height as a value, never as a label. Prometheus then
+  cannot join two nodes on the height: the dashboard has one panel for each node (Grafana
+  trend panel, X = height), and `scripts/race_blocks.py` makes the joined table.
+- zakurad exports summaries. Only `_sum` and `_count` are comparable with a histogram of
+  hayaid. A rule for "the value of the last block" reads the increase of both over 2
+  samples, one scrape after the commit (`race:contextual_commit_seconds:last`).
+- Lessons:
+  - Prometheus 3 has range windows that are open on the left: `[10s]` at a scrape
+    interval of 5 s has 2 samples, not 3.
+  - A series with one sample for each block needs `last_over_time(...[$__interval])` in a
+    panel. Without it a step above the scrape interval misses most samples.
+  - The Grafana xychart panel showed "Err" for each mapping in a headless browser. The
+    trend panel works with a frame that has one row for each height (join on the time,
+    then group by the height).
+  - zakurad with `[tracing] log_file` writes no log to the output of its container.
+
+## 2026-10-05 — RPC caller of the race (`scripts/race_rpc_caller.py`)
+
+- One Python program (standard library) runs beside each node in a pinned public image:
+  no node image has Python, and a second compose service needs no image build. It reads
+  the RPC address from the configuration of the node and the cookie for each call.
+- The long poll is off by default. Both nodes count the wait of a long poll in
+  `rpc_request_duration_seconds`, so a held long poll makes the dashboard mean useless.
+  `blocks.md` has the client-side mean of the calls without `longpollid` in each case.
+- "Template served" uses the commit time of each machine (trace row of hayaid, log line
+  of zakurad) and the wall clock of that machine. No value crosses two machines.
+- Lessons:
+  - hayaid holds a `getblocktemplate` call only with the capability `longpoll`. With the
+    `longpollid` alone it answers at once: the first caller made 190,000 calls in 50 s.
+    A client loop on a long poll needs a wait when the answer comes back at once.
+  - A wrong cookie: hayaid answers 401, zakurad closes the connection. hayaid removes the
+    cookie file at its stop, zakurad keeps it.
+  - A container that reads a file of mode 0600 of another user needs root with
+    `DAC_READ_SEARCH` only (`cap_drop: ALL`).
+  - Python as process 1 of a container ignores SIGTERM without a handler.
+
+## 2026-10-05 — Header sync: silence and the idle poll (`crates/hayaid/src/sync.rs`)
+
+- Zakura, Zebra and zcashd send no `headers` message when they have no header after the
+  locator. The stall rule of the header sync disconnected each such peer after
+  `header_timeout_ms`, also the only peer of the node.
+- The role of the header sync, with its stall rule, goes only to a peer with evidence of
+  more headers: a reported height above the best header, or a full `headers` message with a
+  new header. Each other peer gets `getheaders` and no role.
+- Idle poll: one `getheaders` to one peer in rotation, with a delay that doubles from
+  `header_poll_ms` to `header_poll_max_ms`. A new block sets the delay back.
+- Lesson: silence is a stall only with evidence that the peer has more than the node. Read
+  what the other implementations send for an empty result before a timeout becomes a
+  penalty.

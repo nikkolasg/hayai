@@ -1,7 +1,8 @@
 # hayai — agent instructions
 
 - Task tracking: `bd` (beads). Run `bd create` for an issue at the start of multi-step work. Run `bd close` when the work is done. Never commit, push or `bd dolt push`: the repository owner commits.
-- Before a commit is proposed, the pre-commit gate must pass: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`. The gate is the full run: it has the comparisons with Zakura and Zebra, hayai-fuzz and the slow tests.
+- During work, run only what the change touches: `cargo fmt --all --check`, clippy on the changed crates, and the tests that were added or changed plus the test targets of the changed files. Do not run the full suite for each change: it takes too long. CI runs the wide set on each push.
+- The full gate (`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --release` on both backends, with the comparisons with Zakura and Zebra, hayai-fuzz and the slow tests) runs once before a release or when the owner asks for it.
 - The CI of each push (`.github/workflows/ci.yml`) runs a smaller set: `cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release -- --skip slow::`, and clippy with the same package set and features. This set builds no zakura-* crate and no zebra-chain.
 - A test that costs much and that a push does not need goes into a module named `slow` (`mod slow { use super::*; ... }`). No other test path can contain `slow::`.
 - `CHANGES.md` records design decisions and lessons (short sections, behaviour-level). `CHANGELOG.md` records user-visible changes in one line each.

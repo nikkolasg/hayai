@@ -63,10 +63,15 @@ fn build_from_scratch(c: &mut Criterion) {
     group.finish();
 }
 
-/// The candidate that arrives in `template/incremental_add`: high fee, no parent.
+/// The candidate that arrives in `template/incremental_add`: no parent, a fee above the
+/// weight ratio cap, and the smallest size of 50 generated candidates. The order is weight
+/// ratio, then size, so this candidate enters a full template.
 fn newcomer() -> Candidate {
-    let mut newcomer = candidates(1, 99).remove(0);
-    newcomer.fee = newcomer.conventional_fee * 10;
+    let mut newcomer = candidates(50, 99)
+        .into_iter()
+        .min_by_key(Candidate::size_bytes)
+        .expect("50 candidates");
+    newcomer.fee = newcomer.conventional_fee * 2 * u64::from(PARAMS.weight_ratio_cap);
     newcomer.weight_ratio = PARAMS.weight_ratio(newcomer.fee, newcomer.conventional_fee);
     newcomer.unpaid_actions = PARAMS.unpaid_actions(newcomer.fee, newcomer.conventional_fee);
     newcomer.depends_on.clear();

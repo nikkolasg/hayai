@@ -9,3 +9,6 @@ target/
 /deploy/terraform/**/.terraform/
 /deploy/terraform/**/terraform.tfvars
 /deploy/terraform/**/*.tfstate*
+/docker/race/secrets/
+/docker/race/.env
+/race-results/

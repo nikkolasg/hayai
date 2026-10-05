@@ -13,7 +13,7 @@ fn the_log_has_no_ansi_codes_when_stderr_is_a_pipe() {
     std::fs::write(
         &config,
         format!(
-            "[network]\nnetwork = \"regtest\"\n[state]\ndata_dir = \"{}\"\n[mining]\nminer_script = \"51\"\n",
+            "[network]\nnetwork = \"Regtest\"\n[state]\ncache_dir = \"{}\"\n[mining]\nminer_script = \"51\"\n",
             dir.path().join("data").display()
         ),
     )
@@ -63,7 +63,7 @@ fn the_stop_method_ends_the_process_cleanly() {
     std::fs::write(
         &config,
         format!(
-            "[network]\nnetwork = \"regtest\"\nseeders = []\n[state]\ndata_dir = \"{}\"\n[rpc]\nlisten_addr = \"127.0.0.1:0\"\n[mining]\nminer_script = \"51\"\n",
+            "[network]\nnetwork = \"Regtest\"\ninitial_testnet_peers = []\n[state]\ncache_dir = \"{}\"\n[rpc]\nlisten_addr = \"127.0.0.1:0\"\n[mining]\nminer_script = \"51\"\n",
             dir.path().join("data").display()
         ),
     )

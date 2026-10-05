@@ -41,6 +41,20 @@ pub use mem::{MemBacking, MemConfig, PersistError, Recovery};
 pub use nullifiers::{NullifierSet, NullifierStore};
 pub use rocks::{Config, RocksBacking};
 
+/// The best block of the coins store in `dir`, of the memory backend or of the RocksDB
+/// backend, read without a write to `dir` and without a load of the coin set. It is the
+/// value that `best_block` gives after an open of the store.
+///
+/// The function is safe while a node has the store open: it gives a best block that the
+/// store had, or an error when the node changes the files during the read.
+pub fn stored_best_block(dir: &std::path::Path) -> Result<Option<BestBlock>, Error> {
+    // The memory backend makes its log at the first open.
+    match dir.join(mem::LOG_FILE).exists() {
+        true => MemBacking::stored_best_block(dir),
+        false => RocksBacking::stored_best_block(dir),
+    }
+}
+
 /// An unspent transparent output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Coin {

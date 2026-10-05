@@ -12,9 +12,20 @@
 //! Header sync. One peer at a time gives the headers of the best chain. The node sends
 //! `getheaders` with the locator of the best header chain. A `headers` message of 160
 //! headers is followed by the next `getheaders`, with the last header first in the locator.
-//! When the peer has no more headers, the node asks each other peer one time. A peer that
-//! does not answer in [`SyncConfig::header_timeout_ms`] is disconnected, and another peer
-//! takes its place. An `inv` with an unknown block hash is followed by `getheaders` to the
+//! When the peer has no more headers, the node asks each other peer one time. Only a peer
+//! with evidence of more headers than the node has takes the role: its reported height is
+//! above the best header, or it sent a full `headers` message with a new header. Such a peer
+//! that does not answer in [`SyncConfig::header_timeout_ms`] is disconnected, and another
+//! peer takes its place. A peer without that evidence gets `getheaders` and no role: Zakura,
+//! Zebra and zcashd send no `headers` message when they have no header after the locator,
+//! so silence is not a stall.
+//!
+//! Idle poll. While no peer has the role, the node sends `getheaders` to one peer at a
+//! time, in rotation. The delay starts at [`SyncConfig::header_poll_ms`] and doubles after
+//! each poll, up to [`SyncConfig::header_poll_max_ms`]. News sets the delay back to the
+//! start value: a new header, an `inv` with an unknown block, a new block of the relay, a
+//! new peer that reports more than the best header. A poll without an answer costs the peer
+//! nothing. An `inv` with an unknown block hash is followed by `getheaders` to the
 //! peer of the `inv`. A hayaid peer announces a block before its own driver has the header,
 //! so the answer can lack the block: the node asks again, at most
 //! [`ANNOUNCE_RETRIES`] times.
@@ -67,6 +78,16 @@ use crate::params::NetParams;
 /// Bodies of the relay that the node holds for blocks that are not on the best header
 /// chain, at most. Above this number the node drops them and records them as missing.
 const MAX_SIDE_BODIES: usize = 64;
+
+/// Default of [`SyncConfig::header_poll_ms`]. The announcements of the peers bring the new
+/// blocks, and the poll finds a block whose announcement did not arrive. 30 s is less than
+/// one half of the block spacing of Mainnet (75 s) and about one block spacing of NU7
+/// (25 s). Zakura starts its tip search again each 45 s.
+pub const HEADER_POLL_MS: u64 = 30_000;
+/// Default of [`SyncConfig::header_poll_max_ms`]: four doublings of [`HEADER_POLL_MS`],
+/// 8 min. On a chain with blocks, each block sets the delay back before it gets there.
+/// The largest delay is for a chain without blocks, where a poll has no result.
+pub const HEADER_POLL_MAX_MS: u64 = 480_000;
 
 /// Times that the node asks the peer of an announced block for its header again.
 const ANNOUNCE_RETRIES: u32 = 5;
@@ -356,6 +377,10 @@ pub struct SyncConfig {
     /// Time without a `headers` message after which the node disconnects the peer of the
     /// header sync.
     pub header_timeout_ms: u64,
+    /// First delay of the idle poll of the header sync.
+    pub header_poll_ms: u64,
+    /// Largest delay of the idle poll of the header sync.
+    pub header_poll_max_ms: u64,
 }
 
 /// A body that waits for the validator.
@@ -363,11 +388,23 @@ pub struct Body {
     pub block: Arc<RawBlock>,
     /// The peer that sent the block, or the local source.
     pub supplier: Source,
+    /// The reception of the block: the arrival of the `block` message of the download
+    /// before its parse, or the arrival of a block of the relay at the driver queue.
+    pub received: Instant,
     /// The relay completed the body. The scheduler did not request it.
     pub relayed: bool,
     /// The block was the best header tip when its body arrived: it goes on to the peers
     /// when the driver checked the body.
     forward: bool,
+}
+
+/// A `block` message of the download.
+struct Arrived {
+    hash: BlockHash,
+    supplier: Source,
+    /// The arrival of the message, before its parse.
+    received: Instant,
+    body: Result<Arc<RawBlock>, BodyError>,
 }
 
 /// A block that the scheduler gave to the validator.
@@ -415,6 +452,8 @@ struct SyncPeer {
 /// progress.
 struct HeaderPeer {
     id: PeerId,
+    /// The peer sent a full `headers` message with a new header: it has more headers.
+    more: bool,
     /// Start of the window.
     since_ms: u64,
     /// Headers that the peer added in the window.
@@ -462,6 +501,14 @@ pub struct Sync {
     delivered: VecDeque<Delivered>,
     header_peer: Option<HeaderPeer>,
     header_timeout_ms: u64,
+    poll_base_ms: u64,
+    poll_max_ms: u64,
+    /// The delay before the last idle poll, or the start value after news.
+    poll_delay_ms: u64,
+    /// The time of the next idle poll.
+    poll_at_ms: u64,
+    /// The peer of the last idle poll.
+    poll_last: Option<PeerId>,
     withheld: Option<Withheld>,
     announced: HashMap<BlockHash, Announced>,
     started: Instant,
@@ -537,6 +584,11 @@ impl Sync {
             delivered: VecDeque::new(),
             header_peer: None,
             header_timeout_ms: config.header_timeout_ms,
+            poll_base_ms: config.header_poll_ms,
+            poll_max_ms: config.header_poll_max_ms,
+            poll_delay_ms: config.header_poll_ms,
+            poll_at_ms: config.header_poll_ms,
+            poll_last: None,
             withheld: None,
             announced: HashMap::new(),
             started: Instant::now(),
@@ -571,7 +623,7 @@ impl Sync {
     fn step_with(
         &mut self,
         event: Event<PeerId>,
-        mut arrived: Option<(BlockHash, Source, Result<Arc<RawBlock>, BodyError>)>,
+        mut arrived: Option<Arrived>,
     ) -> Result<(), NodeError> {
         let (actions, best, block_height) = {
             let chain = self.headers.lock();
@@ -581,7 +633,7 @@ impl Sync {
                 .map_err(|e| fatal("block download", e))?;
             let height = arrived
                 .as_ref()
-                .and_then(|(hash, ..)| chain.entry(hash))
+                .and_then(|arrived| chain.entry(&arrived.hash))
                 .map(|entry| entry.height);
             (actions, chain.best_tip(), height)
         };
@@ -594,7 +646,13 @@ impl Sync {
                     self.relay.request_blocks(peer, &hashes);
                 }
                 Action::Store { hash } => {
-                    let Some((arrived_hash, supplier, body)) = arrived.take() else {
+                    let Some(Arrived {
+                        hash: arrived_hash,
+                        supplier,
+                        received,
+                        body,
+                    }) = arrived.take()
+                    else {
                         return Err(NodeError(format!(
                             "the block download stores {hash} and no block arrived"
                         )));
@@ -618,8 +676,10 @@ impl Sync {
                                         "hash": hash.to_string(),
                                         "bytes": block.bytes.len(),
                                         "source": "download",
+                                        "received_unix_us": crate::node::received_unix_micros(received),
                                     })
                                 });
+                            self.metrics.sync_downloaded_blocks.inc();
                             // A new block at the tip goes on to the peers before its
                             // validation, after the driver checked that the body is the
                             // body of the header ([`Sync::body_checked`]).
@@ -628,6 +688,7 @@ impl Sync {
                                 Body {
                                     block,
                                     supplier,
+                                    received,
                                     relayed: false,
                                     forward: best.hash == hash,
                                 },
@@ -805,25 +866,68 @@ impl Sync {
     }
 
     /// Without a peer of the header sync: the peer with the largest reported height that
-    /// the node did not ask becomes that peer.
+    /// the node did not ask becomes that peer when it reports more than the best header.
+    /// When no such peer reports more, each of them gets one `getheaders` and no role:
+    /// such a peer can have no answer.
     fn start_header_sync(&mut self) {
         let None = self.header_peer else {
             return;
         };
+        let best = self.header_height();
         let next = self
             .peers
             .iter()
             .filter(|(_, peer)| !peer.asked)
             .max_by_key(|(id, peer)| (peer.start_height, std::cmp::Reverse(**id)))
-            .map(|(id, _)| *id);
+            .map(|(id, peer)| (*id, peer.start_height));
+        match next {
+            Some((id, height)) if height > best => {
+                self.header_peer = Some(HeaderPeer {
+                    id,
+                    more: false,
+                    since_ms: self.now_ms,
+                    added: 0,
+                });
+                self.news();
+                self.ask_headers(id, None);
+            }
+            Some(_) => self.finish_header_sync(),
+            None => {}
+        }
+    }
+
+    /// The node learned of a block that it did not have: the idle poll starts again at
+    /// its first delay.
+    fn news(&mut self) {
+        self.poll_delay_ms = self.poll_base_ms;
+        self.poll_at_ms = self.now_ms + self.poll_base_ms;
+    }
+
+    /// The idle poll: without a peer of the header sync, the next peer in rotation gets
+    /// one `getheaders` when the delay passed, and the delay doubles.
+    fn poll_headers(&mut self) {
+        let None = self.header_peer else {
+            // No poll follows the end of an exchange at once.
+            self.poll_at_ms = self.poll_at_ms.max(self.now_ms + self.poll_delay_ms);
+            return;
+        };
+        if self.now_ms < self.poll_at_ms {
+            return;
+        }
+        let after = self.poll_last;
+        let next = self
+            .peers
+            .keys()
+            .filter(|id| Some(**id) > after)
+            .min()
+            .or_else(|| self.peers.keys().min())
+            .copied();
         let Some(id) = next else {
             return;
         };
-        self.header_peer = Some(HeaderPeer {
-            id,
-            since_ms: self.now_ms,
-            added: 0,
-        });
+        self.poll_last = Some(id);
+        self.poll_delay_ms = self.poll_delay_ms.saturating_mul(2).min(self.poll_max_ms);
+        self.poll_at_ms = self.now_ms + self.poll_delay_ms;
         self.ask_headers(id, None);
     }
 
@@ -837,6 +941,10 @@ impl Sync {
             .filter(|(_, peer)| !peer.asked)
             .map(|(id, _)| *id)
             .collect();
+        if !rest.is_empty() {
+            // The next poll does not follow these requests at once.
+            self.poll_at_ms = self.poll_at_ms.max(self.now_ms + self.poll_delay_ms);
+        }
         for id in rest {
             self.ask_headers(id, None);
         }
@@ -914,6 +1022,7 @@ impl Sync {
                 if unknown.is_empty() {
                     return Ok(());
                 }
+                self.news();
                 for hash in unknown {
                     if self.announced.len() < MAX_ANNOUNCED {
                         self.announced.insert(
@@ -944,7 +1053,12 @@ impl Sync {
                         hash,
                         bytes_len,
                     },
-                    Some((hash, peer, body)),
+                    Some(Arrived {
+                        hash,
+                        supplier: peer,
+                        received: at,
+                        body,
+                    }),
                 )
             }
             NetEvent::Garbage { peer } => {
@@ -1006,12 +1120,14 @@ impl Sync {
                     (true, None) => {
                         self.header_peer = Some(HeaderPeer {
                             id,
+                            more: true,
                             since_ms: self.now_ms,
                             added: accepted.added,
                         });
                         self.ask_headers(id, Some(last));
                     }
                     (true, Some(current)) if is_header_peer => {
+                        current.more = true;
                         current.added += accepted.added;
                         self.ask_headers(id, Some(last));
                     }
@@ -1070,6 +1186,7 @@ impl Sync {
             }
         };
         if accepted.added > 0 {
+            self.news();
             self.best_chain_changed()?;
         }
         Ok(())
@@ -1082,26 +1199,40 @@ impl Sync {
     pub fn tick(&mut self) -> Result<(), NodeError> {
         self.settle_clock();
         self.step(Event::Tick)?;
-        // The end of a window: the peer continues when it added the minimum, else it
-        // leaves.
+        // The end of a window: the peer continues when it added the minimum.
         let now = self.now_ms;
-        let stalled = match &mut self.header_peer {
+        let slow = match &mut self.header_peer {
             Some(peer) if now.saturating_sub(peer.since_ms) >= self.header_timeout_ms => {
                 let slow = peer.added < MAX_HEADERS;
                 peer.since_ms = now;
                 peer.added = 0;
-                slow.then_some(peer.id)
+                slow.then_some((peer.id, peer.more))
             }
             _ => None,
         };
-        if let Some(id) = stalled {
-            tracing::info!(%id, "the peer of the header sync does not answer; disconnecting");
-            if let Some(peer) = self.peers.get(&id) {
-                self.relay.misbehaved(peer.source, Misbehaviour::Stall);
+        if let Some((id, more)) = slow {
+            // A stall needs evidence that the peer has more headers than the node. The
+            // node can get the headers that the peer reported from another source in the
+            // window: the peer then has no answer, and it leaves the role without a penalty.
+            let best = self.header_height();
+            let claims_more =
+                matches!(self.peers.get(&id), Some(p) if more || p.start_height > best);
+            match claims_more {
+                true => {
+                    tracing::info!(
+                        %id,
+                        "the peer of the header sync does not answer; disconnecting"
+                    );
+                    if let Some(peer) = self.peers.get(&id) {
+                        self.relay.misbehaved(peer.source, Misbehaviour::Stall);
+                    }
+                    // `PeerDisconnected` selects the next peer.
+                    self.relay.disconnect(id);
+                }
+                false => self.finish_header_sync(),
             }
-            // `PeerDisconnected` selects the next peer.
-            self.relay.disconnect(id);
         }
+        self.poll_headers();
         self.retry_announced();
         self.check_withheld()?;
         self.report();
@@ -1151,6 +1282,9 @@ impl Sync {
         self.metrics
             .sync_requests_in_flight
             .set(f64::from(progress.in_flight));
+        self.metrics
+            .sync_downloads_in_flight
+            .set(f64::from(progress.in_flight) + self.bodies.len() as f64);
         self.metrics.sync_held_bytes.set(progress.held_bytes as f64);
         // One row for each second in which a value changed.
         let recent = match self.progress {
@@ -1181,6 +1315,7 @@ impl Sync {
         &mut self,
         block: Arc<RawBlock>,
         source: Source,
+        received: Instant,
     ) -> Result<Result<(), String>, NodeError> {
         self.settle_clock();
         let hash = block.hash();
@@ -1188,6 +1323,7 @@ impl Sync {
             return Ok(Ok(()));
         }
         let excluded;
+        let mut news = false;
         {
             let mut chain = self.headers.lock();
             let known = chain.entry(&hash);
@@ -1203,7 +1339,7 @@ impl Sync {
                         now_secs(),
                     );
                     match accepted {
-                        Ok(_) => {}
+                        Ok(_) => news = true,
                         Err(error) => match error.reason {
                             RejectReason::Store(e) => return Err(fatal("header log", e)),
                             reason => return Ok(Err(reason.to_string())),
@@ -1215,11 +1351,15 @@ impl Sync {
                 .mark_body_received(&hash)
                 .map_err(|e| fatal("header chain", e))?;
         }
+        if news {
+            self.news();
+        }
         self.bodies.insert(
             hash,
             Body {
                 block,
                 supplier: source,
+                received,
                 relayed: true,
                 forward: false,
             },

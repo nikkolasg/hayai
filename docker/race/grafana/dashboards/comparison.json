@@ -1,0 +1,2030 @@
+{
+  "uid": "race-comparison",
+  "title": "zakurad and hayaid: comparison",
+  "description": "Quantities that have a close meaning on both nodes, each with its difference (docs/sync-race.md, Compared quantities).",
+  "tags": [
+    "hayai",
+    "race"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "zakura",
+        "label": "zakurad (label node)",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(zakura_build_info, node)",
+          "refId": "v"
+        },
+        "refresh": 2,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "hayai",
+        "label": "hayaid (label node)",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(hayai_build_info, node)",
+          "refId": "v"
+        },
+        "refresh": 2,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "start",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "blue",
+        "expr": "race:start_timestamp_seconds * 1000",
+        "useValueForTime": true,
+        "titleFormat": "{{node}}: first scrape",
+        "step": "60s"
+      },
+      {
+        "name": "last checkpoint",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "expr": "race:checkpoint_timestamp_seconds * 1000",
+        "useValueForTime": true,
+        "titleFormat": "{{node}}: last checkpoint",
+        "step": "60s"
+      },
+      {
+        "name": "tip",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "iconColor": "green",
+        "expr": "race:tip_timestamp_seconds * 1000",
+        "useValueForTime": true,
+        "titleFormat": "{{node}}: tip",
+        "step": "60s"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Sync",
+      "collapsed": false,
+      "panels": [],
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Time to the last checkpoint",
+      "description": "CLOSE. Seconds from the first scrape of the node to the last checkpoint of the network (race:last_checkpoint_height). Resolution 5 s.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:seconds_to_checkpoint{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:seconds_to_checkpoint{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "noValue": "not yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Time to the tip",
+      "description": "CLOSE. Seconds from the first scrape to the first time that the block height is 2 blocks or less below the reference: the highest of the header chain of hayaid and of the network tip that zakurad estimates. One reference for both nodes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:seconds_to_tip{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:seconds_to_tip{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "noValue": "not yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Block height",
+      "description": "CLOSE. zcash_chain_verified_block_height on both nodes: the tip after a commit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:block_height{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:block_height{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Blocks behind the other node",
+      "description": "From the two block heights.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "scalar(max(race:block_height)) - race:block_height{node=~\"$zakura\", job=\"zakurad\"}",
+          "legendFormat": "zakurad",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "scalar(max(race:block_height)) - race:block_height{node=~\"$hayai\", job=\"hayaid\"}",
+          "legendFormat": "hayaid",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block height",
+      "description": "CLOSE. zcash_chain_verified_block_height. zakurad sets it after the commit response; hayaid sets it at the commit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:block_height{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:block_height{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks for each second",
+      "description": "CLOSE. rate(zcash_chain_verified_block_total[1m]) on both nodes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:blocks_per_second{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:blocks_per_second{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Height on disk",
+      "description": "CLOSE. state_finalized_block_height. zakurad: the newest block in RocksDB. hayaid: the newest block whose coins are in the coins store on disk (a flush each 100 blocks by default); its block files have each block.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "state_finalized_block_height{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "state_finalized_block_height{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Peers",
+      "description": "CLOSE. zcash_net_peers. zakurad: ready and not ready peers of the legacy stack. hayaid: peers after the handshake.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:peers{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:peers{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P bytes received",
+      "description": "CLOSE. rate(zcash_net_in_bytes_total[1m]). zakurad counts the header and the body of each message at the codec; hayaid counts the bytes that the reader took from the socket.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:net_in_bytes_per_second{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:net_in_bytes_per_second{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P bytes sent",
+      "description": "CLOSE. rate(zcash_net_out_bytes_total[1m]). zakurad counts at the codec; hayaid counts each frame written in full.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:net_out_bytes_per_second{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:net_out_bytes_per_second{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Download queue",
+      "description": "CLOSE. sync_downloads_in_flight. zakurad: tasks of the legacy syncer in download or in verification. hayaid: requests without an answer plus downloaded blocks that wait for the validator.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sync_downloads_in_flight{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sync_downloads_in_flight{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mempool size",
+      "description": "CLOSE. zcash_mempool_size_transactions. hayaid: the prepared store, updated at each commit and each second.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "zcash_mempool_size_transactions{job=\"zakurad\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "zcash_mempool_size_transactions{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      }
+    },
+    {
+      "type": "row",
+      "title": "Tip, for each block",
+      "collapsed": false,
+      "panels": [],
+      "id": 14,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Contextual commit time against block height: zakurad",
+      "description": "CLOSE. One point for each block: race:contextual_commit_seconds:last against race:contextual_commit_block_height. zakurad: state_contextual_total_duration_seconds (initial contextual checks and the commit to the non-finalized state, with a clone of the chain). Two blocks in one scrape interval of 5 s give one point with their mean. A panel has one X field, and each node has its own height series: one panel for each node. The panel against time below has both nodes. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "X",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_block_height{job=\"zakurad\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "block height"
+        },
+        {
+          "refId": "Y0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"zakurad\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "zakurad"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "block height": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "zakurad": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "zakurad (last)": "zakurad"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "block height",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block height"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "block height",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Contextual commit time against block height: hayaid",
+      "description": "CLOSE. One point for each block: race:contextual_commit_seconds:last against race:contextual_commit_block_height. hayaid: hayai_contextual_commit_duration_seconds (stages context, trees, history and the push of the layer). Two blocks in one scrape interval of 5 s give one point with their mean. A panel has one X field, and each node has its own height series: one panel for each node. The panel against time below has both nodes. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "X",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_block_height{job=\"hayaid\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "block height"
+        },
+        {
+          "refId": "Y0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"hayaid\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "block height": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "hayaid": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "hayaid (last)": "hayaid"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "block height",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block height"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "block height",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Contextual commit time against time",
+      "description": "CLOSE. The same series as the panel on the left, against the time of the scrape after the commit. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"zakurad\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"hayaid\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Block received to committed against block height: hayaid only",
+      "description": "hayaid only: zakurad has no such metric. hayai_last_block_received_to_committed_seconds against hayai_last_block_height. The value of zakurad comes from its trace and its log, in blocks.csv of `scripts/race_deploy.sh collect` (verdict CLOSE, differences in the table below).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "X",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hayai_last_block_height{job=\"hayaid\", node=~\"$hayai\"} > 0",
+          "legendFormat": "block height"
+        },
+        {
+          "refId": "Y0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hayai_last_block_received_to_committed_seconds{job=\"hayaid\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "block height": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "hayaid": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "hayaid (last)": "hayaid"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "block height",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block height"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "block height",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reuse of the mempool verification",
+      "description": "CLOSE. race:verification_reuse:ratio5m. zakurad: hits of the verification cache of shielded bundles / lookups, for blocks and mempool. hayaid: transactions of blocks found in the prepared store / transactions of blocks. Unit: bundle against transaction.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:verification_reuse:ratio5m{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:verification_reuse:ratio5m{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      }
+    },
+    {
+      "type": "table",
+      "title": "Last blocks: contextual commit time",
+      "description": "CLOSE. One row for each scrape in which a node has a value, newest first. The rows are joined on the scrape time, not on the block height: the two height columns show when the nodes are at different blocks. Grafana cannot join two nodes on a value, and the height is not a label. The table that is joined on the height is blocks.csv of `collect`. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_block_height{job=\"zakurad\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "zakurad height"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"zakurad\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "zakurad contextual commit"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_block_height{job=\"hayaid\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "hayaid height"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race:contextual_commit_seconds:last{job=\"hayaid\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "hayaid contextual commit"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Time",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 100
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "zakurad contextual commit"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hayaid contextual commit"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 20,
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 65
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC mean service time: getblocktemplate",
+      "description": "CLOSE. race:rpc_request_seconds:mean5m. Data only when a client calls the method. Without longpollid, zakurad builds the template in the call and hayaid returns the template that it built at the tip change. A call with longpollid contains the wait.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$zakura\", method=\"getblocktemplate\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$hayai\", method=\"getblocktemplate\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 74
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC mean service time: sendrawtransaction",
+      "description": "CLOSE. Both calls wait for the result of the mempool admission. hayaid includes the announcement to the relay.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$zakura\", method=\"sendrawtransaction\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$hayai\", method=\"sendrawtransaction\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 22,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 74
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC mean service time: other methods",
+      "description": "CLOSE. zakurad parses the parameters inside the interval; hayaid parses them before.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$zakura\", method!~\"getblocktemplate|sendrawtransaction\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad {{method}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:rpc_request_seconds:mean5m{node=~\"$hayai\", method!~\"getblocktemplate|sendrawtransaction\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid {{method}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 74
+      }
+    },
+    {
+      "type": "row",
+      "title": "Resources (node-exporter of each machine; each machine runs one node)",
+      "collapsed": false,
+      "panels": [],
+      "id": 24,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Machine CPU",
+      "description": "race:machine_cpu_utilisation: share of the CPU time that is not idle. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_cpu_utilisation{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_cpu_utilisation{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 83
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Machine memory in use",
+      "description": "race:machine_memory_used_bytes: MemTotal minus MemAvailable. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_memory_used_bytes{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_memory_used_bytes{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 26,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 83
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk in use",
+      "description": "race:machine_disk_used_bytes: used bytes of the file system of the node data, with the image of the node. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_used_bytes{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_used_bytes{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 27,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 91
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk I/O",
+      "description": "race:machine_disk_read_bytes_per_second and race:machine_disk_written_bytes_per_second. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_read_bytes_per_second{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad read"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_written_bytes_per_second{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad written"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_read_bytes_per_second{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid read"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_disk_written_bytes_per_second{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid written"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 28,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 91
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Machine network",
+      "description": "race:machine_network_receive_bytes_per_second and race:machine_network_transmit_bytes_per_second. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_network_receive_bytes_per_second{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad received"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_network_transmit_bytes_per_second{node=~\"$zakura\"} and on (node) zakura_build_info",
+          "legendFormat": "zakurad sent"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_network_receive_bytes_per_second{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid received"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:machine_network_transmit_bytes_per_second{node=~\"$hayai\"} and on (node) hayai_build_info",
+          "legendFormat": "hayaid sent"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 29,
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 99
+      }
+    },
+    {
+      "type": "row",
+      "title": "Compared quantities",
+      "collapsed": false,
+      "panels": [],
+      "id": 30,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 107
+      }
+    },
+    {
+      "type": "text",
+      "title": "Definition of each compared quantity",
+      "options": {
+        "mode": "markdown",
+        "content": "\nVerdict CLOSE: both nodes measure the same work with the stated difference. No row has the verdict SAME.\nA quantity that only one node measures is not on a comparison panel. Source of each definition: `docs/zakura-measurements.md`.\n\n| Quantity | zakurad | hayaid | Verdict and difference |\n|---|---|---|---|\n| Block height | `zcash_chain_verified_block_height`, set after the commit response | Same name, set at the commit | CLOSE. Same event: the tip after a commit |\n| Blocks for each second | `rate(zcash_chain_verified_block_total[1m])` | Same | CLOSE |\n| Time to the last checkpoint, time to the tip | First evaluation with the height at the checkpoint, or 2 blocks or less below the reference height | Same rule | CLOSE. Resolution 5 s. The reference is one value for both nodes: the highest of the header chain of hayaid and of the estimate of zakurad |\n| Peers | `zcash_net_peers`: ready and not ready peers of the legacy stack | `zcash_net_peers`: peers after the handshake | CLOSE |\n| Height on disk | `state_finalized_block_height`: the newest block in RocksDB | Same name: the newest block whose coins are in the coins store on disk. hayaid also has each block in its block files | CLOSE. hayaid flushes each 100 blocks by default; zakurad writes each finalized block |\n| P2P bytes | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total`: header and body of each message at the codec | Same names: bytes that the reader took from the socket, and bytes of each frame written in full | CLOSE |\n| Download queue | `sync_downloads_in_flight`: tasks in download or in verification | Same name: requests without an answer plus downloaded blocks that wait for the validator | CLOSE |\n| Contextual commit time, for each block | `state_contextual_total_duration_seconds`: initial contextual checks, then the commit to the non-finalized state (transparent spends, anchors, note commitment trees, chain push) | `hayai_contextual_commit_duration_seconds`: stages context, trees, history, then the push of the layer on the chain | CLOSE. The split of the checks between this interval and the earlier validation is not the same on both nodes. zakurad includes a clone of the chain |\n| Block received to committed, for each block | No metric. Trace row `block_request_finish` to the log line `downloaded and verified gossiped block` | `hayai_last_block_received_to_committed_seconds`, trace field `commit_finish.received_to_commit_us` | CLOSE, in the table of `collect` only (`blocks.csv`). Start: zakurad when the peer service returns the decoded block; hayaid at the arrival of the message, before the parse. Stop: zakurad after the commit in memory; hayaid after the write to the block file and the update of the prepared store. The panel here has hayaid only |\n| Reuse of the mempool verification | `zakura_consensus_cache_hit` / (hit + miss): shielded bundles, block and mempool lookups | `hayai_prepared_store_hits_total` / (hits + misses): transactions of blocks | CLOSE. Unit: bundle against transaction. zakurad reuses no script result |\n| Mempool size | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | Same names: the prepared store | CLOSE. hayaid updates the gauges at each commit and each second |\n| RPC mean service time | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. zakurad parses the parameters inside the interval. `getblocktemplate` without `longpollid`: zakurad builds the template in the call; hayaid returns the template that it built at the tip change. A call with `longpollid` contains the wait |\n| CPU, memory, disk, disk I/O, network | node-exporter of the machine of zakurad | node-exporter of the machine of hayaid | Same method. The values are of the machine, which runs one node |\n\nNot compared, because zakurad has no such measurement:\n\n- Block received to block validated (hayai dashboard).\n- Block received to template ready, and tip change to template ready (hayai dashboard). zakurad builds a template only when a `getblocktemplate` request arrives. An external probe is necessary for this comparison (docs/sync-race.md).\n- Script check time, validation stages (hayai dashboard).\n- Header height: zakurad with the legacy stack has no header chain.\n- CPU and memory of the process: zakurad exports no `process_*` metric.\n\nNot compared, because hayaid has no such measurement: wait in the queue of the block writer, checkpoint verifier heights, RocksDB metrics (Zakura dashboard).\n\nNot compared, because the definitions differ: `sync_block_verify_duration_seconds` appears on zakurad only for a block of the legacy syncer and was not seen on a running node; shielded proof time (batch on zakurad, block on hayaid).\n"
+      },
+      "id": 31,
+      "gridPos": {
+        "h": 22,
+        "w": 24,
+        "x": 0,
+        "y": 108
+      }
+    }
+  ]
+}

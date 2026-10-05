@@ -1,0 +1,80 @@
+# promtool test rules tests/race_blocks_test.yml (from docker/race/prometheus).
+#
+# The rules that give one value for each block. The evaluation interval is the scrape
+# interval of prometheus.yml (5 s).
+rule_files:
+  - ../rules/race.yml
+
+evaluation_interval: 5s
+
+tests:
+  # One sample each 5 seconds, as the scrape interval of prometheus.yml. zakurad commits
+  # the block 101 between 10 s and 15 s (0.004 s) and the block 102 between 40 s and 45 s
+  # (0.010 s); its height gauge has the new height one scrape later. hayaid commits the
+  # block 101 between 15 s and 20 s (0.002 s).
+  - interval: 5s
+    input_series:
+      - series: 'state_contextual_total_duration_seconds_sum{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '1 1 1 1.004x5 1.014x5'
+      - series: 'state_contextual_total_duration_seconds_count{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '100 100 100 101x5 102x5'
+      - series: 'zcash_chain_verified_block_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+        values: '100 100 100 100 101x5 102x4'
+      - series: 'hayai_contextual_commit_duration_seconds_sum{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '5 5 5 5 5.002x11'
+      - series: 'hayai_contextual_commit_duration_seconds_count{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '100 100 100 100 101x11'
+      - series: 'zcash_chain_verified_block_height{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '100 100 100 100 101x11'
+      - series: 'zakura_consensus_cache_hit{job="zakurad", node="zakurad", instance="a.example:9999", verifier="halo2"}'
+        values: '0+3x80'
+      - series: 'zakura_consensus_cache_miss{job="zakurad", node="zakurad", instance="a.example:9999", verifier="halo2"}'
+        values: '0+1x80'
+      - series: 'hayai_prepared_store_hits_total{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '0+1x80'
+      - series: 'hayai_prepared_store_misses_total{job="hayaid", node="hayaid", instance="b.example:19101"}'
+        values: '0+1x80'
+    promql_expr_test:
+      # No block in the window: no sample.
+      - expr: race:contextual_commit_seconds:last
+        eval_time: 15s
+        exp_samples: []
+      # The block 101 of zakurad, one scrape after its commit, with its height.
+      - expr: round(race:contextual_commit_seconds:last, 0.0001)
+        eval_time: 20s
+        exp_samples:
+          - labels: '{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 0.004
+      - expr: race:contextual_commit_block_height
+        eval_time: 20s
+        exp_samples:
+          - labels: 'race:contextual_commit_block_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 101
+      # One sample for each block: the block of zakurad is not in the next window.
+      - expr: round(race:contextual_commit_seconds:last, 0.0001)
+        eval_time: 25s
+        exp_samples:
+          - labels: '{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 0.002
+      - expr: race:contextual_commit_block_height
+        eval_time: 25s
+        exp_samples:
+          - labels: 'race:contextual_commit_block_height{job="hayaid", node="hayaid", instance="b.example:19101"}'
+            value: 101
+      - expr: round(race:contextual_commit_seconds:last, 0.0001)
+        eval_time: 50s
+        exp_samples:
+          - labels: '{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 0.01
+      - expr: race:contextual_commit_block_height
+        eval_time: 50s
+        exp_samples:
+          - labels: 'race:contextual_commit_block_height{job="zakurad", node="zakurad", instance="a.example:9999"}'
+            value: 102
+      - expr: race:verification_reuse:ratio5m
+        eval_time: 6m
+        exp_samples:
+          - labels: 'race:verification_reuse:ratio5m{node="zakurad"}'
+            value: 0.75
+          - labels: 'race:verification_reuse:ratio5m{node="hayaid"}'
+            value: 0.5

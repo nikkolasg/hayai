@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
+use hayai_coins::stored_best_block;
 use hayai_coins::{
     BestBlock, Coin, CoinsBacking, Config, Error, FlushGeneration, MemBacking, MemConfig, OutPoint,
     PersistError, Pool, Recovery, RocksBacking,
@@ -548,4 +549,77 @@ fn readers_see_whole_coins_during_write_generation() {
     });
     assert_eq!(backing.coin_count(), span as usize);
     assert_eq!(backing.best_block().expect("best"), Some(best(rounds)));
+}
+
+/// Each file below `dir` with its length, its modification time and its content.
+fn listing(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime, Vec<u8>)> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).expect("read dir") {
+        let path = entry.expect("entry").path();
+        let meta = fs::metadata(&path).expect("metadata");
+        match meta.is_dir() {
+            true => files.extend(listing(&path)),
+            false => files.push((
+                path.clone(),
+                meta.len(),
+                meta.modified().expect("mtime"),
+                fs::read(&path).expect("read"),
+            )),
+        }
+    }
+    files.sort();
+    files
+}
+
+/// `stored_best_block` gives the best block that an open of the store gives, for each
+/// backend, and it changes no file: a torn last record stays in the log of the memory
+/// backend, and the RocksDB store gets no new file.
+#[test]
+fn the_stored_best_block_is_read_without_a_write() {
+    // Memory backend: no generation, then a snapshot at 2, a record of 3 and a torn record.
+    let dir = scratch();
+    drop(open_mem(dir.path()));
+    assert_eq!(stored_best_block(dir.path()).expect("empty store"), None);
+    let (starts, len) = three_generations(dir.path());
+    assert_eq!(stored_best_block(dir.path()).expect("log"), Some(best(3)));
+    let log = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.path().join(LOG))
+        .expect("open log");
+    log.set_len(len - 1).expect("truncate");
+    drop(log);
+    let before = listing(dir.path());
+    assert_eq!(stored_best_block(dir.path()).expect("torn"), Some(best(2)));
+    assert_eq!(listing(dir.path()), before);
+    let (mem, recovery) = open_mem(dir.path());
+    assert_eq!(recovery.torn_tail_bytes, len - 1 - starts[2]);
+    assert_eq!(mem.best_block().expect("best"), Some(best(2)));
+    mem.snapshot().expect("snapshot");
+    assert_eq!(stored_best_block(dir.path()).expect("snap"), Some(best(2)));
+    mem.write_generation(&generation(5, &[(9, 9)], &[], &[]))
+        .expect("write");
+    assert_eq!(stored_best_block(dir.path()).expect("both"), Some(best(5)));
+
+    // RocksDB backend: the generation is in the write-ahead log only.
+    let dir = scratch();
+    let rocks = open_rocks(dir.path());
+    assert_eq!(stored_best_block(dir.path()).expect("empty store"), None);
+    rocks
+        .write_generation(&generation(7, &[(1, 1)], &[], &[]))
+        .expect("write");
+    drop(rocks);
+    let before = listing(dir.path());
+    assert_eq!(stored_best_block(dir.path()).expect("rocks"), Some(best(7)));
+    assert_eq!(listing(dir.path()), before);
+    assert_eq!(
+        open_rocks(dir.path()).best_block().expect("best"),
+        Some(best(7))
+    );
+
+    // A directory without a store is an error, and the read makes no file in it.
+    let dir = scratch();
+    let Err(_) = stored_best_block(dir.path()) else {
+        panic!("a directory without a store");
+    };
+    assert_eq!(listing(dir.path()), Vec::new());
 }

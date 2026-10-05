@@ -86,6 +86,42 @@ pub struct RecordLog {
     ends: Vec<u64>,
 }
 
+/// The payloads of the records of `bytes`, oldest first, the end offset of each record,
+/// and whether a torn record follows the last one.
+#[allow(clippy::type_complexity)]
+fn scan(bytes: &[u8], path: &Path) -> Result<(Vec<Vec<u8>>, Vec<u64>, bool), PersistError> {
+    let mut records = Vec::new();
+    let mut ends = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let Some(header) = bytes.get(pos..pos + RECORD_HEADER) else {
+            return Ok((records, ends, true));
+        };
+        let word = |i: usize| u32::from_le_bytes(header[i..i + 4].try_into().expect("4"));
+        if word(0) != RECORD_MAGIC {
+            return corrupt(format!("{}: bad record magic at {pos}", path.display()));
+        }
+        let len = word(4) as usize;
+        let end = pos + RECORD_HEADER + len;
+        let Some(payload) = bytes.get(pos + RECORD_HEADER..end) else {
+            return Ok((records, ends, true));
+        };
+        if crc32c::crc32c(payload) != word(8) {
+            if end == bytes.len() {
+                return Ok((records, ends, true));
+            }
+            return corrupt(format!(
+                "{}: record at {pos} fails its checksum",
+                path.display()
+            ));
+        }
+        records.push(payload.to_vec());
+        ends.push(end as u64);
+        pos = end;
+    }
+    Ok((records, ends, false))
+}
+
 impl RecordLog {
     /// Opens `path`, creating it when it does not exist. Returns the log and the payloads
     /// of its records, oldest first.
@@ -99,42 +135,11 @@ impl RecordLog {
             .map_err(io(path))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).map_err(io(path))?;
-        let mut records = Vec::new();
-        let mut ends = Vec::new();
-        let mut pos = 0usize;
-        let mut torn = false;
-        while pos < bytes.len() {
-            let Some(header) = bytes.get(pos..pos + RECORD_HEADER) else {
-                torn = true;
-                break;
-            };
-            let word = |i: usize| u32::from_le_bytes(header[i..i + 4].try_into().expect("4"));
-            if word(0) != RECORD_MAGIC {
-                return corrupt(format!("{}: bad record magic at {pos}", path.display()));
-            }
-            let len = word(4) as usize;
-            let end = pos + RECORD_HEADER + len;
-            let Some(payload) = bytes.get(pos + RECORD_HEADER..end) else {
-                torn = true;
-                break;
-            };
-            if crc32c::crc32c(payload) != word(8) {
-                if end == bytes.len() {
-                    torn = true;
-                    break;
-                }
-                return corrupt(format!(
-                    "{}: record at {pos} fails its checksum",
-                    path.display()
-                ));
-            }
-            records.push(payload.to_vec());
-            ends.push(end as u64);
-            pos = end;
-        }
+        let (records, ends, torn) = scan(&bytes, path)?;
+        let pos = ends.last().copied().unwrap_or(0);
         if torn {
             tracing::warn!(path = %path.display(), offset = pos, "torn last record cut");
-            file.set_len(pos as u64).map_err(io(path))?;
+            file.set_len(pos).map_err(io(path))?;
             file.sync_all().map_err(io(path))?;
         }
         Ok((
@@ -531,6 +536,68 @@ pub struct Recovered {
     pub start_height: u32,
 }
 
+/// The block that a restart resumes from, and the first start of the node.
+pub struct ResumePoint {
+    /// Network of the start record.
+    pub network: NetworkKind,
+    /// Height of the start record: the shadow seed height, or 0.
+    pub start_height: u32,
+    pub height: u32,
+    pub hash: BlockHash,
+}
+
+/// Decodes the records of `path` and selects the state of `best`: the newest record at
+/// that block, or the start record when no generation reached the coins store. Returns
+/// the records, which hold a start record, and the index of the selected one.
+///
+/// A selected record of a version before [`RECORD_VERSION_3`] above the genesis block is
+/// [`PersistError::OutdatedRecord`]: its transparent and deferred value pools are zero,
+/// which is the right value only at the genesis block. The node never takes a pool of
+/// zero in place of a value that it does not know.
+fn select(
+    path: &Path,
+    dir: &Path,
+    payloads: &[Vec<u8>],
+    best: Option<BestBlock>,
+) -> Result<(Vec<StateRecord>, usize), PersistError> {
+    let records = payloads
+        .iter()
+        .map(|p| StateRecord::decode(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    if records.is_empty() {
+        return corrupt(format!("{} holds no start record", path.display()));
+    }
+    let selected = match best {
+        None => 0,
+        Some(best) => {
+            let found = records
+                .iter()
+                .rposition(|r| (r.base.height, r.base.hash.0) == (best.height, best.hash));
+            let Some(found) = found else {
+                return corrupt(format!(
+                    "{} has no record of the coins store's best block {} at height {}",
+                    path.display(),
+                    BlockHash(best.hash),
+                    best.height
+                ));
+            };
+            found
+        }
+    };
+    // `decode` accepted the payload, so it has the version byte.
+    let version = payloads[selected][0];
+    let height = records[selected].base.height;
+    if version < RECORD_VERSION_3 && height > 0 {
+        return Err(PersistError::OutdatedRecord {
+            path: path.to_path_buf(),
+            dir: dir.to_path_buf(),
+            height,
+            version,
+        });
+    }
+    Ok((records, selected))
+}
+
 /// `state.log`: the start record, then one record per flush.
 pub struct StateLog {
     log: RecordLog,
@@ -543,6 +610,22 @@ impl StateLog {
 
     pub fn exists(dir: &Path) -> bool {
         dir.join(Self::FILE).exists()
+    }
+
+    /// The state that a restart on `dir` resumes from, for the best block `best` of the
+    /// coins store: the selection of [`StateLog::open`]. The function does not change the
+    /// file, so it is safe while a node runs on `dir`.
+    pub fn resume_point(dir: &Path, best: Option<BestBlock>) -> Result<ResumePoint, PersistError> {
+        let path = dir.join(Self::FILE);
+        let bytes = std::fs::read(&path).map_err(io(&path))?;
+        let (payloads, _, _) = scan(&bytes, &path)?;
+        let (records, selected) = select(&path, dir, &payloads, best)?;
+        Ok(ResumePoint {
+            network: records[0].network,
+            start_height: records[0].base.height,
+            height: records[selected].base.height,
+            hash: records[selected].base.hash,
+        })
     }
 
     /// Creates the log with the start record. The file must not exist.
@@ -562,12 +645,7 @@ impl StateLog {
     /// Opens the log of a data directory and selects the state of `best`: the newest record
     /// at that block, or the start record when no generation reached the coins store.
     /// Records after the selected one are dropped. The network and the mode must be the
-    /// ones of the first start.
-    ///
-    /// A selected record of a version before [`RECORD_VERSION_3`] above the genesis block is
-    /// [`PersistError::OutdatedRecord`]: its transparent and deferred value pools are zero,
-    /// which is the right value only at the genesis block. The node never takes a pool of
-    /// zero in place of a value that it does not know.
+    /// ones of the first start. [`select`] has the selection and its errors.
     pub fn open(
         dir: &Path,
         network: NetworkKind,
@@ -576,13 +654,8 @@ impl StateLog {
     ) -> Result<(Self, Recovered), PersistError> {
         let path = dir.join(Self::FILE);
         let (mut log, payloads) = RecordLog::open(&path)?;
-        let records = payloads
-            .iter()
-            .map(|p| StateRecord::decode(p))
-            .collect::<Result<Vec<_>, _>>()?;
-        let Some(start) = records.first() else {
-            return corrupt(format!("{} holds no start record", path.display()));
-        };
+        let (records, selected) = select(&path, dir, &payloads, best)?;
+        let start = &records[0];
         // A record does not hold the values of a configured Regtest: both are Regtest here.
         if (network_tag(start.network), start.mode) != (network_tag(network), mode) {
             return corrupt(format!(
@@ -593,34 +666,6 @@ impl StateLog {
                 network.name(),
                 mode_name(mode),
             ));
-        }
-        let selected = match best {
-            None => 0,
-            Some(best) => {
-                let found = records
-                    .iter()
-                    .rposition(|r| (r.base.height, r.base.hash.0) == (best.height, best.hash));
-                let Some(found) = found else {
-                    return corrupt(format!(
-                        "{} has no record of the coins store's best block {} at height {}",
-                        path.display(),
-                        BlockHash(best.hash),
-                        best.height
-                    ));
-                };
-                found
-            }
-        };
-        // `decode` accepted the payload, so it has the version byte.
-        let version = payloads[selected][0];
-        let height = records[selected].base.height;
-        if version < RECORD_VERSION_3 && height > 0 {
-            return Err(PersistError::OutdatedRecord {
-                path,
-                dir: dir.to_path_buf(),
-                height,
-                version,
-            });
         }
         log.truncate_to(selected + 1)?;
         let start_height = records[0].base.height;
@@ -706,6 +751,49 @@ mod tests {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/hayaid-persist");
         std::fs::create_dir_all(&base).expect("scratch base");
         tempfile::tempdir_in(base).expect("scratch dir")
+    }
+
+    /// `StateLog::resume_point` selects the record that `StateLog::open` selects, and it
+    /// leaves a torn record and the records after the selected one in the file.
+    #[test]
+    fn the_resume_point_is_read_without_a_change_of_the_file() {
+        let dir = dir();
+        let Err(PersistError::Io { .. }) = StateLog::resume_point(dir.path(), None) else {
+            panic!("a directory without a state log");
+        };
+        let mut log = StateLog::create(dir.path(), &record(0, 1)).expect("create");
+        log.write(&record(8, 2)).expect("write");
+        log.write(&record(9, 3)).expect("write");
+        drop(log);
+        let path = dir.path().join(StateLog::FILE);
+        let mut bytes = std::fs::read(&path).expect("read");
+        bytes.extend_from_slice(&RECORD_MAGIC.to_le_bytes());
+        std::fs::write(&path, &bytes).expect("torn record");
+        let best = |height: u32| {
+            Some(BestBlock {
+                height,
+                hash: [height as u8; 32],
+            })
+        };
+        for (best, height) in [(None, 0), (best(8), 8), (best(9), 9)] {
+            let point = StateLog::resume_point(dir.path(), best).expect("resume point");
+            assert_eq!(
+                (point.network, point.start_height, point.height, point.hash),
+                (
+                    NetworkKind::Regtest,
+                    0,
+                    height,
+                    BlockHash([height as u8; 32])
+                )
+            );
+        }
+        let Err(PersistError::Corrupt(_)) = StateLog::resume_point(dir.path(), best(7)) else {
+            panic!("a best block without a record");
+        };
+        assert_eq!(std::fs::read(&path).expect("read"), bytes);
+        let (_, recovered) =
+            StateLog::open(dir.path(), NetworkKind::Regtest, Mode::Full, best(8)).expect("open");
+        assert_eq!(recovered.base.height, 8);
     }
 
     #[test]

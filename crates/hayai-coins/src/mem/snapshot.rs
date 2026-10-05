@@ -210,17 +210,18 @@ fn decode_nullifiers(
     NullifierShard::from_run(run, hasher)
 }
 
-/// Reads the snapshot at `path`. Every damage is an error: a snapshot is written whole
-/// and renamed into place, so it is never torn.
-pub(super) fn load(path: &Path, hasher: &ahash::RandomState) -> Result<Loaded, PersistError> {
-    let mut file = File::open(path).map_err(io_error(path))?;
-    let mut left = file.metadata().map_err(io_error(path))?.len();
+/// Reads the header of the snapshot `file`: the sequence number and the best block.
+fn read_header(
+    file: &mut File,
+    path: &Path,
+    left: &mut u64,
+) -> Result<(u64, Option<BestBlock>), PersistError> {
     let mut header = [0u8; HEADER_BYTES];
-    if left < HEADER_BYTES as u64 {
+    if *left < HEADER_BYTES as u64 {
         return Err(corrupt(path, "file is shorter than the header"));
     }
     file.read_exact(&mut header).map_err(io_error(path))?;
-    left -= HEADER_BYTES as u64;
+    *left -= HEADER_BYTES as u64;
     let crc = u32::from_le_bytes(header[HEADER_BYTES - 4..].try_into().expect("4 bytes"));
     if header[..8] != MAGIC || crc != crc32c::crc32c(&header[..HEADER_BYTES - 4]) {
         return Err(corrupt(
@@ -247,6 +248,22 @@ pub(super) fn load(path: &Path, hasher: &ahash::RandomState) -> Result<Loaded, P
             format!("{} shards, expected {SHARDS}", field(57)),
         ));
     }
+    Ok((seq, best_block))
+}
+
+/// The sequence number and the best block of the snapshot at `path`, from its header only.
+pub(super) fn header(path: &Path) -> Result<(u64, Option<BestBlock>), PersistError> {
+    let mut file = File::open(path).map_err(io_error(path))?;
+    let mut left = file.metadata().map_err(io_error(path))?.len();
+    read_header(&mut file, path, &mut left)
+}
+
+/// Reads the snapshot at `path`. Every damage is an error: a snapshot is written whole
+/// and renamed into place, so it is never torn.
+pub(super) fn load(path: &Path, hasher: &ahash::RandomState) -> Result<Loaded, PersistError> {
+    let mut file = File::open(path).map_err(io_error(path))?;
+    let mut left = file.metadata().map_err(io_error(path))?.len();
+    let (seq, best_block) = read_header(&mut file, path, &mut left)?;
 
     let mut coins = Vec::with_capacity(SHARDS);
     for first in (0..SHARDS).step_by(BATCH) {

@@ -814,12 +814,14 @@ fn shadow_config(dir: &std::path::Path, rpc: SocketAddr) -> crate::Config {
     crate::Config::parse(&format!(
         r#"
 [network]
-network = "regtest"
+network = "Regtest"
 mode = "shadow"
 [state]
-data_dir = "{data}"
+cache_dir = "{data}"
+[network.zakura]
+trace_dir = "{trace}"
+
 [trace]
-dir = "{trace}"
 node = "shadow"
 [mining]
 miner_script = "51"
@@ -956,7 +958,7 @@ fn a_shadow_start_above_genesis_trusts_no_header() {
             panic!("a shadow configuration");
         };
         shadow.start_height = Some(start_height);
-        config.metrics.listen_addr = Some("127.0.0.1:0".parse().expect("an address"));
+        config.metrics.endpoint_addr = Some("127.0.0.1:0".parse().expect("an address"));
         config
     };
     let mock = mock_for(3);

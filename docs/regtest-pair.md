@@ -25,7 +25,7 @@ Both processes run on this machine, bound to 127.0.0.1. Each data directory is b
 
 | Parameter | hayaid | zakurad |
 |---|---|---|
-| Network | `network = "regtest"` | `network = "Regtest"` |
+| Network | `network = "Regtest"` | `network = "Regtest"` |
 | Genesis block | `029f11d8…e327` (zcashd Regtest) | the same block |
 | Overwinter to Canopy | height 1 | height 1 (default of `new_regtest`) |
 | NU5 | height 1 | `NU5 = 1` |
@@ -39,7 +39,7 @@ Both processes run on this machine, bound to 127.0.0.1. Each data directory is b
 | Coinbase spend | a transparent spend is valid; maturity 100 blocks | the same rules |
 | Time rule | median-time-past + 90 min from height 2 | the same rule |
 | Miner address | `t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh` | the same address |
-| Seeders | `seeders = []` | `initial_mainnet_peers = []`, `initial_testnet_peers = []`, `cache_dir = false`, `p2p_stack = "legacy"`, `[network.zakura] bootstrap_peers = []` |
+| Seeders | `initial_testnet_peers = []` | `initial_mainnet_peers = []`, `initial_testnet_peers = []`, `cache_dir = false`, `p2p_stack = "legacy"`, `[network.zakura] bootstrap_peers = []` |
 | Peer | `peers = ["127.0.0.1:<zakurad port>"]` | none: hayaid dials |
 
 The miner address is the pay-to-script-hash address of the redeem script `OP_TRUE`. The
@@ -88,7 +88,7 @@ addresses = ["t2HifwjUj9uyxr9bknR8LFuQbc98c3vkXtu", "t27eWDgjFYJGVXmzrXeVjnb5J3u
 - The configuration of zakurad has no seeder, no initial peer, no peer cache and no
   bootstrap peer. With `p2p_stack = "legacy"` it starts no Zakura (iroh) endpoint. On
   Regtest Zakura keeps only the loopback addresses of its initial peers.
-- The configuration of hayaid has `seeders = []` and one peer on 127.0.0.1.
+- The configuration of hayaid has `initial_testnet_peers = []` and one peer on 127.0.0.1.
 - Each scenario reads the sockets of the two processes with `ss -H -tunap` before it stops
   them, and fails when one address is not a loopback address. The row
   `sockets on loopback only` of the report has the count.

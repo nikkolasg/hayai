@@ -47,14 +47,14 @@ groups:
       - alert: HayaidValidationSlow
         expr: |
           histogram_quantile(0.9,
-            sum by (le, network) (rate(sync_block_verify_duration_seconds_bucket{job="hayaid", result="success"}[15m]))
+            sum by (le, network) (rate(hayai_validate_stage_duration_seconds_bucket{job="hayaid", stage="total"}[15m]))
           ) > 1
         for: 15m
         labels:
           severity: warning
         annotations:
           summary: "p90 block validation time is above 1 s"
-          description: "p90 of sync_block_verify_duration_seconds is {{ $value }} s on {{ $labels.network }}. At a 25 s spacing, 1 s costs about 4 % of blocks."
+          description: "p90 of hayai_validate_stage_duration_seconds{stage=\"total\"} is {{ $value }} s on {{ $labels.network }}. At a 25 s spacing, 1 s costs about 4 % of blocks."
 
       # One peer is the minimum of shadow mode (the Zakura node). Raise the threshold for
       # a node with more configured peers. A single Regtest node has no peers.

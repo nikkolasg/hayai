@@ -276,31 +276,33 @@ impl Pair {
         let streams_zakura = streams("network.testnet_parameters.funding_streams");
         let hayai = format!(
             r#"[network]
-network = "regtest"
+network = "Regtest"
 listen_addr = "127.0.0.1:{hp2p}"
 peers = ["127.0.0.1:{zp2p}"]
 compact_relay = false
-seeders = []
+initial_testnet_peers = []
 
 [state]
-data_dir = "{dir}/hayai-data"
+cache_dir = "{dir}/hayai-data"
 
 [rpc]
 listen_addr = "127.0.0.1:{hrpc}"
 
 [metrics]
-listen_addr = "127.0.0.1:{hmet}"
+endpoint_addr = "127.0.0.1:{hmet}"
+
+[network.zakura]
+trace_dir = "{dir}/hayai-trace"
 
 [trace]
-dir = "{dir}/hayai-trace"
 node = "hayai"
 
 [mining]
 miner_address = "{MINER_ADDRESS}"
 regtest_produce = true
 
-[log]
-level = "{log}"
+[tracing]
+filter = "{log}"
 
 [regtest]
 activation_heights = {{ nu6 = {nu6}, nu6_1 = {nu6_1}, nu6_2 = {nu6_2}, nu6_3 = {nu6_3}{nu7_hayai} }}

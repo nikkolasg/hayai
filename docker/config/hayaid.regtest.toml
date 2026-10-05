@@ -4,17 +4,16 @@
 # docs/hayaid.md describes each key.
 
 [network]
-network = "regtest"
+network = "Regtest"
 mode = "full"
 listen_addr = "0.0.0.0:18344"
 # Peers to dial, for example a second Regtest node.
 peers = []
 compact_relay = true
-max_peers = 16
 
 [state]
 # A restart resumes from this directory (docs/hayaid.md, Restart).
-data_dir = "/var/lib/hayai"
+cache_dir = "/var/lib/hayai"
 backend = "memory"
 flush_interval_blocks = 100
 snapshot_interval_blocks = 10000
@@ -26,10 +25,12 @@ listen_addr = "0.0.0.0:18345"
 enable_cookie_auth = true
 
 [metrics]
-listen_addr = "0.0.0.0:19101"
+endpoint_addr = "0.0.0.0:19101"
+
+[network.zakura]
+trace_dir = "/var/lib/hayai/traces"
 
 [trace]
-dir = "/var/lib/hayai/traces"
 node = "hayaid"
 
 [mining]
@@ -38,5 +39,5 @@ miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
 # Serve the `generate n` RPC.
 regtest_produce = true
 
-[log]
-level = "info"
+[tracing]
+filter = "info"

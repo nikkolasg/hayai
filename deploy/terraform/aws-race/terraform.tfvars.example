@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and edit. Every variable is described in variables.tf.
+region      = "eu-central-1"
+network     = "mainnet" # or "testnet"
+hayai_repo  = "https://git.example/hayai.git"
+hayai_ref   = "0000000000000000000000000000000000000000" # the commit of hayai for the race
+zakura_repo = "https://git.example/zakura.git"
+
+# Both nodes start at this UTC time. Choose a time 90 minutes or more after the apply.
+start_at = "2026-11-02T14:00:00Z"
+
+# The address that reaches SSH and Grafana.
+admin_cidr = "198.51.100.7/32"
+key_name   = "race-admin"

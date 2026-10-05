@@ -5,9 +5,9 @@
 //! ([`MAX_QUEUED_BYTES`]). A write that makes no progress for [`WRITE_TIMEOUT`] closes
 //! the connection, so a peer that does not read cannot hold the queue.
 
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -24,6 +24,28 @@ use crate::codec::{
 pub const MAX_QUEUED_BYTES: usize = 32 * 1024 * 1024;
 /// Time without progress of a write after which the connection closes.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Bytes of the frames of all connections that share the counters: each byte that a
+/// reader took from its socket, and each byte of a frame that a writer wrote in full.
+#[derive(Default)]
+pub struct ByteCounters {
+    pub received: AtomicU64,
+    pub sent: AtomicU64,
+}
+
+/// Counts the bytes that a reader takes from its socket.
+struct CountedRead {
+    stream: TcpStream,
+    bytes: Arc<ByteCounters>,
+}
+
+impl Read for CountedRead {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.stream.read(buf)?;
+        self.bytes.received.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
 
 /// Sends framed messages to one peer.
 pub trait Transport: Send + Sync {
@@ -73,12 +95,19 @@ pub struct TcpTransport {
     /// Bytes of the frames in `out`.
     queued: Arc<AtomicUsize>,
     closed: AtomicBool,
+    bytes: Arc<ByteCounters>,
 }
 
 impl TcpTransport {
     /// Wraps a connected stream and starts its writer thread. Frames are encoded with
-    /// `network`'s magic; at most `queue_len` messages wait in the outbound queue.
-    pub fn new(stream: TcpStream, network: Network, queue_len: usize) -> io::Result<Arc<Self>> {
+    /// `network`'s magic; at most `queue_len` messages wait in the outbound queue. `bytes`
+    /// counts the bytes of the connection in both directions.
+    pub fn new(
+        stream: TcpStream,
+        network: Network,
+        queue_len: usize,
+        bytes: Arc<ByteCounters>,
+    ) -> io::Result<Arc<Self>> {
         let peer_addr = stream.peer_addr()?;
         stream.set_nodelay(true)?;
         stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
@@ -86,6 +115,7 @@ impl TcpTransport {
         let (out, out_rx) = bounded::<Vec<u8>>(queue_len);
         let queued = Arc::new(AtomicUsize::new(0));
         let written = queued.clone();
+        let sent = bytes.clone();
         let transport = Arc::new(Self {
             stream,
             peer_addr,
@@ -93,6 +123,7 @@ impl TcpTransport {
             out,
             queued,
             closed: AtomicBool::new(false),
+            bytes,
         });
         // The writer holds no reference to the transport: its queue closes when the
         // transport is dropped, which is what ends the thread.
@@ -108,6 +139,7 @@ impl TcpTransport {
                         let _ = writer_stream.shutdown(Shutdown::Both);
                         break;
                     }
+                    sent.sent.fetch_add(frame.len() as u64, Ordering::Relaxed);
                 }
             })?;
         Ok(transport)
@@ -116,7 +148,10 @@ impl TcpTransport {
     /// Starts the reader thread. The first frame's payload is bounded by
     /// [`MAX_HANDSHAKE_BODY_LEN`], later ones by what the handler returns.
     pub fn run_reader(self: &Arc<Self>, mut handler: Handler) -> io::Result<()> {
-        let reader_stream = self.stream.try_clone()?;
+        let reader_stream = CountedRead {
+            stream: self.stream.try_clone()?,
+            bytes: self.bytes.clone(),
+        };
         let network = self.network;
         let peer_addr = self.peer_addr;
         let transport = Arc::clone(self);
@@ -205,7 +240,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let stream = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
         let (_silent, _) = listener.accept().expect("accept");
-        let transport = TcpTransport::new(stream, Network::Regtest, 1024).expect("transport");
+        let transport =
+            TcpTransport::new(stream, Network::Regtest, 1024, Arc::default()).expect("transport");
         let block = LegacyMessage::Block(Bytes::from(vec![0u8; 2_000_000]));
         let mut sent = 0;
         let error = loop {

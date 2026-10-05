@@ -70,7 +70,7 @@ use hayai_validate::{
     apply_checkpointed, commit_prebuilt, prebuild, validate_block, BlockError, CommitError,
     HeaderPolicy, Timings, ValidateConfig,
 };
-use hayai_wire::header::BlockHash;
+use hayai_wire::header::{BlockHash, BlockHeader};
 use hayai_wire::{RawBlock, RawTx, WtxId};
 use parking_lot::{Condvar, Mutex, RwLock};
 use serde_json::json;
@@ -83,7 +83,10 @@ use crate::backing::{SpentLog, UpstreamBacking};
 use crate::config::{Backend, Config, LanePublication, Mode};
 use crate::headers::{HeaderIndex, NodeHeaderCheck, SeedBlock};
 use crate::mempool::{Mempool, PublicTxs};
-use crate::metrics::{register_build_info, stage_durations, NodeMetrics, STAGES};
+use crate::metrics::{
+    hash_suffix, micros, register_build_info, stage_durations, LastBlock, NodeMetrics,
+    TemplateKind, STAGES,
+};
 use crate::mining::{miner_script, Producer};
 use crate::params::{NetParams, NetworkKind, REGTEST_POW_LIMIT_BITS};
 use crate::persist::{StateLog, StateRecord};
@@ -139,6 +142,8 @@ pub enum Event {
         block: Arc<RawBlock>,
         origin: &'static str,
         source: Source,
+        /// The arrival of the complete block at the queue of the driver.
+        received: Instant,
     },
     /// Full mode: a message of the block synchronization and its arrival time.
     Net {
@@ -163,8 +168,10 @@ fn now_secs() -> u32 {
     u32::try_from(secs).unwrap_or(u32::MAX)
 }
 
-fn micros(d: Duration) -> u64 {
-    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+/// The wall clock of `received` in microseconds since the Unix epoch: the field
+/// `received_unix_us` of a `block_received` row.
+pub(crate) fn received_unix_micros(received: Instant) -> u64 {
+    hayai_trace::unix_micros().saturating_sub(micros(received.elapsed()))
 }
 
 fn millis(d: Duration) -> u64 {
@@ -300,6 +307,7 @@ impl BlockSink for BlockInbox {
     fn accept_block(&self, incoming: IncomingBlock) {
         let IncomingBlock { block, source } = incoming;
         let origin = origin(&source);
+        let received = Instant::now();
         self.tracer
             .emit(Table::BlockSync, event::BLOCK_RECEIVED, || {
                 let peer = match source {
@@ -312,12 +320,14 @@ impl BlockSink for BlockInbox {
                     "hash": block.hash().to_string(),
                     "bytes": block.bytes.len(),
                     "source": origin,
+                    "received_unix_us": received_unix_micros(received),
                 })
             });
         let event = Event::Block {
             block,
             origin,
             source,
+            received,
         };
         if self.events.send(event).is_err() {
             tracing::debug!("driver stopped; block dropped");
@@ -515,7 +525,7 @@ struct Driver {
     rejected: HashMap<BlockHash, String>,
     rejected_order: VecDeque<BlockHash>,
     /// Blocks whose parent is a pending header, by parent hash.
-    waiting: HashMap<BlockHash, Vec<(Arc<RawBlock>, &'static str)>>,
+    waiting: HashMap<BlockHash, Vec<Waiting>>,
     relay: Arc<Relay>,
     /// Full mode: the block synchronization.
     sync: Option<Sync>,
@@ -536,10 +546,30 @@ struct Driver {
     /// since the last template.
     template_deferred: bool,
     deferred_changes: TipChange,
+    /// The reception of the newest block that the driver validated, for the time from
+    /// the reception to the first template on that block.
+    tip_received: Option<TipReceived>,
 }
+
+/// The reception time of a block, until the first template on that block has it.
+struct TipReceived {
+    hash: BlockHash,
+    at: Instant,
+    /// A template on the block took the time.
+    used: bool,
+}
+
+/// A block of shadow mode that waits for its parent: the block, its origin and its
+/// reception.
+type Waiting = (Arc<RawBlock>, &'static str, Instant);
 
 /// What the trace rows of one commit share.
 struct CommitCtx {
+    /// The reception of the block (`metrics::LastBlock`).
+    received: Instant,
+    origin: &'static str,
+    /// The time of the push of the layer on the chain. The commit path sets it.
+    push: Duration,
     started: Instant,
     height: u32,
     hash: BlockHash,
@@ -686,9 +716,9 @@ impl Driver {
             }
             select! {
                 recv(events) -> ev => match ev {
-                    Ok(Event::Block { block, origin, source }) => match self.mode {
-                        Mode::Full => self.on_relayed(block, source)?,
-                        Mode::Shadow => self.on_block(block, origin)?,
+                    Ok(Event::Block { block, origin, source, received }) => match self.mode {
+                        Mode::Full => self.on_relayed(block, source, received)?,
+                        Mode::Shadow => self.on_block(block, origin, received)?,
                     },
                     Ok(Event::Net { event, at }) => self.on_net(event, at)?,
                     Ok(Event::Upstream { fork, blocks }) => self.on_upstream(fork, blocks)?,
@@ -834,6 +864,7 @@ impl Driver {
             .sync()
             .map_err(|e| fatal("block store sync", e))?;
         self.chain.flush().map_err(|e| fatal(context, e))?;
+        self.metrics.finalized_height.set(f64::from(height));
         Ok(())
     }
 
@@ -868,9 +899,14 @@ impl Driver {
     /// Shadow mode: validates a block of the relay on the tip. A block whose parent is a
     /// pending header (still in the queue, or still validating on another path) waits for
     /// its parent's commit.
-    fn on_block(&mut self, block: Arc<RawBlock>, origin: &'static str) -> Result<(), NodeError> {
-        let mut queue = vec![(block, origin)];
-        while let Some((block, origin)) = queue.pop() {
+    fn on_block(
+        &mut self,
+        block: Arc<RawBlock>,
+        origin: &'static str,
+        received: Instant,
+    ) -> Result<(), NodeError> {
+        let mut queue = vec![(block, origin, received)];
+        while let Some((block, origin, received)) = queue.pop() {
             let hash = block.hash();
             if self.index.contains(&hash) {
                 continue;
@@ -883,13 +919,13 @@ impl Driver {
                     self.waiting
                         .entry(parent)
                         .or_default()
-                        .push((block, origin));
+                        .push((block, origin, received));
                 } else {
                     tracing::info!(%hash, %parent, %tip, "block does not extend the tip; not validated");
                 }
                 continue;
             }
-            match self.commit(block, origin)? {
+            match self.commit(block, origin, received)? {
                 Ok(()) => {
                     if let Some(children) = self.waiting.remove(&hash) {
                         queue.extend(children);
@@ -951,7 +987,8 @@ impl Driver {
         &self,
         raw: &RawBlock,
         height: u32,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
         expected_class: &str,
         view: &ChainView,
     ) -> CommitCtx {
@@ -980,6 +1017,9 @@ impl Driver {
             }
         };
         CommitCtx {
+            received,
+            origin,
+            push: Duration::ZERO,
             started,
             height,
             hash,
@@ -1003,7 +1043,9 @@ impl Driver {
             Fault::Local => ("not_validated", "stopped"),
         };
         if fault != Fault::Local {
-            self.metrics.verify_failure.observe_duration(elapsed);
+            self.metrics
+                .verify_failure
+                .observe_duration(ctx.received.elapsed());
             self.metrics.blocks_rejected.inc();
         }
         tracing::warn!(%hash, height, error = %reason, result = validated, "block not committed");
@@ -1049,16 +1091,24 @@ impl Driver {
         changes: &mut TipChange,
     ) -> Result<(), NodeError> {
         let (height, hash) = (ctx.height, ctx.hash);
-        self.metrics.verify_success.observe_duration(timings.total);
         self.metrics.record_stages(timings);
+        let contextual_commit_us =
+            micros(timings.context + timings.trees + timings.history + ctx.push);
         self.metrics.store_hits.add(timings.known as u64);
         self.metrics.store_misses.add(timings.unknown as u64);
+        let validated = Instant::now();
+        let received_to_validated_us = micros(validated.duration_since(ctx.received));
+        let validation_us = micros(validated.duration_since(ctx.started));
         self.tracer
             .emit(Table::CommitState, event::BLOCK_VALIDATED, || {
                 let mut row = json!({
                     "height": height,
                     "hash": ctx.hash_hex,
                     "result": "valid",
+                    "since_received_us": received_to_validated_us,
+                    "validation_us": validation_us,
+                    "contextual_commit_us": contextual_commit_us,
+                    "bytes": raw.bytes.len(),
                     "class": block_class(raw),
                     "txs": raw.txs.len(),
                     "known": timings.known,
@@ -1092,6 +1142,9 @@ impl Driver {
             .finalize_excess(LAYER_WINDOW)
             .map_err(|e| fatal("finalize", e))?;
         self.since_snapshot += finalized as u32;
+        self.metrics
+            .base_height
+            .set(f64::from(self.chain.base().read().height));
         self.since_flush += 1;
         if self.since_flush >= self.flush_interval {
             self.flush_coins("coins flush")?;
@@ -1123,10 +1176,30 @@ impl Driver {
         mempool.forget_private(&changes.dropped);
         drop(tip_change);
         self.tip.set(height, hash);
+        self.note_received(hash, ctx.received);
 
-        let elapsed = ctx.started.elapsed();
+        let committed = Instant::now();
+        let elapsed = committed.duration_since(ctx.started);
+        let received_to_committed_us = micros(committed.duration_since(ctx.received));
+        let commit_us = micros(committed.duration_since(validated));
+        self.metrics.record_last_block(
+            &LastBlock {
+                height,
+                hash_suffix: hash_suffix(&ctx.hash_hex),
+                source: ctx.origin,
+                size_bytes: raw.bytes.len(),
+                transactions: raw.txs.len(),
+                received_to_validated_us,
+                validation_us,
+                commit_us,
+                received_to_committed_us,
+                contextual_commit_us,
+            },
+            timings,
+        );
         self.metrics.verified_height.set(f64::from(height));
         self.metrics.committed_height.set(f64::from(height));
+        self.metrics.verified_blocks.inc();
         self.metrics.commit_duration.observe_duration(elapsed);
         self.metrics
             .mempool_transactions
@@ -1143,9 +1216,36 @@ impl Driver {
                     "hash": ctx.hash_hex,
                     "result": "committed",
                     "elapsed_ms": millis(elapsed),
+                    "received_to_commit_us": received_to_committed_us,
+                    "commit_us": commit_us,
                 })
             });
         Ok(())
+    }
+
+    /// Records the reception time of the block `hash` for the first template on it. A
+    /// block that already has the record keeps it: the template of a speculative block
+    /// comes before its commit.
+    pub(super) fn note_received(&mut self, hash: BlockHash, at: Instant) {
+        if !matches!(&self.tip_received, Some(known) if known.hash == hash) {
+            self.tip_received = Some(TipReceived {
+                hash,
+                at,
+                used: false,
+            });
+        }
+    }
+
+    /// The reception time of the block `parent` for a template on it, one time for each
+    /// block: a later template on the same block is not the first one.
+    pub(super) fn take_received(&mut self, parent: &BlockHash) -> Option<Instant> {
+        match &mut self.tip_received {
+            Some(known) if known.hash == *parent && !known.used => {
+                known.used = true;
+                Some(known.at)
+            }
+            _ => None,
+        }
     }
 
     /// Validates `raw` on the committed tip and commits it, in one step: a prebuilt body
@@ -1157,7 +1257,8 @@ impl Driver {
     fn commit_on_tip(
         &mut self,
         raw: &Arc<RawBlock>,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
         checkpoint: Option<BlockHash>,
     ) -> Result<Result<TipChange, BlockError>, NodeError> {
         let view = self.chain.view();
@@ -1166,7 +1267,7 @@ impl Driver {
             Some(_) => "checkpoint",
             None => self.prebuilt.class_of(raw),
         };
-        let ctx = self.begin_commit(raw, height, origin, expected_class, &view);
+        let mut ctx = self.begin_commit(raw, height, origin, received, expected_class, &view);
         let cfg = self.validate_config(height)?;
         // A body that the header does not commit to never reaches a commit path.
         let checked = match checkpoint {
@@ -1194,7 +1295,9 @@ impl Driver {
                 return Ok(Err(e));
             }
         };
+        let pushing = Instant::now();
         let layer = self.chain.push(layer).map_err(|e| fatal("chain push", e))?;
+        ctx.push = pushing.elapsed();
         let mut changes = TipChange::default();
         self.finish_commit(&ctx, raw, &layer, &timings, apply_class, &mut changes)?;
         Ok(Ok(changes))
@@ -1205,10 +1308,11 @@ impl Driver {
     fn commit(
         &mut self,
         raw: Arc<RawBlock>,
-        origin: &str,
+        origin: &'static str,
+        received: Instant,
     ) -> Result<Result<(), String>, NodeError> {
         let (height, hash) = (self.chain.tip().height + 1, raw.hash());
-        match self.commit_on_tip(&raw, origin, None)? {
+        match self.commit_on_tip(&raw, origin, received, None)? {
             Ok(changes) => {
                 self.on_tip(&changes)?;
                 Ok(Ok(()))
@@ -1328,11 +1432,15 @@ impl Driver {
     fn on_tip(&mut self, changes: &TipChange) -> Result<(), NodeError> {
         let tip = self.template_tip(&self.chain.view())?;
         let started = Instant::now();
+        let timed = Some(TipEvent {
+            started,
+            received: self.take_received(&tip.parent_hash),
+        });
         let (feed, tracer, metrics) = (&self.feed, &self.tracer, &self.metrics);
         let mut updates = Vec::new();
         self.live
             .on_tip(tip, &changes.mined, &changes.dropped, |update| {
-                publish(feed, tracer, metrics, &update, Some(started));
+                publish(feed, tracer, metrics, &update, timed);
                 updates.push(update);
             })
             .map_err(|e| fatal("template", e))?;
@@ -1511,9 +1619,10 @@ impl Driver {
                                     "hash": hash.to_string(),
                                     "bytes": b.raw.bytes.len(),
                                     "source": "upstream_rpc",
+                                    "received_unix_us": hayai_trace::unix_micros(),
                                 })
                             });
-                        self.commit(b.raw.clone(), "upstream_rpc")?
+                        self.commit(b.raw.clone(), "upstream_rpc", Instant::now())?
                     }
                 }
             };
@@ -1527,16 +1636,32 @@ impl Driver {
     }
 }
 
+/// The clock of a template update that follows a tip change.
+#[derive(Clone, Copy)]
+struct TipEvent {
+    /// The start of the template build on the new tip.
+    started: Instant,
+    /// The reception of the tip block, for the first template on that block only.
+    received: Option<Instant>,
+}
+
+/// Gives `update` to the template feed, which serves `getblocktemplate`, the long poll
+/// and the push protocol, then writes the trace row and the metrics. The stop point of
+/// "template ready" is the reading of the clock after `TemplateFeed::publish` returns.
 fn publish(
     feed: &TemplateFeed,
     tracer: &Tracer,
     metrics: &NodeMetrics,
     update: &TemplateUpdate,
-    tip_event: Option<Instant>,
+    tip_event: Option<TipEvent>,
 ) {
     feed.publish(update);
+    let ready = Instant::now();
     let t = update.template();
-    let elapsed_us = tip_event.map(|s| micros(s.elapsed()));
+    let since_tip = tip_event.map(|e| ready.duration_since(e.started));
+    let since_received_us = tip_event
+        .and_then(|e| e.received)
+        .map(|at| micros(ready.duration_since(at)));
     let fields = || {
         json!({
             "height": t.tip.height,
@@ -1544,25 +1669,29 @@ fn publish(
             "template_id": t.id,
             "txs": t.txs.len(),
             "fees": t.fees_total,
-            "since_tip_us": elapsed_us,
+            "since_tip_us": since_tip.map(micros),
+            "since_received_us": since_received_us,
         })
+    };
+    let record = |kind| {
+        if let Some(us) = since_received_us {
+            metrics.record_last_template(kind, t.tip.height.saturating_sub(1), us);
+        }
     };
     match update {
         TemplateUpdate::Empty(_) => {
-            if let Some(started) = tip_event {
-                metrics
-                    .template_empty_latency
-                    .observe_duration(started.elapsed());
+            if let Some(elapsed) = since_tip {
+                metrics.template_empty_latency.observe_duration(elapsed);
             }
+            record(TemplateKind::Empty);
             tracer.emit(Table::Template, event::TEMPLATE_EMPTY, fields)
         }
         // A revert is the full template on the parent of a rejected speculative block.
         TemplateUpdate::Full(_) | TemplateUpdate::Reverted { .. } => {
-            if let Some(started) = tip_event {
-                metrics
-                    .template_full_latency
-                    .observe_duration(started.elapsed());
+            if let Some(elapsed) = since_tip {
+                metrics.template_full_latency.observe_duration(elapsed);
             }
+            record(TemplateKind::Full);
             metrics.template_rebuilt.inc();
             tracer.emit(Table::Template, event::TEMPLATE_FULL, fields);
         }
@@ -1706,32 +1835,50 @@ pub struct Node {
     tracer: Tracer,
 }
 
+/// The data of the coinbase input after the height: the marker of hayai, then `: ` and
+/// `[mining] extra_coinbase_data` when the file has that key.
+fn miner_data(extra: Option<&str>) -> Vec<u8> {
+    match extra {
+        Some(extra) => [MINER_DATA, b": ", extra.as_bytes()].concat(),
+        None => MINER_DATA.to_vec(),
+    }
+}
+
 /// The peer manager of a full node: the limits of `[network]`, and the address book in
-/// `data_dir`.
+/// the directory of `[network] cache_dir`.
 fn peer_manager(
     network: &crate::config::NetworkSection,
     params: NetParams,
     data_dir: &Path,
 ) -> Result<Arc<PeerManager>, NodeError> {
     let mut config = PeerConfig::new(params.wire());
-    if let Some(outbound) = network.outbound_peers {
+    let limits = network.peer_limits();
+    if let Some(outbound) = limits.outbound {
         config.outbound_target = outbound;
     }
-    if let Some(inbound) = network.max_inbound {
+    if let Some(inbound) = limits.inbound {
         config.max_inbound = inbound;
     }
-    if let Some(per_ip) = network.max_per_ip {
+    if let Some(per_ip) = network.max_connections_per_ip {
         config.max_per_ip = per_ip;
     }
-    if let Some(seeders) = &network.seeders {
+    if let Some(seeders) = network.initial_peers() {
         config.seeders = seeders.clone();
     }
     if let Some(ban_secs) = network.ban_secs {
         config.ban_secs = ban_secs;
     }
-    let path = data_dir.join(PEERS_FILE);
-    let book = AddrBook::load(&path, config.book.clone()).map_err(|e| fatal("address book", e))?;
-    config.book_path = Some(path);
+    let book = match network.peer_cache_dir(data_dir) {
+        Some(dir) => {
+            fs::create_dir_all(dir).map_err(|e| fatal("address book directory", e))?;
+            let path = dir.join(PEERS_FILE);
+            let book =
+                AddrBook::load(&path, config.book.clone()).map_err(|e| fatal("address book", e))?;
+            config.book_path = Some(path);
+            book
+        }
+        None => AddrBook::new(config.book.clone()),
+    };
     Ok(PeerManager::new(config, book, PeerEnv::system()))
 }
 
@@ -1740,8 +1887,8 @@ fn require_empty(dir: &Path) -> Result<(), NodeError> {
         Ok(mut entries) => match entries.next() {
             None => Ok(()),
             Some(_) => Err(NodeError(format!(
-                "{} is not empty and data_dir has no {}: it is not the data directory of \
-                 a hayaid node; use an empty data_dir",
+                "{} is not empty and cache_dir has no {}: it is not the data directory of \
+                 a hayaid node; use an empty cache_dir",
                 dir.display(),
                 StateLog::FILE
             ))),
@@ -1798,7 +1945,7 @@ impl Drop for FreshDir {
         if !self.existed {
             if let Err(e) = fs::remove_dir(&self.data_dir) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(path = %self.data_dir.display(), error = %e, "failed first start left data_dir");
+                    tracing::warn!(path = %self.data_dir.display(), error = %e, "failed first start left cache_dir");
                 }
             }
         }
@@ -1846,6 +1993,84 @@ struct Replay<'a> {
     start_height: u32,
 }
 
+/// Height of the last block that [`replay`] reads for a base at `base_height`: the end of
+/// the block store. `None` when the store is empty and the base is the start record.
+fn replay_end(
+    blocks: &BlockStore,
+    base_height: u32,
+    start_height: u32,
+) -> Result<Option<u32>, NodeError> {
+    match blocks.tip_height() {
+        None if base_height == start_height => Ok(None),
+        Some(last) if last >= base_height => Ok(Some(last)),
+        stored => Err(NodeError(format!(
+            "the block store ends at {stored:?}, below the state at height {base_height}: \
+             the block files do not match the coins store"
+        ))),
+    }
+}
+
+/// The block that the block store holds at `height`, with its header, when it extends the
+/// block `tip`. `None` ends the replay.
+fn stored_child(
+    blocks: &BlockStore,
+    height: u32,
+    tip: BlockHash,
+) -> Result<Option<(bytes::Bytes, BlockHeader)>, NodeError> {
+    let bytes = blocks
+        .get_bytes(height)
+        .map_err(|e| fatal("block store", e))?
+        .ok_or_else(|| NodeError(format!("the block store has no block at height {height}")))?;
+    let header =
+        BlockHeader::parse(&bytes).map_err(|e| fatal(&format!("replay of block {height}"), e))?;
+    if header.prev_hash != tip {
+        tracing::warn!(
+            height,
+            hash = %header.hash(),
+            %tip,
+            "stored block does not extend the replayed chain; the replay ends"
+        );
+        return Ok(None);
+    }
+    Ok(Some((bytes, header)))
+}
+
+/// The network of the data directory `data_dir` and the height of the tip that a restart
+/// of the node on it resumes at. The function starts no node and writes nothing.
+///
+/// It applies the rule of the restart with the same code: the best block of the coins
+/// store selects the record of the state log ([`StateLog::resume_point`]), and the blocks
+/// of the block store above that base count while each one extends the block before
+/// ([`replay_end`], [`stored_child`]). The restart also validates each of these blocks. A
+/// block that fails there stops the start of the node, so it gives no other tip.
+///
+/// A node can run on `data_dir` during the call. The result is then a tip that the
+/// directory held during the read, or an error when the node changed a file under it.
+pub fn stored_tip(data_dir: &Path) -> Result<(NetworkKind, u32), NodeError> {
+    if !StateLog::exists(data_dir) {
+        return Err(NodeError(format!(
+            "State directory doesn't have a chain tip block: {} has no {}",
+            data_dir.display(),
+            StateLog::FILE
+        )));
+    }
+    let best = hayai_coins::stored_best_block(&data_dir.join("coins"))
+        .map_err(|e| fatal("coins store", e))?;
+    let resume = StateLog::resume_point(data_dir, best).map_err(|e| fatal("state log", e))?;
+    let blocks =
+        BlockStore::open_read_only(data_dir.join("blocks")).map_err(|e| fatal("block store", e))?;
+    let (mut height, mut hash) = (resume.height, resume.hash);
+    if let Some(last) = replay_end(&blocks, height, resume.start_height)? {
+        for next in height + 1..=last {
+            let Some((_, header)) = stored_child(&blocks, next, hash)? else {
+                break;
+            };
+            (height, hash) = (next, header.hash());
+        }
+    }
+    Ok((resume.network, height))
+}
+
 /// Pushes the blocks of the block store above the chain's tip, so that the layer window and
 /// the tip are what they were before the stop. A block above the last checkpoint of the
 /// network is validated in full. A block at or below it takes the checkpoint path of a
@@ -1855,15 +2080,8 @@ struct Replay<'a> {
 /// pushed.
 fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     let base_height = chain.tip().height;
-    let last = match r.blocks.tip_height() {
-        None if base_height == r.start_height => return Ok(0),
-        Some(last) if last >= base_height => last,
-        stored => {
-            return Err(NodeError(format!(
-                "the block store ends at {stored:?}, below the state at height {base_height}: \
-                 the block files do not match the coins store"
-            )))
-        }
+    let Some(last) = replay_end(r.blocks, base_height, r.start_height)? else {
+        return Ok(0);
     };
     let store = PreparedStore::new(
         r.params.epoch_at(base_height + 1).map_err(no_rules)?,
@@ -1874,23 +2092,11 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     let mut finalized = 0;
     let mut replayed = 0u32;
     for height in base_height + 1..=last {
-        let bytes = r
-            .blocks
-            .get_bytes(height)
-            .map_err(|e| fatal("block store", e))?
-            .ok_or_else(|| NodeError(format!("the block store has no block at height {height}")))?;
+        let Some((bytes, _)) = stored_child(r.blocks, height, chain.tip().hash)? else {
+            break;
+        };
         let raw = RawBlock::parse(bytes, r.params.branch_at(height).map_err(no_rules)?)
             .map_err(|e| fatal(&format!("replay of block {height}"), e))?;
-        let tip = chain.tip();
-        if raw.header.prev_hash != tip.hash {
-            tracing::warn!(
-                height,
-                hash = %raw.hash(),
-                tip = %tip.hash,
-                "stored block does not extend the replayed chain; the replay ends"
-            );
-            break;
-        }
         // The contextual header rules run in `validate_block`. The proof of work runs here,
         // and the rule against the clock of the node does not run on a stored block.
         hayai_consensus::header::check_proof_of_work(r.params.kind, &raw.header)
@@ -1944,7 +2150,7 @@ impl Node {
                 .map_err(|e| fatal("configuration", e))?,
         );
         let mode = config.network.mode;
-        let data_dir = &config.state.data_dir;
+        let data_dir = &config.state.cache_dir;
         let coins_dir = data_dir.join("coins");
         let blocks_dir = data_dir.join("blocks");
         let resuming = StateLog::exists(data_dir);
@@ -1953,7 +2159,7 @@ impl Node {
             require_empty(&blocks_dir)?;
         }
 
-        let tracer = match &config.trace.dir {
+        let tracer = match &config.network.zakura.trace_dir {
             Some(dir) => {
                 Tracer::open(dir, &config.trace.node).map_err(|e| fatal("trace dir", e))?
             }
@@ -1982,7 +2188,7 @@ impl Node {
         // From here on a failed first start removes what it created, up to the write of the
         // start record of the state log.
         let mut fresh_dir = (!resuming).then(|| FreshDir::new(data_dir));
-        fs::create_dir_all(data_dir).map_err(|e| fatal("data_dir", e))?;
+        fs::create_dir_all(data_dir).map_err(|e| fatal("cache_dir", e))?;
         let (store_backing, mem, best): (
             Arc<dyn CoinsBacking>,
             Option<Arc<MemBacking>>,
@@ -2148,14 +2354,14 @@ impl Node {
         let next = tip_height + 1;
         let store = Arc::new(PreparedStore::new(
             params.epoch_at(next).map_err(no_rules)?,
-            MEMPOOL_TX_COST_LIMIT,
+            config.mempool.tx_cost_limit as usize,
             Zip317Params::ZAKURA,
         ));
         let feed = TemplateFeed::new(Duration::from_secs(60));
         let script_pubkey = miner_script(&config.mining, params.kind).map_err(NodeError)?;
         let mut template_config = TemplateConfig::new(CoinbaseSpec {
             script_pubkey,
-            miner_data: MINER_DATA.to_vec(),
+            miner_data: miner_data(config.mining.extra_coinbase_data.as_deref()),
             network: params.kind,
         });
         template_config.pow = params.pow();
@@ -2266,7 +2472,10 @@ impl Node {
                     stop: stop_tx.clone(),
                 });
                 let rpc = Rpc::with_parts(
-                    RpcConfig::new(params.kind),
+                    RpcConfig {
+                        metrics: Some(registry.clone()),
+                        ..RpcConfig::new(params.kind)
+                    },
                     feed.clone(),
                     submit,
                     tip.clone(),
@@ -2298,7 +2507,7 @@ impl Node {
             // header chain.
             (Some(_), None) | (None, _) => None,
         };
-        let metrics_server = match config.metrics.listen_addr {
+        let metrics_server = match config.metrics.endpoint_addr {
             Some(addr) => Some(
                 MetricsServer::serve(addr, registry.clone())
                     .map_err(|e| fatal("metrics listen", e))?,
@@ -2307,6 +2516,11 @@ impl Node {
         };
         metrics.verified_height.set(f64::from(tip_height));
         metrics.committed_height.set(f64::from(tip_height));
+        // The base of a start is the base of the last flush.
+        metrics
+            .finalized_height
+            .set(f64::from(chain_base.read().height));
+        metrics.base_height.set(f64::from(chain_base.read().height));
 
         let mut driver = Driver {
             params,
@@ -2345,6 +2559,8 @@ impl Node {
                             ..DownloadConfig::default()
                         },
                         header_timeout_ms: config.sync.header_timeout_ms,
+                        header_poll_ms: config.sync.header_poll_ms,
+                        header_poll_max_ms: config.sync.header_poll_max_ms,
                     },
                     SyncParts {
                         headers,
@@ -2363,6 +2579,7 @@ impl Node {
             last_tick: Instant::now(),
             more_delivered: false,
             template_deferred: false,
+            tip_received: None,
             deferred_changes: TipChange::default(),
             lane: match (
                 config.network.mode,
@@ -2411,6 +2628,17 @@ impl Node {
                 .map_err(|e| fatal("follower thread", e))?,
             );
         }
+        // Full mode: the connection thread dials the addresses of the book and asks the DNS
+        // seeders until the node has its outbound peers. Without it the node has only the
+        // peers of `[network] peers`.
+        if let Mode::Full = mode {
+            workers.push(
+                relay
+                    .peer_manager()
+                    .spawn(&relay)
+                    .map_err(|e| fatal("connection thread", e))?,
+            );
+        }
         workers.push(spawn_ticker(
             Ticker {
                 relay: relay.clone(),
@@ -2420,7 +2648,7 @@ impl Node {
                 metrics,
                 tracer: tracer.clone(),
                 peers: config.network.peers.clone(),
-                max_peers: config.network.max_peers,
+                max_peers: config.network.peer_limits().total,
             },
             stop.clone(),
         )?);
@@ -2567,8 +2795,15 @@ fn spawn_ticker(t: Ticker, stop: Arc<AtomicBool>) -> Result<JoinHandle<()>, Node
                         relay.disconnect(p.id);
                     }
                 }
-                metrics.peers.set(relay.peers().len() as f64);
+                let current = relay.peers();
+                metrics.peers.set(current.len() as f64);
+                metrics
+                    .net_peers
+                    .set(current.iter().filter(|p| p.established).count() as f64);
                 metrics.record_relay(relay.metrics());
+                let (received, sent) = relay.bytes();
+                metrics.net_in_bytes.set(received);
+                metrics.net_out_bytes.set(sent);
                 metrics.mempool_transactions.set(store.len() as f64);
                 metrics.mempool_bytes.set(store.cost_bytes() as f64);
                 metrics.record_trace_drops(&tracer);
@@ -2657,6 +2892,30 @@ mod tests {
     /// The template time is the clock inside the limits of the header rules: a header with
     /// that time passes `check_contextual` when the clock is far after the tip, at the
     /// tip, and before the median-time-past.
+    /// The longest `extra_coinbase_data` of the configuration fits in the coinbase input
+    /// at a height of 4 bytes, and one byte more does not.
+    #[test]
+    fn the_longest_extra_coinbase_data_fits_in_the_coinbase_input() {
+        use crate::config::MAX_EXTRA_COINBASE_DATA;
+
+        assert_eq!(miner_data(None), b"hayai");
+        assert_eq!(miner_data(Some("pool")), b"hayai: pool");
+        let spec = |extra: usize| CoinbaseSpec {
+            script_pubkey: vec![0x51],
+            miner_data: miner_data(Some(&"x".repeat(extra))),
+            network: NetworkKind::Regtest,
+        };
+        let height = 0x0100_0000;
+        let built = spec(MAX_EXTRA_COINBASE_DATA)
+            .build(height, 0)
+            .expect("the longest text");
+        let tag = [b"hayai: ".as_slice(), &[b'x'; MAX_EXTRA_COINBASE_DATA]].concat();
+        assert!(built.bytes.windows(tag.len()).any(|w| w == tag));
+        let Err(_) = spec(MAX_EXTRA_COINBASE_DATA + 1).build(height, 0) else {
+            panic!("one byte more fits");
+        };
+    }
+
     #[test]
     fn the_template_time_is_inside_the_limits_of_the_header_rules() {
         use hayai_consensus::header::{check_contextual, MAX_FUTURE_BLOCK_TIME_MTP};

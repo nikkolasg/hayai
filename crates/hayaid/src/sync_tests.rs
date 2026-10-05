@@ -24,6 +24,7 @@ use hayai_net::PeerProtocol;
 use hayai_rpc::BlockGenerator;
 use hayai_wire::header::{BlockHash, BlockHeader};
 use hayai_wire::{merkle_root, RawBlock};
+use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::config::Config;
@@ -45,21 +46,23 @@ fn config_with(dir: &Path, name: &str, produce: bool, compact: bool, extra: &str
     let text = format!(
         r#"
 [network]
-network = "regtest"
+network = "Regtest"
 listen_addr = "127.0.0.1:0"
 compact_relay = {compact}
 outbound_peers = 0
 
 [state]
-data_dir = "{data}"
+cache_dir = "{data}"
 flush_interval_blocks = 8
 
 [sync]
 request_timeout_ms = 1500
 header_timeout_ms = 2000
 
+[network.zakura]
+trace_dir = "{trace}"
+
 [trace]
-dir = "{trace}"
 node = "{name}"
 
 [mining]
@@ -174,6 +177,10 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
             other => panic!("unexpected {other:?}"),
         }
     }
+    // The node sets its tip a moment before it tells the relay that the block is validated,
+    // and the relay serves a header only after that. An empty answer in that moment is not
+    // an error: the helper asks again until the deadline.
+    let deadline = Instant::now() + WAIT;
     let mut hashes: Vec<BlockHash> = Vec::new();
     while hashes.len() < tip as usize {
         let last = hashes.last().copied().unwrap_or(genesis);
@@ -188,7 +195,15 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
                 break headers;
             }
         };
-        assert!(!headers.is_empty(), "the node serves its whole chain");
+        if headers.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "the node serves its whole chain: {} of {tip} headers",
+                hashes.len()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
         hashes.extend(headers.iter().map(BlockHeader::hash));
     }
     let mut blocks = Vec::with_capacity(hashes.len());
@@ -325,6 +340,216 @@ fn with_bodies(blocks: &[Bytes]) -> Vec<(BlockHeader, Option<Bytes>)> {
         .collect()
 }
 
+/// A legacy peer that answers `getheaders` only when it has a header after the locator, as
+/// Zakura, Zebra and zcashd do. It serves one connection and records each `getheaders`
+/// message.
+struct QuietPeer {
+    addr: SocketAddr,
+    blocks: Arc<Mutex<Vec<Bytes>>>,
+    /// The arrival time of each `getheaders` message, and whether the peer answered it.
+    asked: Arc<Mutex<Vec<(Instant, bool)>>>,
+    /// The connection of the node, for the messages that the peer sends.
+    stream: Arc<Mutex<Option<TcpStream>>>,
+    /// Connections that the node closed.
+    closed: Arc<AtomicUsize>,
+}
+
+impl QuietPeer {
+    fn serve(ip: [u8; 4], chain: &[Bytes]) -> Self {
+        let listener = TcpListener::bind((IpAddr::from(ip), 0)).expect("bind");
+        let peer = Self {
+            addr: listener.local_addr().expect("addr"),
+            blocks: Arc::new(Mutex::new(chain.to_vec())),
+            asked: Arc::default(),
+            stream: Arc::default(),
+            closed: Arc::default(),
+        };
+        let (blocks, asked) = (peer.blocks.clone(), peer.asked.clone());
+        let (writer, closed) = (peer.stream.clone(), peer.closed.clone());
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            *writer.lock() = Some(stream.try_clone().expect("a second handle"));
+            let reply = |message: &LegacyMessage| {
+                let mut guard = writer.lock();
+                let Some(stream) = guard.as_mut() else {
+                    unreachable!("the connection is set");
+                };
+                // The test ended the node: the read loop sees the closed connection.
+                let _ = send(stream, message);
+            };
+            reply(&version(blocks.lock().len() as u32));
+            while let Ok(message) = read_message(&mut stream, NET, usize::MAX) {
+                match message {
+                    LegacyMessage::Version(_) => reply(&LegacyMessage::Verack),
+                    LegacyMessage::Ping(nonce) => reply(&LegacyMessage::Pong(nonce)),
+                    LegacyMessage::GetHeaders(request) => {
+                        let headers: Vec<BlockHeader> =
+                            blocks.lock().iter().map(|b| parse(b).header).collect();
+                        let from = request
+                            .locator
+                            .iter()
+                            .find_map(|hash| headers.iter().position(|h| h.hash() == *hash))
+                            .map_or(0, |at| at + 1);
+                        let news = headers[from..].to_vec();
+                        asked.lock().push((Instant::now(), !news.is_empty()));
+                        if !news.is_empty() {
+                            reply(&LegacyMessage::Headers(news));
+                        }
+                    }
+                    LegacyMessage::GetData(items) => {
+                        for item in items {
+                            let InvItem::Block(hash) = item else { continue };
+                            let block = blocks
+                                .lock()
+                                .iter()
+                                .find(|b| parse(b).header.hash() == hash)
+                                .cloned();
+                            if let Some(bytes) = block {
+                                reply(&LegacyMessage::Block(bytes));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            closed.fetch_add(1, Ordering::Relaxed);
+        });
+        peer
+    }
+
+    /// The peer gets `block` and announces it with an `inv` message.
+    fn announce(&self, block: &Bytes) {
+        let hash = parse(block).header.hash();
+        self.blocks.lock().push(block.clone());
+        let mut guard = self.stream.lock();
+        let stream = guard.as_mut().expect("the node is connected");
+        send(stream, &LegacyMessage::Inv(vec![InvItem::Block(hash)])).expect("inv");
+    }
+
+    /// Waits for `count` `getheaders` messages without an answer in a row: the first
+    /// ones when `answered` is false, else the ones after the answered message. Gives
+    /// their times, after the time of the answered message.
+    fn polls(&self, answered: bool, count: usize) -> Vec<Instant> {
+        let mut times = Vec::new();
+        wait_for("the polls of the node", || {
+            let asked = self.asked.lock();
+            let from = match answered {
+                true => asked.iter().position(|(_, answer)| *answer),
+                false => Some(0),
+            };
+            let Some(from) = from else {
+                return false;
+            };
+            times = asked[from..]
+                .iter()
+                .enumerate()
+                .take_while(|(at, (_, answer))| !answer || (answered && *at == 0))
+                .map(|(_, (time, _))| *time)
+                .collect();
+            times.len() >= count + usize::from(answered)
+        });
+        times
+    }
+}
+
+/// A node at the height 5 that then connects to its only peer: a quiet peer with the same
+/// chain, which has no answer to its `getheaders`. The node has a window of the header
+/// sync of 500 ms and the idle poll delays `poll_ms` and `poll_max_ms`. Also gives the
+/// block of the height 6 and its tip.
+fn start_at_the_tip_of_a_quiet_peer(
+    dir: &Path,
+    ip: [u8; 4],
+    poll_ms: u64,
+    poll_max_ms: u64,
+) -> (Node, QuietPeer, Bytes, (u32, BlockHash)) {
+    let a = start(dir, "a", true, false);
+    generate(&a, 5);
+    let mut config = config_with(dir, "x", false, false, "");
+    config.sync.header_timeout_ms = 500;
+    config.sync.header_poll_ms = poll_ms;
+    config.sync.header_poll_max_ms = poll_max_ms;
+    let x = Node::start(&config).expect("x starts");
+    x.relay.connect(addr(&a)).expect("x dials a");
+    wait_tip(&x, a.tip.tip());
+    disconnect_all(&x);
+    wait_for("the end of the connection with a", || {
+        x.relay.peers().is_empty()
+    });
+    generate(&a, 1);
+    let next_tip = a.tip.tip();
+    let blocks = fetch_chain(&a);
+    a.shutdown().expect("clean shutdown");
+    let quiet = QuietPeer::serve(ip, &blocks[..5]);
+    x.relay.connect(quiet.addr).expect("x dials the quiet peer");
+    (x, quiet, blocks[5].clone(), next_tip)
+}
+
+/// The only peer of a node has the chain of the node and does not answer `getheaders`.
+/// After more than 6 windows of the header sync the peer is connected and has no penalty.
+/// Then the peer announces a new block: the node gets it at once, long before its next
+/// poll.
+#[test]
+fn a_peer_without_news_that_is_silent_stays_and_its_next_block_arrives_at_once() {
+    let dir = scratch();
+    let (x, quiet, next, next_tip) =
+        start_at_the_tip_of_a_quiet_peer(dir.path(), [127, 0, 0, 21], 200, 60_000);
+    // One `getheaders` at the connection, then the polls after 200, 400, 800 and 1,600 ms:
+    // 3 s, and the window is 500 ms. The next poll comes 3,200 ms after the last one.
+    let polls = quiet.polls(false, 5);
+    let peers = x.relay.peers();
+    assert!(
+        matches!(&peers[..], [peer] if peer.established && peer.addr == quiet.addr),
+        "the quiet peer is connected"
+    );
+    assert_eq!(quiet.closed.load(Ordering::Relaxed), 0);
+    assert_eq!(x.relay.peer_manager().score(quiet.addr.ip()), 0);
+    assert!(!x.relay.peer_manager().is_banned(quiet.addr.ip()));
+
+    quiet.announce(&next);
+    wait_tip(&x, next_tip);
+    let since_poll = polls[4].elapsed();
+    assert!(
+        since_poll < Duration::from_millis(3_200),
+        "the block came before the next poll: {since_poll:?}"
+    );
+    assert_eq!(x.relay.peer_manager().score(quiet.addr.ip()), 0);
+    x.shutdown().expect("clean shutdown");
+}
+
+/// The delay of the idle poll doubles up to its largest value, and a new block sets it
+/// back to its first value.
+#[test]
+fn the_idle_poll_of_the_header_sync_backs_off_and_starts_again_after_news() {
+    let dir = scratch();
+    let (x, quiet, next, next_tip) =
+        start_at_the_tip_of_a_quiet_peer(dir.path(), [127, 0, 0, 22], 200, 800);
+    // One `getheaders` at the connection, then the polls after 200, 400, 800 and 800 ms.
+    let polls = quiet.polls(false, 5);
+    let gaps: Vec<Duration> = polls.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    assert!(
+        gaps[0] < gaps[2] && gaps[1] < gaps[2],
+        "the delay grows: {gaps:?}"
+    );
+    assert!(
+        gaps[3] < gaps[2] * 3 / 2,
+        "the delay stays at its largest value: {gaps:?}"
+    );
+
+    quiet.announce(&next);
+    wait_tip(&x, next_tip);
+    // The node asked for the header of the announced block: the answered message.
+    let after = quiet.polls(true, 2);
+    let again = [after[1] - after[0], after[2] - after[1]];
+    assert!(
+        again.iter().all(|gap| *gap < gaps[3] * 3 / 4),
+        "the delay starts again: {again:?} after {gaps:?}"
+    );
+    assert_eq!(quiet.closed.load(Ordering::Relaxed), 0);
+    x.shutdown().expect("clean shutdown");
+}
+
 /// A node synchronizes 300 blocks from the genesis block from three peers, and uses more
 /// than one of them.
 #[test]
@@ -342,7 +567,7 @@ fn a_node_synchronizes_from_three_peers_from_the_genesis_block() {
     wait_tip(&b, tip);
     wait_tip(&c, tip);
 
-    let x = start(dir.path(), "x", false, true);
+    let x = start_with(dir.path(), "x", false, true, METRICS);
     for peer in [&a, &b, &c] {
         x.relay.connect(addr(peer)).expect("x dials a peer");
     }
@@ -353,6 +578,7 @@ fn a_node_synchronizes_from_three_peers_from_the_genesis_block() {
     for node in [&b, &c, &x] {
         wait_tip(node, tip);
     }
+    wait_sync_report(&x, tip.0);
     for node in [a, b, c, x] {
         node.shutdown().expect("clean shutdown");
     }
@@ -659,6 +885,230 @@ fn compact_relay_and_a_legacy_peer_follow_the_tip_together() {
     };
     assert_eq!(sources("b"), ["compact"; 5]);
     assert_eq!(sources("c"), ["download"; 5]);
+}
+
+/// The gauges of the last block have the values of the trace rows of that block, for a
+/// block of the node (`local`), a block of the compact relay and a downloaded block. The
+/// node writes each gauge from the clock reading of its row, so the values are equal.
+#[test]
+fn the_gauges_of_the_last_block_have_the_values_of_its_trace_rows() {
+    use crate::metrics::{hash_suffix, seconds, STAGES};
+
+    let dir = scratch();
+    let a = start_with(dir.path(), "a", true, true, METRICS);
+    let b = start_with(dir.path(), "b", false, true, METRICS);
+    let c = start_with(dir.path(), "c", false, false, METRICS);
+    b.relay.connect(addr(&a)).expect("b dials a");
+    c.relay.connect(addr(&b)).expect("c dials b");
+    wait_for("the sessions", || {
+        let established = |node: &Node| node.relay.peers().iter().any(|p| p.established);
+        established(&a) && established(&b) && established(&c)
+    });
+    for _ in 0..3 {
+        generate(&a, 1);
+        let tip = a.tip.tip();
+        wait_tip(&b, tip);
+        wait_tip(&c, tip);
+    }
+    let (height, hash) = a.tip.tip();
+    let hash = hash.to_string();
+
+    // The gauges of each node, read while it runs. The driver writes the gauges of the
+    // block at the commit, and the gauges of the template after it.
+    const BLOCK_GAUGES: [&str; 10] = [
+        "hayai_last_block_contextual_commit_seconds",
+        "hayai_last_block_hash_suffix",
+        "hayai_last_block_size_bytes",
+        "hayai_last_block_transactions",
+        "hayai_last_block_prepared_transactions{state=\"known\"}",
+        "hayai_last_block_prepared_transactions{state=\"unknown\"}",
+        "hayai_last_block_received_to_validated_seconds",
+        "hayai_last_block_validation_seconds",
+        "hayai_last_block_commit_seconds",
+        "hayai_last_block_received_to_committed_seconds",
+    ];
+    let mut read: Vec<(&str, &str, HashMap<String, f64>)> = Vec::new();
+    for (node, name, source) in [
+        (&a, "a", "local"),
+        (&b, "b", "compact"),
+        (&c, "c", "download"),
+    ] {
+        for template in ["empty", "full"] {
+            let gauge = format!("hayai_last_template_tip_height{{template=\"{template}\"}}");
+            wait_for(&format!("{gauge} of {name}"), || {
+                metric(node, &gauge) == f64::from(height)
+            });
+        }
+        assert_eq!(metric(node, "hayai_last_block_height"), f64::from(height));
+        let mut names: Vec<String> = BLOCK_GAUGES.iter().map(|g| g.to_string()).collect();
+        names.extend(
+            STAGES.iter().map(|stage| {
+                format!("hayai_last_block_validate_stage_seconds{{stage=\"{stage}\"}}")
+            }),
+        );
+        names.extend(
+            crate::metrics::SOURCES
+                .iter()
+                .map(|s| format!("hayai_last_block_source{{source=\"{s}\"}}")),
+        );
+        names.extend(
+            ["empty", "full"].iter().map(|t| {
+                format!("hayai_last_template_received_to_ready_seconds{{template=\"{t}\"}}")
+            }),
+        );
+        let values = names
+            .into_iter()
+            .map(|g| {
+                let value = metric(node, &g);
+                (g, value)
+            })
+            .collect();
+        read.push((name, source, values));
+        // The download of `c` stored each block, and the driver counted it.
+        let downloaded = if source == "download" { height } else { 0 };
+        assert_eq!(
+            metric(node, "sync_downloaded_block_count"),
+            f64::from(downloaded)
+        );
+        for histogram in [
+            "sync_block_verify_duration_seconds_count{result=\"success\"}",
+            "hayai_contextual_commit_duration_seconds_count",
+            "hayai_block_received_to_validated_seconds_count",
+            "hayai_block_receive_to_commit_seconds_count",
+        ] {
+            assert_eq!(
+                metric(node, histogram),
+                f64::from(height),
+                "{histogram} of {name}"
+            );
+        }
+    }
+    for node in [a, b, c] {
+        node.shutdown().expect("clean shutdown");
+    }
+
+    for (name, source, gauges) in read {
+        let gauge = |g: &str| gauges[g];
+        let commits = rows(dir.path(), name, "commit_state.jsonl");
+        let row = |event: &str| -> Value {
+            let found: Vec<&Value> = commits
+                .iter()
+                .filter(|row| row["event"] == event && row["hash"] == hash.as_str())
+                .collect();
+            let [row] = found[..] else {
+                panic!("{name}: {} {event} rows of the block", found.len());
+            };
+            row.clone()
+        };
+        let us = |row: &Value, field: &str| -> f64 {
+            seconds(
+                row[field]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{name}: no {field}")),
+            )
+        };
+        let (start, validated, finish) = (
+            row("commit_start"),
+            row("block_validated"),
+            row("commit_finish"),
+        );
+        assert_eq!(start["origin"], source, "{name}");
+        for s in crate::metrics::SOURCES {
+            let expected = if s == source { 1.0 } else { 0.0 };
+            assert_eq!(
+                gauge(&format!("hayai_last_block_source{{source=\"{s}\"}}")),
+                expected
+            );
+        }
+        assert_eq!(
+            gauge("hayai_last_block_hash_suffix"),
+            hash_suffix(&hash) as f64
+        );
+        assert_eq!(
+            hash_suffix(&hash),
+            u64::from_str_radix(&hash[52..], 16).expect("hex")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_size_bytes"),
+            validated["bytes"].as_f64().expect("bytes")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_transactions"),
+            validated["txs"].as_f64().expect("txs")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_prepared_transactions{state=\"known\"}"),
+            validated["known"].as_f64().expect("known")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_prepared_transactions{state=\"unknown\"}"),
+            validated["unknown"].as_f64().expect("unknown")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_received_to_validated_seconds"),
+            us(&validated, "since_received_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_validation_seconds"),
+            us(&validated, "validation_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_commit_seconds"),
+            us(&finish, "commit_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_received_to_committed_seconds"),
+            us(&finish, "received_to_commit_us")
+        );
+        assert_eq!(
+            gauge("hayai_last_block_contextual_commit_seconds"),
+            us(&validated, "contextual_commit_us")
+        );
+        // The points of the clock are in order.
+        let (to_validated, to_committed) = (
+            validated["since_received_us"].as_u64().expect("an integer"),
+            finish["received_to_commit_us"]
+                .as_u64()
+                .expect("an integer"),
+        );
+        assert!(validated["validation_us"].as_u64().expect("an integer") <= to_validated);
+        // Each field is a whole number of microseconds, so the sum can be 1 below.
+        let parts = to_validated + finish["commit_us"].as_u64().expect("an integer");
+        assert!(parts <= to_committed && to_committed <= parts + 1);
+        for stage in STAGES {
+            assert_eq!(
+                gauge(&format!(
+                    "hayai_last_block_validate_stage_seconds{{stage=\"{stage}\"}}"
+                )),
+                us(&validated, &format!("{stage}_us")),
+                "{name}: stage {stage}"
+            );
+        }
+        // The first empty and the first full template on the block: the template of the
+        // next height that has the time since the reception.
+        let templates = rows(dir.path(), name, "template.jsonl");
+        for (template, event) in [("empty", "template_empty"), ("full", "template_full")] {
+            let found: Vec<&Value> = templates
+                .iter()
+                .filter(|row| {
+                    row["event"] == event
+                        && row["parent"] == hash.as_str()
+                        && !row["since_received_us"].is_null()
+                })
+                .collect();
+            let [row] = found[..] else {
+                panic!("{name}: {} timed {event} rows on the block", found.len());
+            };
+            assert_eq!(row["height"], height + 1);
+            assert_eq!(
+                gauge(&format!(
+                    "hayai_last_template_received_to_ready_seconds{{template=\"{template}\"}}"
+                )),
+                us(row, "since_received_us"),
+                "{name}: {event}"
+            );
+        }
+    }
 }
 
 /// The outpoint and the value of the coinbase output of `block`.
@@ -1563,24 +2013,26 @@ fn a_header_that_fails_a_time_rule_costs_its_peer_nothing() {
     late[0].0.time += 3 * 60 * 60;
     chain.extend(late);
     let peer = ScriptedPeer::serve([127, 0, 0, 12], chain, Script::default());
-    let x = start(dir.path(), "x", false, false);
+    let x = start_with(dir.path(), "x", false, false, METRICS);
     x.relay.connect(peer.addr).expect("x dials the peer");
     wait_tip(&x, tip);
     assert!(!x.relay.peer_manager().is_banned(peer.addr.ip()));
     assert_eq!(x.relay.peer_manager().score(peer.addr.ip()), 0);
-    // The next ticks of the block synchronization write a `sync_progress` row.
-    thread::sleep(Duration::from_millis(600));
+    // The peer sends the late header with the 30 others in one message, so the report
+    // at the header height 30 comes after the node refused it.
+    wait_sync_report(&x, 30);
     x.shutdown().expect("clean shutdown");
     a.shutdown().expect("clean shutdown");
+    // A report writes no row in the second after another row: the rows have the height
+    // 30 or a lower one, and never the height of the late header.
     let headers = rows(dir.path(), "x", "block_sync.jsonl")
         .iter()
         .filter(|row| row["event"] == "sync_progress")
         .map(|row| row["headers_height"].as_u64().expect("a height"))
         .max();
-    assert_eq!(
-        headers,
-        Some(30),
-        "the late header is not in the header chain"
+    assert!(
+        matches!(headers, Some(..=30)),
+        "the late header is in the header chain: {headers:?}"
     );
 }
 
@@ -1749,6 +2201,21 @@ fn the_driver_queue_has_a_bound_for_each_peer() {
         false,
     );
     assert_eq!(queue.len(), crate::sync::MAX_QUEUED_PER_PEER + 1);
+}
+
+/// The `[metrics]` section of a node whose test reads its metrics.
+const METRICS: &str = "[metrics]\nendpoint_addr = \"127.0.0.1:0\"\n";
+
+/// Waits, with the bound of `wait_for`, until the tick of the block synchronization of
+/// `node` reported a header chain of `height`. The report sets the metric
+/// `hayai_sync_header_height` and then writes the `sync_progress` row in one call, and
+/// the shutdown of the node ends that call. Without this wait a node that reaches its tip
+/// and stops in less than one tick has no report.
+fn wait_sync_report(node: &Node, height: u32) {
+    wait_for(
+        &format!("a sync report at the header height {height}"),
+        || metric(node, "hayai_sync_header_height") == f64::from(height),
+    );
 }
 
 /// The value of the metric `name` of `node`.
@@ -2633,13 +3100,7 @@ mod slow {
             },
         );
 
-        let x = start_with(
-            dir.path(),
-            "x",
-            true,
-            false,
-            "[metrics]\nlisten_addr = \"127.0.0.1:0\"\n",
-        );
+        let x = start_with(dir.path(), "x", true, false, METRICS);
         x.relay
             .connect(silent.addr)
             .expect("x dials the silent peer");
@@ -2650,7 +3111,7 @@ mod slow {
         wait_tip(&x, tip);
         assert_eq!(metric(&x, "hayai_sync_bodies_withheld"), 1.0);
         assert_eq!(metric(&x, "hayai_sync_withheld_chains_total"), 1.0);
-        assert_eq!(metric(&x, "hayai_sync_header_height"), 120.0);
+        wait_sync_report(&x, 120);
         // The honest peer has no score and no stall.
         let honest = x
             .relay

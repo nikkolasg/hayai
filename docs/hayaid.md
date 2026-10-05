@@ -37,12 +37,23 @@ A full node needs no upstream node. It reads the chain from its peers.
 ```
 
 - Peers. The peer manager of hayai-net keeps the outbound peers (`outbound_peers`, the
-  DNS seeders of the network, the address book in `data_dir/peers.dat`). The node also
+  DNS seeders of the network, the address book in `peers.dat`, in the directory of `[network] cache_dir`). The node also
   dials the `peers` of the configuration every 10 s while they are not connected.
 - Header sync. One peer at a time gives the headers. The node sends `getheaders` with the
   locator of its best header chain, and again after each message of 160 headers. When the
-  peer has no more headers, the node asks each other peer one time. A peer that does not
-  answer in `header_timeout_ms` is disconnected. An `inv` with an unknown block is followed
+  peer has no more headers, the node asks each other peer one time. Only a peer with
+  evidence of more headers than the node has takes this role: its reported height is above
+  the best header of the node, or it sent a full `headers` message with a new header. Such a
+  peer that adds fewer than 160 headers in `header_timeout_ms` gets a stall penalty and is
+  disconnected. A peer without that evidence gets `getheaders` and no role, and its silence
+  has no penalty: Zakura, Zebra and zcashd send no `headers` message when they have no
+  header after the locator.
+- Idle poll. While no peer has the role of the header sync, the node sends `getheaders` to
+  one connected peer at a time, in rotation. The delay starts at `header_poll_ms` (30 s) and
+  doubles after each poll, up to `header_poll_max_ms` (8 min). News sets the delay back to
+  `header_poll_ms`: a new header, an `inv` with an unknown block, a new block of the relay,
+  a new peer that reports more than the best header. A poll without an answer costs the
+  peer nothing. An `inv` with an unknown block is followed
   by `getheaders` to its peer, and by at most 5 more each 300 ms while the header is
   missing (a hayaid peer announces a block before it serves the header). Each header passes the proof of work, the contextual header
   rules and the checkpoint list (`hayai_sync::headers`).
@@ -160,7 +171,7 @@ curl -s -u "$(cat hayaid-data/.cookie)" -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[10]}' http://127.0.0.1:18345/
 ```
 
-The node writes the credentials of its RPC server to the file `.cookie` in `data_dir`
+The node writes the credentials of its RPC server to the file `.cookie` in `cache_dir`
 (JSON-RPC server, Protection of the port).
 
 A second node sets `peers = ["127.0.0.1:18344"]`. A node that starts later synchronizes the
@@ -183,7 +194,7 @@ Read the section Mainnet first.
    target/release/hayaid config --network testnet > shadow.toml
    ```
 
-   Set `[network] peers` to the P2P address of the Zakura node, and set `[trace] dir`.
+   Set `[network] peers` to the P2P address of the Zakura node, and set `[network.zakura] trace_dir`.
 4. Start the node:
 
    ```
@@ -204,8 +215,8 @@ backend), syncs the block files and closes the trace files.
 
 ### Restart
 
-A start with a `data_dir` that holds `state.log` resumes the node. A start with an empty
-`data_dir` is a first start. A `data_dir` with files of `coins` or `blocks` and no
+A start with a `cache_dir` that holds `state.log` resumes the node. A start with an empty
+`cache_dir` is a first start. A `cache_dir` with files of `coins` or `blocks` and no
 `state.log` is not a hayaid directory, and the node refuses it.
 
 The node writes the files below:
@@ -214,7 +225,7 @@ The node writes the files below:
 |---|---|
 | `coins/` | The coins and the nullifiers. The best block record says which block the files hold. |
 | `blocks/` | The block files and their index. |
-| `state.log` | One checksummed record per coins flush: frontiers, value pools, history tree, block times and `bits`, and the anchors and the Sprout treestates that are new. The first record is the start state (the genesis block or the shadow seed). The node writes record version 4. A record of version 3 has no Sprout state: the node resumes from it, and above the genesis block it then does not know the Sprout state and refuses a block with a JoinSplit. A record of version 1 or 2 does not hold the transparent and the deferred value pool. The node resumes from such a record only at the genesis block. Above the genesis block the node stops with an error: remove `data_dir` and start the node again (a full node validates from the genesis block, a shadow node reads a new seed). |
+| `state.log` | One checksummed record per coins flush: frontiers, value pools, history tree, block times and `bits`, and the anchors and the Sprout treestates that are new. The first record is the start state (the genesis block or the shadow seed). The node writes record version 4. A record of version 3 has no Sprout state: the node resumes from it, and above the genesis block it then does not know the Sprout state and refuses a block with a JoinSplit. A record of version 1 or 2 does not hold the transparent and the deferred value pool. The node resumes from such a record only at the genesis block. Above the genesis block the node stops with an error: remove `cache_dir` and start the node again (a full node validates from the genesis block, a shadow node reads a new seed). |
 | `spent.log` | Shadow mode: the outpoints that hayai spent, as the coins store forgot them. |
 | `headers.log` | Full mode: every header that the header chain accepted, and the blocks that it found invalid. The node makes the log durable before each coins flush. |
 | `peers.dat` | Full mode: the address book of the peer manager. |
@@ -245,47 +256,72 @@ A replay ends at the first stored block that does not extend the replayed chain:
 reorg to a shorter branch, the index by height names a block of the old branch above the
 tip of the new branch.
 
-A failed first start removes what it created in `data_dir`, up to the write of the start
+`hayaid tip-height -n <network> [-c <dir>]` prints the height of the tip that a restart
+resumes at. It applies steps 1 to 3 without the validation, without a start of the node
+and without a write to `cache_dir`:
+
+| Case | Result |
+|---|---|
+| No node runs on `cache_dir` | The height of the tip after the restart, exit status 0 |
+| A node runs on `cache_dir` | A tip that the directory held during the read, or an error when the node changed a file during the read. The command takes no lock and changes no file |
+| `cache_dir` is empty, is absent or has no `state.log` | `hayaid: Failed to read chain tip height from state: State directory doesn't have a chain tip block: <dir> has no state.log`, exit status 1 |
+| `cache_dir` belongs to another network, or a file is damaged | One line that starts with `hayaid: Failed to read chain tip height from state:`, exit status 1 |
+
+A stored block that fails the validation of step 3 stops the start of the node. The command
+does not validate, so it prints a height at or above that block.
+
+A failed first start removes what it created in `cache_dir`, up to the write of the start
 record. A seed that fails (the Zakura node is not reachable or not synchronized) leaves
-`data_dir` as it was. A node refuses a `data_dir` of another network or mode.
+`cache_dir` as it was. A node refuses a `cache_dir` of another network or mode.
 
 ## Configuration
 
 `hayaid config --network regtest|testnet|mainnet` prints every key with its default.
 Unknown keys are errors.
 
+A setting that Zakura also has uses the section, the key and the value format of
+`zakurad`. A key of `zakurad` that hayaid does not use is a warning in the log, or an
+error when the key changes the consensus rules, the network or a data location.
+`docs/zakura-compat.md` has the command line, each key of `zakurad` and the metrics.
+
 | Section | Key | Default | Meaning |
 |---|---|---|---|
-| `[network]` | `network` | (required) | `regtest`, `testnet` or `mainnet` |
+| `[network]` | `network` | (required) | `Mainnet`, `Testnet` or `Regtest` |
 | | `mode` | `full` | `full` or `shadow` |
-| | `listen_addr` | none | P2P listen address; none: dial out only |
+| | `listen_addr` | none | P2P listen address; none: dial out only. An address without a port takes the default port of the network (8233, 18233, Regtest 18344) |
+| | `cache_dir` | `true` | Directory of the address book `peers.dat`: `true` is `[state] cache_dir`, `false` keeps the address book in memory only, a path is that directory |
 | | `peers` | `[]` | Peers to dial, and to dial again every 10 s while disconnected |
 | | `compact_relay` | `true` | Offer the compact-relay extension |
-| | `max_peers` | `16` | The node closes the newest inbound connections above this count |
+| | `max_peers` | `16`; with `peerset_initial_target_size`: the sum of its two limits | The node closes the newest inbound connections above this count |
 | | `prebuilt_candidates` | `0` | Candidates of peers' lanes on the tip whose body the node prebuilds while idle, at most; 0: off |
-| | `outbound_peers` | `8` | Full mode: outbound peers that the peer manager keeps (`outbound_target`) |
-| | `max_inbound` | `64` | Full mode: inbound peers accepted, at most |
-| | `max_per_ip` | `1`; Regtest: no bound | Full mode: connections with one IP address, at most |
-| | `seeders` | Mainnet: `dnsseed.str4d.xyz:8233`, `dnsseed.z.cash:8233`, `mainnet.seeder.shieldedinfra.net:8233`, `mainnet.seeder.zfnd.org:8233`; Testnet: `dnsseed.testnet.z.cash:18233`, `testnet.seeder.zfnd.org:18233`; Regtest: none | Full mode: DNS seeders as `host:port` |
+| | `peerset_initial_target_size` | none | Full mode: the size of the peer set with the rule of Zakura. The node keeps 3/2 of this count as outbound peers and accepts 3 times this count as inbound peers |
+| | `outbound_peers` | `8`, or the value of `peerset_initial_target_size` | Full mode: outbound peers that the peer manager keeps (`outbound_target`) |
+| | `max_inbound` | `64`, or the value of `peerset_initial_target_size` | Full mode: inbound peers accepted, at most |
+| | `max_connections_per_ip` | `1`; Regtest: no bound | Full mode: connections with one IP address, at most |
+| | `initial_mainnet_peers` (Mainnet), `initial_testnet_peers` (Testnet and Regtest) | Mainnet: `dnsseed.str4d.xyz:8233`, `dnsseed.z.cash:8233`, `mainnet.seeder.shieldedinfra.net:8233`, `mainnet.seeder.zfnd.org:8233`; Testnet: `dnsseed.testnet.z.cash:18233`, `testnet.seeder.zfnd.org:18233`; Regtest: none | Full mode: DNS seeders as `host:port` |
 | | `ban_secs` | `86400` | Full mode: duration of a ban |
 | `[sync]` | `memory_budget_bytes` | `1073741824` | Full mode: bound of the downloaded blocks in memory plus 2 MB for each request without an answer |
 | | `request_timeout_ms` | `8000` | Full mode: a peer with a request that sends no block for this time stalls; two stalls disconnect it |
-| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync is disconnected after this time without an answer |
-| `[state]` | `data_dir` | `hayaid-data` | Coins store, block files and state logs; an empty directory starts a new node, a hayaid directory resumes it (Restart) |
+| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync must add 160 headers in this time, or it is disconnected. Only a peer with evidence of more headers than the node has is that peer |
+| | `header_poll_ms` | `30000` | Full mode: first delay of the idle poll of the header sync (`getheaders` to one peer). The delay doubles after each poll, and a new block sets it back |
+| | `header_poll_max_ms` | `480000` | Full mode: largest delay of the idle poll of the header sync |
+| `[network.zakura]` | `trace_dir` | none | JSONL trace directory; none: tracing is off |
+| `[state]` | `cache_dir` | `hayaid-data` | Coins store, block files and state logs; an empty directory starts a new node, a hayaid directory resumes it (Restart) |
 | | `backend` | `memory` | `memory` (`MemBacking`: log and snapshots) or `rocksdb` (`RocksBacking`) |
 | | `flush_interval_blocks` | `100` | Blocks between two flushes of the finalized coins |
 | | `snapshot_interval_blocks` | `10000` | Memory backend: finalized blocks between two snapshots |
 | `[rpc]` | `listen_addr` | none | JSON-RPC server; full mode only |
 | | `enable_cookie_auth` | `true` | Each request needs the credentials of the cookie file (JSON-RPC server, Protection of the port). `false`: no authentication |
-| | `cookie_dir` | `[state] data_dir` | Directory of the cookie file `.cookie` |
-| `[metrics]` | `listen_addr` | none | `GET /metrics` |
-| `[trace]` | `dir` | none | JSONL trace directory; none: tracing is off |
-| | `node` | `hayaid` | The `node` field of every row |
+| | `cookie_dir` | `[state] cache_dir` | Directory of the cookie file `.cookie` |
+| `[metrics]` | `endpoint_addr` | none | `GET /metrics` |
+| `[trace]` | `node` | `hayaid` | The `node` field of every trace row |
+| `[mempool]` | `tx_cost_limit` | `80000000` | ZIP 401: the total cost of the transactions in the mempool, at most |
 | `[mining]` | `miner_address` or `miner_script` | (one is required) | Script of the coinbase miner output |
+| | `extra_coinbase_data` | none | Text after `hayai: ` in the coinbase input of each template, 86 bytes at most |
 | | `regtest_produce` | `false` | Serve `generate n` (Regtest full mode) |
 | | `prebuild_own` | `true` | Full mode: prebuild the body of the newest template, so an own block commits as a pointer swap |
 | | `lane_publication` | `all` | Full mode with the compact relay: the part of the template that the node publishes to its hayai peers before it finds a block. `all`, `public` or `none` (Lane publication and private transactions) |
-| `[regtest]` | `activation_heights` | none | Regtest only: `{ nu6 = h, nu6_1 = h, nu6_2 = h, nu6_3 = h }`, the activation heights of the upgrades after NU5. Each height is above 1 and at or above the height of the upgrade before it. Each node of one Regtest network needs the same values, and a node keeps them for the life of its `data_dir` |
+| `[regtest]` | `activation_heights` | none | Regtest only: `{ nu6 = h, nu6_1 = h, nu6_2 = h, nu6_3 = h }`, the activation heights of the upgrades after NU5. Each height is above 1 and at or above the height of the upgrade before it. Each node of one Regtest network needs the same values, and a node keeps them for the life of its `cache_dir` |
 | | `checkpoints` | `[]` | Regtest only: `[[height, "hash"], ...]`, the hash as `getbestblockhash` prints it. The genesis block is always a checkpoint |
 | | `mandatory_checkpoint_height` | `0` | Regtest only: a block at or below this height has the checkpoint path only. The last checkpoint must be at or above it |
 | | `lockbox_disbursements` | `[]` | Regtest only: `[{ address = "t2...", amount = n }, ...]`, the outputs that the coinbase of the `nu6_1` block must have, in zatoshis. The deferred pool pays them. The address is a P2SH address. The key has the meaning of `lockbox_disbursements` of the Regtest parameters of Zakura. A network with an `nu6_1` height needs one entry or more: without one no node accepts a block at that height, and the node does not start |
@@ -293,9 +329,13 @@ Unknown keys are errors.
 | `[shadow]` | `rpc_addr` | (required in shadow mode) | JSON-RPC of the Zakura node |
 | | `start_height` | upstream tip | hayai validates from `start_height + 1` |
 | | `poll_interval_ms` | `200` | Time between two `getbestblockhash` calls |
-| `[log]` | `level` | `info` | `error`, `warn`, `info`, `debug` or `trace` |
+| `[tracing]` | `filter` | `info` | The log level: `error`, `warn`, `info`, `debug` or `trace`. hayaid takes one level and no filter of a module |
+| | `use_color` | `true` | ANSI colour codes when the log goes to a terminal |
+| | `force_use_color` | `false` | ANSI colour codes in each case |
+| | `log_file` | none | The log goes to this file, in append mode; none: stderr |
 
-The node writes its log to stderr. It writes ANSI colour codes only when stderr is a terminal.
+The node writes its log to stderr, or to `log_file`. It writes ANSI colour codes only when
+stderr is a terminal, unless `force_use_color` is set.
 
 ## Lane publication and private transactions
 
@@ -355,7 +395,7 @@ The server has the cookie authentication of Zakura and zcashd. It is on by defau
 
 - At each start the node makes a secret of 32 random bytes from the random source of the
   operating system. It writes `__cookie__:<secret>` (the secret in base64) to the file
-  `.cookie` in `[rpc] cookie_dir`, by default `[state] data_dir`.
+  `.cookie` in `[rpc] cookie_dir`, by default `[state] cache_dir`.
 - The file has the mode 0600 from its creation. The node replaces a file that an earlier
   run left. A clean stop removes the file. A node that cannot write the file does not
   start.
@@ -382,7 +422,7 @@ The same rules in Zakura: file name and content (`zakura-rpc/src/server/cookie.r
 | Subject | Zakura | hayaid |
 |---|---|---|
 | Request without the credentials | Error 401 in the code (`http_request_compatibility.rs:229-233`). The zakurad of the Regtest pair closes the connection without an HTTP answer | HTTP status 401 |
-| Default of `cookie_dir` | The cache directory of the user (`config/rpc.rs:183`) | `[state] data_dir` |
+| Default of `cookie_dir` | The cache directory of the user (`config/rpc.rs:183`) | `[state] cache_dir` |
 | `cookie_file_name` | A key (`config/rpc.rs:119-121`) | Not a key: the name is `.cookie` |
 | No authentication on Mainnet and Testnet | The methods of the class `Unauthenticated` only (`server.rs:410-416`, `methods.rs:204-246`) | Each method |
 | TLS, `admin_listen_addr` | Present (`config/rpc.rs:46-60`) | Absent |
@@ -632,14 +672,14 @@ when the queue is full (`hayai_trace_dropped_rows_total`), and flushes and fsync
 | File | Event | Fields |
 |---|---|---|
 | `block_sync.jsonl` | `block_header_checked` | `hash`, `height`, `result` (`ok`, `rejected`), `reason`, `elapsed_us` |
-| | `block_received` | `peer`, `height`, `hash`, `bytes`, `source` (`legacy`, `compact`, `local`, `download`, `upstream_rpc`) |
+| | `block_received` | `peer`, `height`, `hash`, `bytes`, `source` (`legacy`, `compact`, `local`, `download`, `upstream_rpc`), `received_unix_us` (the reception of the block on the wall clock, see Block clock) |
 | | `sync_progress` | full mode, at most one row each second, when a value changed: `headers_height`, `blocks_height`, `peers`, `in_flight`, `held_bytes` |
 | `commit_state.jsonl` | `commit_start` | `source` (`hayaid`), `apply_class` (expected: `full`, `prebuilt_own`, `prebuilt_candidate`, `checkpoint`), `origin` (`local`, `legacy`, `compact`, `download`, `stored`, `upstream_rpc`), `height`, `hash` |
-| | `block_validated` | `height`, `hash`, `result` (`valid`, `invalid`, `wrong_body`, `not_validated` for a local fault), `class` (`empty`, `transparent`, `shielded`), `txs`, `known`, `unknown`, `<stage>_us` for each stage of `hayai_validate::Timings`, `block_commitments_checked`, `trusted_coins`, `trusted_nullifiers`, `trusted_anchors`, `reason` |
-| | `commit_finish` | `source`, `apply_class` (taken: `full`, `prebuilt_own`, `prebuilt_candidate`, or `prebuilt` for a block a prebuilt body rejected), `height`, `hash`, `result` (`committed`, `rejected`, `stopped` for a local fault), `reason`, `elapsed_ms` |
+| | `block_validated` | `height`, `hash`, `result` (`valid`, `invalid`, `wrong_body`, `not_validated` for a local fault), `class` (`empty`, `transparent`, `shielded`), `txs`, `known`, `unknown`, `<stage>_us` for each stage of `hayai_validate::Timings`, `block_commitments_checked`, `trusted_coins`, `trusted_nullifiers`, `trusted_anchors`, `reason`; for a valid block also `bytes`, `since_received_us`, `validation_us`, `contextual_commit_us` (Block clock) |
+| | `commit_finish` | `source`, `apply_class` (taken: `full`, `prebuilt_own`, `prebuilt_candidate`, or `prebuilt` for a block a prebuilt body rejected), `height`, `hash`, `result` (`committed`, `rejected`, `stopped` for a local fault), `reason`, `elapsed_ms`; for a committed block also `received_to_commit_us`, `commit_us` (Block clock) |
 | | `block_disconnected` | a reorg: `height`, `hash` |
 | | `upstream_verdict` | shadow mode: `height`, `hash`, `hayai` (`valid`, `invalid`, `not_validated`), `upstream`, `agree` (`null` when hayai has no verdict), `level`, `reason` |
-| `template.jsonl` | `template_empty`, `template_full` | `height`, `parent`, `template_id`, `txs`, `fees`, `since_tip_us` |
+| `template.jsonl` | `template_empty`, `template_full` | `height`, `parent`, `template_id`, `txs`, `fees`, `since_tip_us`, `since_received_us` (the first empty and the first full template on a block only, else `null`) |
 
 `commit_start` and `commit_finish` have Zakura's names and fields. The relay emits
 `block_received` when the complete body reaches the driver's queue: after the header
@@ -649,20 +689,61 @@ The relay of hayai-net has no observer interface, so hayaid emits no
 `block_reconstructed` and no `block_forwarded` rows. The counters of
 `Relay::metrics()` are in `/metrics`.
 
+### Block clock
+
+Each committed block has these points on the monotonic clock of the node. A trace row
+and a gauge of the same quantity have the value of one clock reading.
+
+| Point | Definition |
+|---|---|
+| received | The node has each byte of the block. `download`: the arrival of the `block` message on the reader thread of the peer, before the parse. `compact`, `legacy`, `local`: the arrival of the complete block at the driver queue, after the reconstruction and the header check. `stored`, `upstream_rpc`: the read of the block by the driver |
+| start | The driver takes the block (`commit_start`) |
+| validated | The block passed each consensus check and its layer is on the chain (`block_validated`, `result` = `valid`) |
+| committed | The block is the tip (`TipWatch::set`): it is in the block file, the prepared store has the new tip (`commit_finish`) |
+| template ready | `TemplateFeed::publish` returned for the first empty (coinbase only) or the first full template on the block. From that moment `getblocktemplate`, a long poll and the push protocol give this template |
+
+| Quantity | Trace field | Gauge of the last block | Histogram |
+|---|---|---|---|
+| received to validated | `block_validated.since_received_us` | `hayai_last_block_received_to_validated_seconds` | `hayai_block_received_to_validated_seconds` |
+| start to validated | `block_validated.validation_us` | `hayai_last_block_validation_seconds` | none |
+| contextual commit: stages `context`, `trees`, `history` plus the push of the layer on the chain | `block_validated.contextual_commit_us` | `hayai_last_block_contextual_commit_seconds` | `hayai_contextual_commit_duration_seconds` |
+| validated to committed | `commit_finish.commit_us` | `hayai_last_block_commit_seconds` | none |
+| received to committed | `commit_finish.received_to_commit_us` | `hayai_last_block_received_to_committed_seconds` | `hayai_block_receive_to_commit_seconds`, `sync_block_verify_duration_seconds{result="success"}` |
+| received to template ready | `template_empty.since_received_us`, `template_full.since_received_us` | `hayai_last_template_received_to_ready_seconds{template}` | `hayai_block_received_to_template_seconds{template}` |
+| each validation stage | `block_validated.<stage>_us` | `hayai_last_block_validate_stage_seconds{stage}` | `hayai_validate_stage_duration_seconds{stage}` |
+
+- During the first synchronization a block waits for its parent blocks: "received to
+  validated" and "received to committed" contain that wait. At the tip the wait is the
+  queue of the driver only.
+- At the tip the template moves to a block before the verification of its proofs
+  (speculative tip). "received to template ready" can then be smaller than "received
+  to validated". The node replaces the template when the block is not valid.
+- The stages of the validation split: `prepare_unknown` (the transactions that the
+  prepared store did not have), `scripts` and `shielded` (signatures and proofs),
+  `lookup`, `context`, `trees`, `history` (the checks against the state).
+- A scrape reads the gauges one after the other. A scrape during a commit can mix the
+  values of two blocks. The trace rows are the reference for a table of blocks.
+
 ## Metrics
 
 | Name | Type | Meaning |
 |---|---|---|
 | `zcash_chain_verified_block_height` | gauge | Height of the newest validated block on the best chain (Zakura name) |
 | `state_memory_best_committed_block_height` | gauge | Height of the committed tip (Zakura name) |
-| `sync_block_verify_duration_seconds{result}` | histogram | Validation time, `success` or `failure` (Zakura name) |
+| `sync_block_verify_duration_seconds{result}` | histogram | Reception of a block to its commit (`success`) or to its rejection (`failure`) (Zakura name) |
+| `state_finalized_block_height` | gauge | Height of the newest block whose coins are in the coins store on disk (Zakura name) |
+| `hayai_base_height` | gauge | Height of the base in memory: the newest block below the layers of the reorganization depth |
+| `sync_downloads_in_flight` | gauge | Full mode: block requests without an answer plus downloaded blocks that wait for the validator (Zakura name) |
+| `sync_downloaded_block_count` | counter | Full mode: blocks that the block download received and stored (Zakura name) |
+| `zcash_net_peers` | gauge | Connected peers after the handshake (Zakura name) |
+| `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | counter | Bytes of the P2P messages, received and sent, updated every second (Zakura names) |
 | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | gauge | Prepared store (Zakura names) |
-| `mining_template_rebuilt` | counter | Full and changed templates (Zakura name) |
+| `hayai_template_updates_total` | counter | Full and changed templates |
 | `hayai_validate_stage_duration_seconds{stage}` | histogram | Each stage of `hayai_validate::Timings` |
 | `hayai_commit_duration_seconds` | histogram | `commit_start` to `commit_finish` |
 | `hayai_prepared_store_hits_total`, `hayai_prepared_store_misses_total` | counter | Block transactions from the store, or prepared during validation |
 | `hayai_blocks_rejected_total` | counter | Blocks that failed validation: invalid blocks and wrong bodies |
-| `hayai_peers` | gauge | Connected peers |
+| `hayai_peers` | gauge | Connections of the relay, also before the end of the handshake |
 | `hayai_sync_header_height` | gauge | Full mode: height of the best header chain |
 | `hayai_sync_peers` | gauge | Full mode: peers that the block download can ask |
 | `hayai_sync_requests_in_flight` | gauge | Full mode: block requests without an answer |
@@ -685,6 +766,15 @@ The relay of hayai-net has no observer interface, so hayaid emits no
 | `hayai_coins_cache_entries`, `hayai_coins_cache_bytes` | gauge | Entries and memory of the coins cache of the finalized state |
 | `hayai_coins_store_coins` | gauge | Coins in the memory backing (memory backend) |
 | `hayai_build_info{version,chain,mode,crypto_backend,coins_backend}` | gauge | Always 1; the labels name the build and the configuration |
+| `hayai_last_block_height` | gauge | Height of the last committed block. Each `hayai_last_block_*` gauge is of this block (Block clock) |
+| `hayai_last_block_hash_suffix` | gauge | The last 12 hexadecimal digits of the hash of that block, as an integer |
+| `hayai_last_block_source{source}` | gauge | 1 for the `origin` of that block (`download`, `compact`, `legacy`, `local`, `stored`, `upstream_rpc`), 0 for each other value |
+| `hayai_last_block_size_bytes`, `hayai_last_block_transactions` | gauge | Wire bytes and transactions (with the coinbase) of that block |
+| `hayai_last_block_prepared_transactions{state}` | gauge | Transactions of that block that the prepared store had (`known`) and that the node prepared at block time (`unknown`). The coinbase is `unknown` |
+| `hayai_last_block_received_to_validated_seconds`, `hayai_last_block_validation_seconds`, `hayai_last_block_contextual_commit_seconds`, `hayai_last_block_commit_seconds`, `hayai_last_block_received_to_committed_seconds` | gauge | Durations of that block (Block clock) |
+| `hayai_last_block_validate_stage_seconds{stage}` | gauge | Each stage of `hayai_validate::Timings` for that block |
+| `hayai_last_template_tip_height{template}`, `hayai_last_template_received_to_ready_seconds{template}` | gauge | Height of a tip block, and the time from its reception to the first `empty` or `full` template on it |
+| `hayai_block_received_to_validated_seconds`, `hayai_block_receive_to_commit_seconds`, `hayai_contextual_commit_duration_seconds`, `hayai_block_received_to_template_seconds{template}` | histogram | The same durations for each block (Block clock) |
 
 ## Limits
 

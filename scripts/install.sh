@@ -90,7 +90,7 @@ write_config() {
   local tmp
   tmp=$(mktemp "${CONFIG_DIR}/hayaid.toml.XXXXXX")
   "${BIN}" config --network "${NETWORK}" >"${tmp}"
-  set_line "${tmp}" '^data_dir = .*$' "data_dir = \"${DATA_DIR}\""
+  set_line "${tmp}" '^cache_dir = "hayaid-data"$' "cache_dir = \"${DATA_DIR}\""
   chmod 0644 "${tmp}"
   mv "${tmp}" "${CONFIG}"
   log "wrote ${CONFIG} (${NETWORK})"

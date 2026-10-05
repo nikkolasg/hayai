@@ -45,7 +45,7 @@ use crate::{outpoint_key, BestBlock, Coin, CoinsBacking, Error, FlushGeneration,
 const SHARDS: usize = 256;
 /// Batched lookups of up to this many keys run on the calling thread.
 const SEQUENTIAL_LOOKUP: usize = 1024;
-const LOG_FILE: &str = "coins.log";
+pub(crate) const LOG_FILE: &str = "coins.log";
 const SNAPSHOT_FILE: &str = "coins.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "coins.snapshot.tmp";
 
@@ -243,6 +243,66 @@ where
     out
 }
 
+/// What [`scan_log`] found in a log.
+struct LogScan {
+    /// Length of the log up to the end of the last whole record.
+    len: u64,
+    /// Sequence number of the last record.
+    last_seq: Option<u64>,
+    /// Bytes of a torn last record after `len`.
+    torn_tail_bytes: u64,
+}
+
+/// Reads the records of `log` from its start and gives each record after `snapshot_seq`
+/// to `apply`. The function does not change the file.
+fn scan_log(
+    log: &mut File,
+    path: &Path,
+    snapshot_seq: u64,
+    mut apply: impl FnMut(Batch),
+) -> Result<LogScan, PersistError> {
+    let file_len = log.metadata().map_err(io_error(path))?.len();
+    let corrupt = |offset, reason| PersistError::CorruptLog {
+        path: path.to_owned(),
+        offset,
+        reason,
+    };
+    let mut scan = LogScan {
+        len: 0,
+        last_seq: None,
+        torn_tail_bytes: 0,
+    };
+    loop {
+        match read_record(log, scan.len, file_len).map_err(io_error(path))? {
+            Next::Record { seq, batch, len } => {
+                match scan.last_seq {
+                    Some(prev) if seq != prev + 1 => {
+                        return Err(corrupt(scan.len, "sequence numbers are not consecutive"))
+                    }
+                    None if seq > snapshot_seq + 1 => {
+                        return Err(corrupt(
+                            scan.len,
+                            "the log starts after the snapshot: records are missing",
+                        ))
+                    }
+                    _ => {}
+                }
+                scan.last_seq = Some(seq);
+                if seq > snapshot_seq {
+                    apply(batch);
+                }
+                scan.len += len;
+            }
+            Next::End => return Ok(scan),
+            Next::TornTail => {
+                scan.torn_tail_bytes = file_len - scan.len;
+                return Ok(scan);
+            }
+            Next::Corrupt(reason) => return Err(corrupt(scan.len, reason)),
+        }
+    }
+}
+
 impl MemBacking {
     /// Opens or creates the store in `dir`: loads the snapshot, replays the later log
     /// records and cuts a torn last record.
@@ -310,58 +370,45 @@ impl MemBacking {
     fn replay(&self, snapshot_seq: u64) -> Result<Recovery, PersistError> {
         let mut writer = self.writer.lock();
         let path = writer.path.clone();
-        let file_len = writer.log.metadata().map_err(io_error(&path))?.len();
-        let corrupt = |offset, reason| PersistError::CorruptLog {
-            path: path.clone(),
-            offset,
-            reason,
-        };
-        let mut offset = 0u64;
-        let mut last_seq: Option<u64> = None;
-        let mut recovery = Recovery {
-            replayed: 0,
-            torn_tail_bytes: 0,
-        };
-        loop {
-            match read_record(&mut writer.log, offset, file_len).map_err(io_error(&path))? {
-                Next::Record { seq, batch, len } => {
-                    match last_seq {
-                        Some(prev) if seq != prev + 1 => {
-                            return Err(corrupt(offset, "sequence numbers are not consecutive"))
-                        }
-                        None if seq > snapshot_seq + 1 => {
-                            return Err(corrupt(
-                                offset,
-                                "the log starts after the snapshot: records are missing",
-                            ))
-                        }
-                        _ => {}
-                    }
-                    last_seq = Some(seq);
-                    if seq > snapshot_seq {
-                        self.apply(batch);
-                        recovery.replayed += 1;
-                    }
-                    offset += len;
-                }
-                Next::End => break,
-                Next::TornTail => {
-                    recovery.torn_tail_bytes = file_len - offset;
-                    writer
-                        .log
-                        .set_len(offset)
-                        .and_then(|()| writer.log.sync_all())
-                        .map_err(io_error(&path))?;
-                    break;
-                }
-                Next::Corrupt(reason) => return Err(corrupt(offset, reason)),
-            }
+        let mut replayed = 0;
+        let scan = scan_log(&mut writer.log, &path, snapshot_seq, |batch| {
+            self.apply(batch);
+            replayed += 1;
+        })?;
+        if scan.torn_tail_bytes > 0 {
+            writer
+                .log
+                .set_len(scan.len)
+                .and_then(|()| writer.log.sync_all())
+                .map_err(io_error(&path))?;
         }
-        writer.len = offset;
-        if let Some(seq) = last_seq {
+        writer.len = scan.len;
+        if let Some(seq) = scan.last_seq {
             writer.seq = writer.seq.max(seq);
         }
-        Ok(recovery)
+        Ok(Recovery {
+            replayed,
+            torn_tail_bytes: scan.torn_tail_bytes,
+        })
+    }
+
+    /// The best block of the store in `dir`, from the header of the snapshot and the later
+    /// log records. The function writes nothing: it leaves a torn last record in the log.
+    pub fn stored_best_block(dir: &Path) -> Result<Option<BestBlock>, Error> {
+        let snapshot_path = dir.join(SNAPSHOT_FILE);
+        let (snapshot_seq, mut best) = match snapshot_path
+            .try_exists()
+            .map_err(io_error(&snapshot_path))?
+        {
+            true => snapshot::header(&snapshot_path)?,
+            false => (0, None),
+        };
+        let log_path = dir.join(LOG_FILE);
+        let mut log = File::open(&log_path).map_err(io_error(&log_path))?;
+        scan_log(&mut log, &log_path, snapshot_seq, |batch| {
+            best = batch.best_block.or(best);
+        })?;
+        Ok(best)
     }
 
     /// Applies a batch to the shards: adds, then spends, then nullifiers, each shard under

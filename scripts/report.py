@@ -1159,7 +1159,7 @@ def compatibility_section():
 
 
 
-TESTS = 799
+TESTS = 863
 
 
 def safety_section():
@@ -1230,22 +1230,22 @@ def safety_section():
 def status_section():
     rows = [
         ("done", "Validation engine", "Consensus rules up to NU6.3 with both cryptography backends, and NU7 with Zakura's crates."),
-        ("done", "The hayaid node", "Header sync, block download, checkpoints, reorg, restart, and a mempool that follows ZIP 317, ZIP 401 and ZIP 203."),
-        ("done", "Relay protocols", "Compact relay, transaction lanes and candidate blocks, with the draft ZIP. The normal protocol stays in use with every other node."),
+        ("done", "The hayaid node", "Header sync, block download, checkpoints, reorg, restart, and a mempool that follows ZIP 401 and ZIP 203 with Zakura's fee constants."),
+        ("done", "Relay protocols", "Compact relay, transaction lanes and candidate blocks, with the draft ZIP. The normal protocol stays in use with every other node. A miner selects what its node publishes before it solves a block."),
         ("done", "Mining interface", "Template push protocol and a getblocktemplate interface."),
+        ("done", "Operator interface", "The RPC methods that pools and operators use, each compared with a Zakura node, behind the same cookie authentication as Zakura."),
+        ("done", "Setup as Zakura", "The same command forms, the same config key names where the concept is the same, and the main metrics under Zakura's names."),
         ("done", "Benchmarks", "Against Zakura and Zebra code, with both cryptography backends."),
         ("done", "Verification", "Published vectors, comparison with Zakura's library code, a fuzz search and two independent reviews."),
-        ("done", "Pair with a real Zakura node", "Sync, mining, transactions, forks and invalid blocks in both directions on a private chain, across the upgrades up to NU7."),
+        ("done", "Pair with a real Zakura node", "Sync, mining, transactions, forks, invalid blocks and RPC answers in both directions on a private chain, across the upgrades up to NU7."),
         ("done", "Deployment", "Docker, systemd, Terraform for AWS, Prometheus and Grafana."),
-        ("progress", "Continuous integration", "The fast workflow runs on each push. The first runs on hosted runners are in progress."),
-        ("progress", "Operator interface", "The RPC methods that pools and operators use, each compared with a Zakura node."),
-        ("progress", "Lane publication setting", "A miner can publish its candidate, publish nothing, or keep chosen transactions private."),
-        ("progress", "Fee policy values", "The same fee constants as Zakura, so that both nodes relay the same transactions."),
-        ("progress", "Private chain configuration", "Lockbox and funding stream settings on Regtest, to match Zakura at the NU6.1 activation block."),
+        ("done", "Continuous integration", "Format, lints, tests, license check and the checks of the deployment files run on each push."),
+        ("progress", "Sync race on Testnet", "The package for two machines is ready: one Zakura node, one hayai node, one dashboard. It is not deployed yet."),
         ("todo", "Testnet", "A sync from genesis and 24 h at the tip, next to a Zakura node."),
         ("todo", "Mainnet replay", "10,000 Mainnet blocks in shadow mode with zero disagreements."),
         ("todo", "Live latency measurement", "Block and template latency against Zakura on Testnet (docs/testnet-benchmark-plan.md)."),
         ("todo", "Index for wallets", "Transaction and address indexes, so that lightwalletd or Zaino can use hayai as a full node."),
+        ("todo", "TLS for the RPC port", "The port has cookie authentication and no encryption. It must stay on the loopback address or behind a tunnel."),
         ("todo", "NU7 with the official crates", "It waits for the NU7 branch id in the official Zcash crates."),
         ("todo", "Log compaction", "The state log and the header log grow without a limit today."),
     ]

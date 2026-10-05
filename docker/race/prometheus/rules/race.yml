@@ -1,0 +1,159 @@
+# Recording rules of the race (docs/sync-race.md). Each series has the label `node`
+# (zakurad or hayaid). The comparison dashboard reads these series and the node metrics
+# that have one name and a close meaning on both nodes (docs/zakura-measurements.md).
+#
+# race:last_checkpoint_height comes from /prometheus/network.rules.yml, which the
+# Prometheus container writes at its start (compose.monitor.yml).
+#
+# A timestamp rule keeps its first value: `last_over_time(rule) or timestamp(condition)`
+# gives the stored value while there is one, and the time of the first evaluation with a
+# true condition before that. The resolution is the evaluation interval (5 s). A new
+# race needs an empty Prometheus volume.
+
+groups:
+  - name: race-nodes
+    interval: 5s
+    rules:
+      - record: race:block_height
+        expr: zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+
+      - record: race:blocks_per_second
+        expr: rate(zcash_chain_verified_block_total{job=~"zakurad|hayaid"}[1m])
+
+      - record: race:peers
+        expr: zcash_net_peers{job=~"zakurad|hayaid"}
+
+      # The first scrape that reached the node.
+      - record: race:start_timestamp_seconds
+        expr: >-
+          last_over_time(race:start_timestamp_seconds[1d])
+          or timestamp(up{job=~"zakurad|hayaid"} == 1)
+
+      # The first evaluation at or above the last checkpoint of the network.
+      - record: race:checkpoint_timestamp_seconds
+        expr: >-
+          last_over_time(race:checkpoint_timestamp_seconds[1d])
+          or timestamp(
+            zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+            >= on() group_left() race:last_checkpoint_height
+          )
+
+      # The height of the tip of the network, one value for both nodes: the highest of
+      # the header chain of hayaid and of the tip that zakurad estimates from the time of
+      # its tip block (sync_estimated_network_tip_height). zakurad with the legacy stack
+      # has no header chain.
+      - record: race:tip_reference_height
+        expr: max(hayai_sync_header_height or sync_estimated_network_tip_height)
+
+      # The first evaluation at the tip: the reference is above the last checkpoint, and
+      # the block height of the node is 2 blocks or less below it.
+      - record: race:tip_timestamp_seconds
+        expr: >-
+          last_over_time(race:tip_timestamp_seconds[1d])
+          or timestamp(
+            zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+            >= on() group_left() (race:tip_reference_height - 2)
+            and on() (race:tip_reference_height > on() race:last_checkpoint_height)
+          )
+
+      - record: race:seconds_to_checkpoint
+        expr: race:checkpoint_timestamp_seconds - race:start_timestamp_seconds
+
+      - record: race:seconds_to_tip
+        expr: race:tip_timestamp_seconds - race:start_timestamp_seconds
+
+      # Bytes of the P2P messages for each second.
+      - record: race:net_in_bytes_per_second
+        expr: rate(zcash_net_in_bytes_total{job=~"zakurad|hayaid"}[1m])
+
+      - record: race:net_out_bytes_per_second
+        expr: rate(zcash_net_out_bytes_total{job=~"zakurad|hayaid"}[1m])
+
+      # Mean service time of each RPC method over 5 minutes. zakurad exports a summary
+      # and hayaid a histogram: the sum and the count are the common part.
+      - record: race:rpc_request_seconds:mean5m
+        expr: >-
+          sum by (node, method) (rate(rpc_request_duration_seconds_sum{job=~"zakurad|hayaid"}[5m]))
+          / sum by (node, method) (rate(rpc_request_duration_seconds_count{job=~"zakurad|hayaid"}[5m]))
+
+  # One sample for each block at the tip. The window is the scrape interval before the
+  # last one (10 s that end 5 s before the evaluation): it has 2 samples. With one block
+  # between them, the increase of the sum divided by the increase of the count is the
+  # value of that block. With 2 blocks it is their mean. The series has no sample for a
+  # window without a block. The value comes one scrape after the commit, because zakurad
+  # sets its height gauge after the summary: the height gauge then has the height of
+  # the block. A next block in the same 5 s makes the height 1 too high.
+  - name: race-blocks
+    interval: 5s
+    rules:
+      # zakurad: initial contextual checks and the commit to the non-finalized state.
+      # hayaid: the stages context, trees and history and the push of the layer.
+      - record: race:contextual_commit_seconds:last
+        expr: >-
+          increase(state_contextual_total_duration_seconds_sum{job="zakurad"}[10s] offset 5s)
+          / (increase(state_contextual_total_duration_seconds_count{job="zakurad"}[10s] offset 5s) > 0)
+          or
+          increase(hayai_contextual_commit_duration_seconds_sum{job="hayaid"}[10s] offset 5s)
+          / (increase(hayai_contextual_commit_duration_seconds_count{job="hayaid"}[10s] offset 5s) > 0)
+
+      # The block height of the node at the samples of the rule above.
+      - record: race:contextual_commit_block_height
+        expr: >-
+          zcash_chain_verified_block_height{job=~"zakurad|hayaid"}
+          and on (node) race:contextual_commit_seconds:last
+
+      # Share of the verification work that the node had from its mempool. zakurad:
+      # shielded bundles in its verification cache (block and mempool lookups). hayaid:
+      # transactions of blocks in its prepared store.
+      - record: race:verification_reuse:ratio5m
+        expr: >-
+          sum by (node) (rate(zakura_consensus_cache_hit{job="zakurad"}[5m]))
+          / (sum by (node) (rate(zakura_consensus_cache_hit{job="zakurad"}[5m]))
+          + sum by (node) (rate(zakura_consensus_cache_miss{job="zakurad"}[5m])))
+          or
+          sum by (node) (rate(hayai_prepared_store_hits_total{job="hayaid"}[5m]))
+          / (sum by (node) (rate(hayai_prepared_store_hits_total{job="hayaid"}[5m]))
+          + sum by (node) (rate(hayai_prepared_store_misses_total{job="hayaid"}[5m])))
+
+  - name: race-machines
+    interval: 5s
+    rules:
+      # Share of the CPU time of the machine that is not idle, 0 to 1.
+      - record: race:machine_cpu_utilisation
+        expr: 1 - avg by (node) (rate(node_cpu_seconds_total{job="node", mode="idle"}[1m]))
+
+      - record: race:machine_memory_used_bytes
+        expr: >-
+          node_memory_MemTotal_bytes{job="node"}
+          - node_memory_MemAvailable_bytes{job="node"}
+
+      # Used bytes of the file system of the node data (node-exporter has the two data
+      # volumes as mount points), one time for each device.
+      - record: race:machine_disk_used_bytes
+        expr: >-
+          sum by (node) (max by (node, device) (
+            node_filesystem_size_bytes{job="node", fstype=~"ext4|xfs|btrfs"}
+            - node_filesystem_avail_bytes{job="node", fstype=~"ext4|xfs|btrfs"}
+          ))
+
+      # Whole disks only: a partition has the bytes of its disk a second time.
+      - record: race:machine_disk_read_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_disk_read_bytes_total{job="node",
+          device=~"nvme[0-9]+n[0-9]+|sd[a-z]+|vd[a-z]+|xvd[a-z]+"}[1m]))
+
+      - record: race:machine_disk_written_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_disk_written_bytes_total{job="node",
+          device=~"nvme[0-9]+n[0-9]+|sd[a-z]+|vd[a-z]+|xvd[a-z]+"}[1m]))
+
+      # Interfaces of the machine, without the loopback and the Docker interfaces.
+      - record: race:machine_network_receive_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_network_receive_bytes_total{job="node",
+          device!~"lo|docker.*|veth.*|br-.*"}[1m]))
+
+      - record: race:machine_network_transmit_bytes_per_second
+        expr: >-
+          sum by (node) (rate(node_network_transmit_bytes_total{job="node",
+          device!~"lo|docker.*|veth.*|br-.*"}[1m]))

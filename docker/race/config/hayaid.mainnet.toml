@@ -1,0 +1,48 @@
+# hayaid of the race on Mainnet (docker/race/compose.node.yml, profile hayaid).
+# A full sync from the public network, from an empty data directory. The node only
+# observes: no miner uses it. The image has the default build
+# (the upstream Zcash crates).
+#
+# Each key that is not in this file has the default of hayaid: the DNS seeders of
+# Mainnet, the memory backend of the coins store. The other node of the race is not a
+# peer of this node.
+
+[network]
+network = "Mainnet"
+mode = "full"
+listen_addr = "[::]:8233"
+# A plain legacy node: the public Mainnet peers do not have the compact-relay extension.
+compact_relay = false
+# The same two limits as in zakurad.mainnet.toml: 37 outbound and 75 inbound peers,
+# 1 connection for each IP address.
+peerset_initial_target_size = 25
+max_connections_per_ip = 1
+
+[network.zakura]
+# The trace tables. `scripts/race_deploy.sh collect` reads them.
+trace_dir = "/var/lib/hayai/traces"
+
+[state]
+cache_dir = "/var/lib/hayai"
+
+[rpc]
+# The loopback address of the host, with the cookie file /var/lib/hayai/.cookie.
+listen_addr = "127.0.0.1:8232"
+enable_cookie_auth = true
+
+[metrics]
+# The firewall opens this port to the monitoring machine only.
+endpoint_addr = "0.0.0.0:19101"
+
+[trace]
+node = "hayaid"
+
+[mining]
+# No miner uses this node. The key completes the coinbase of the template.
+# The address is the Mainnet test address of Zakura
+# (crates/zakura-rpc/src/config/mining.rs, MINER_ADDRESS).
+miner_address = "t1T92bmyoPM7PTSWUnaWnLGcxkF6Jp1AwMY"
+
+[tracing]
+filter = "info"
+use_color = false

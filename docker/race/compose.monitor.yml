@@ -1,0 +1,94 @@
+# The monitoring machine of the race (docs/sync-race.md): Prometheus and Grafana.
+# Prometheus scrapes the node and node-exporter of machine A (zakurad) and of machine B
+# (hayaid).
+#
+#   docker compose -f compose.monitor.yml up -d
+#
+# Variables (a file .env beside this file, or the shell):
+#   RACE_ZAKURAD_HOST        address of machine A, as machine C reaches it (required)
+#   RACE_HAYAID_HOST         address of machine B, as machine C reaches it (required)
+#   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT   defaults 9999 and 19101
+#   RACE_ZAKURAD_EXPORTER_PORT, RACE_HAYAID_EXPORTER_PORT  node-exporter, default 9100
+#   RACE_NETWORK             mainnet (default) or testnet: the height of the last
+#                            checkpoint in the rules (3,499,045 or 4,023,200)
+#   RACE_LAST_CHECKPOINT_HEIGHT  another height for the rules (the Regtest dry run)
+#   RACE_PROMETHEUS_ADDR     listen address of Prometheus (default 127.0.0.1:9090)
+#   RACE_GRAFANA_ADDR, RACE_GRAFANA_PORT   Grafana (defaults 0.0.0.0 and 3000)
+#
+# Grafana reads its admin password from secrets/grafana_admin_password. Create that file
+# before the first start.
+
+name: race-monitor
+
+services:
+  prometheus:
+    container_name: race-prometheus
+    image: prom/prometheus:v3.5.0
+    network_mode: host
+    restart: unless-stopped
+    # Prometheus does not read variables in its configuration: the targets go into a
+    # file of the file service discovery before Prometheus starts.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat >/prometheus/targets.json <<EOF
+        [
+          {"targets": ["${RACE_ZAKURAD_HOST:?set RACE_ZAKURAD_HOST}:${RACE_ZAKURAD_METRICS_PORT:-9999}"], "labels": {"job": "zakurad", "node": "zakurad"}},
+          {"targets": ["${RACE_HAYAID_HOST:?set RACE_HAYAID_HOST}:${RACE_HAYAID_METRICS_PORT:-19101}"], "labels": {"job": "hayaid", "node": "hayaid"}},
+          {"targets": ["${RACE_ZAKURAD_HOST}:${RACE_ZAKURAD_EXPORTER_PORT:-9100}"], "labels": {"job": "node", "node": "zakurad"}},
+          {"targets": ["${RACE_HAYAID_HOST}:${RACE_HAYAID_EXPORTER_PORT:-9100}"], "labels": {"job": "node", "node": "hayaid"}}
+        ]
+        EOF
+        case "${RACE_NETWORK:-mainnet}" in
+          mainnet) checkpoint=3499045 ;;
+          testnet) checkpoint=4023200 ;;
+          *) echo "RACE_NETWORK must be mainnet or testnet" >&2; exit 1 ;;
+        esac
+        cat >/prometheus/network.rules.yml <<EOF
+        groups:
+          - name: race-network
+            interval: 5s
+            rules:
+              - record: race:last_checkpoint_height
+                expr: vector(${RACE_LAST_CHECKPOINT_HEIGHT:-$$checkpoint})
+        EOF
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --storage.tsdb.retention.time=90d \
+          --web.listen-address=${RACE_PROMETHEUS_ADDR:-127.0.0.1:9090}
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    container_name: race-grafana
+    image: grafana/grafana:12.1.1
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GF_SERVER_HTTP_ADDR: ${RACE_GRAFANA_ADDR:-0.0.0.0}
+      GF_SERVER_HTTP_PORT: ${RACE_GRAFANA_PORT:-3000}
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/comparison.json
+      # The data source of grafana/provisioning reads this address.
+      RACE_PROMETHEUS_ADDR: ${RACE_PROMETHEUS_ADDR:-127.0.0.1:9090}
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+secrets:
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password
+
+volumes:
+  prometheus-data:
+  grafana-data:
