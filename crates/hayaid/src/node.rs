@@ -2626,6 +2626,17 @@ impl Node {
                 .map_err(|e| fatal("follower thread", e))?,
             );
         }
+        // Full mode: the connection thread dials the addresses of the book and asks the DNS
+        // seeders until the node has its outbound peers. Without it the node has only the
+        // peers of `[network] peers`.
+        if let Mode::Full = mode {
+            workers.push(
+                relay
+                    .peer_manager()
+                    .spawn(&relay)
+                    .map_err(|e| fatal("connection thread", e))?,
+            );
+        }
         workers.push(spawn_ticker(
             Ticker {
                 relay: relay.clone(),
