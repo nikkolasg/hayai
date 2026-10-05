@@ -118,7 +118,7 @@ start_hayaid a
 wait_for 30 rpc a getblockcount '[]'
 start_hayaid b
 wait_for 30 rpc b getblockcount '[]'
-# shellcheck disable=SC2329 # called through wait_for
+# shellcheck disable=SC2317,SC2329 # called through wait_for
 peered() { curl -s "http://127.0.0.1:${A_MET}/metrics" | grep -q '^hayai_peers 1$'; }
 wait_for 30 peered || { log "the two nodes did not connect"; exit 1; }
 TRACE_1="${WORK}/a-trace"; TRACE_2="${WORK}/b-trace"; NAMES="a,b"
@@ -131,7 +131,7 @@ SAMPLER=$!
 log "mining ${BLOCKS} blocks on ${RPC_ADDR[a]}"
 rpc a generate "[${BLOCKS}]" >"${WORK}/generated.json"
 TARGET=$(rpc a getbestblockhash '[]')
-# shellcheck disable=SC2329 # called through wait_for
+# shellcheck disable=SC2317,SC2329 # called through wait_for
 followed() { [[ "$(rpc b getbestblockhash '[]')" == "${TARGET}" ]]; }
 if wait_for 120 followed; then
   log "the follower reached ${TARGET}"
