@@ -296,6 +296,13 @@ pub struct SyncSection {
     /// header sync.
     #[serde(default = "default_header_timeout")]
     pub header_timeout_ms: u64,
+    /// First delay of the idle poll of the header sync. The delay doubles after each poll
+    /// and starts again at this value when the node learns of a new block.
+    #[serde(default = "default_header_poll")]
+    pub header_poll_ms: u64,
+    /// Largest delay of the idle poll of the header sync.
+    #[serde(default = "default_header_poll_max")]
+    pub header_poll_max_ms: u64,
 }
 
 impl Default for SyncSection {
@@ -304,6 +311,8 @@ impl Default for SyncSection {
             memory_budget_bytes: default_memory_budget(),
             request_timeout_ms: default_request_timeout(),
             header_timeout_ms: default_header_timeout(),
+            header_poll_ms: default_header_poll(),
+            header_poll_max_ms: default_header_poll_max(),
         }
     }
 }
@@ -542,6 +551,12 @@ fn default_snapshot_interval() -> u32 {
 }
 fn default_memory_budget() -> u64 {
     1 << 30
+}
+fn default_header_poll() -> u64 {
+    crate::sync::HEADER_POLL_MS
+}
+fn default_header_poll_max() -> u64 {
+    crate::sync::HEADER_POLL_MAX_MS
 }
 fn default_request_timeout() -> u64 {
     8_000
@@ -877,6 +892,10 @@ impl Config {
         if self.sync.request_timeout_ms == 0 || self.sync.header_timeout_ms == 0 {
             return invalid("request_timeout_ms and header_timeout_ms must be at least 1");
         }
+        if self.sync.header_poll_ms == 0 || self.sync.header_poll_max_ms < self.sync.header_poll_ms
+        {
+            return invalid("header_poll_ms must be at least 1 and at most header_poll_max_ms");
+        }
         if let Some(data) = &self.mining.extra_coinbase_data {
             if data.len() > MAX_EXTRA_COINBASE_DATA {
                 return Err(ConfigError::Invalid(format!(
@@ -985,6 +1004,10 @@ pub fn default_toml(network: NetworkKind) -> String {
          request_timeout_ms = 8000\n\
          # The peer of the header sync is disconnected after this time without an answer.\n\
          header_timeout_ms = 120000\n\
+         # Without a header sync in progress: delay of the `getheaders` poll of one peer.\n\
+         # The delay doubles after each poll up to the largest value. A new block sets it back.\n\
+         header_poll_ms = 30000\n\
+         header_poll_max_ms = 480000\n\
          \n\
          [state]\n\
          # Coins database, block files and nothing else. hayaid needs an empty directory.\n\
@@ -1315,6 +1338,8 @@ mod tests {
         assert_eq!(c.sync.memory_budget_bytes, 1 << 30);
         assert_eq!(c.sync.request_timeout_ms, 8_000);
         assert_eq!(c.sync.header_timeout_ms, 120_000);
+        assert_eq!(c.sync.header_poll_ms, 30_000);
+        assert_eq!(c.sync.header_poll_max_ms, 480_000);
         let testnet =
             Config::parse("[network]\nnetwork = \"Testnet\"\n[mining]\nminer_script = \"51\"\n")
                 .expect("full mode on Testnet");

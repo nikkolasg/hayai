@@ -1292,3 +1292,17 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
   - A container that reads a file of mode 0600 of another user needs root with
     `DAC_READ_SEARCH` only (`cap_drop: ALL`).
   - Python as process 1 of a container ignores SIGTERM without a handler.
+
+## 2026-10-05 — Header sync: silence and the idle poll (`crates/hayaid/src/sync.rs`)
+
+- Zakura, Zebra and zcashd send no `headers` message when they have no header after the
+  locator. The stall rule of the header sync disconnected each such peer after
+  `header_timeout_ms`, also the only peer of the node.
+- The role of the header sync, with its stall rule, goes only to a peer with evidence of
+  more headers: a reported height above the best header, or a full `headers` message with a
+  new header. Each other peer gets `getheaders` and no role.
+- Idle poll: one `getheaders` to one peer in rotation, with a delay that doubles from
+  `header_poll_ms` to `header_poll_max_ms`. A new block sets the delay back.
+- Lesson: silence is a stall only with evidence that the peer has more than the node. Read
+  what the other implementations send for an empty result before a timeout becomes a
+  penalty.

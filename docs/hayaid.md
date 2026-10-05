@@ -41,8 +41,19 @@ A full node needs no upstream node. It reads the chain from its peers.
   dials the `peers` of the configuration every 10 s while they are not connected.
 - Header sync. One peer at a time gives the headers. The node sends `getheaders` with the
   locator of its best header chain, and again after each message of 160 headers. When the
-  peer has no more headers, the node asks each other peer one time. A peer that does not
-  answer in `header_timeout_ms` is disconnected. An `inv` with an unknown block is followed
+  peer has no more headers, the node asks each other peer one time. Only a peer with
+  evidence of more headers than the node has takes this role: its reported height is above
+  the best header of the node, or it sent a full `headers` message with a new header. Such a
+  peer that adds fewer than 160 headers in `header_timeout_ms` gets a stall penalty and is
+  disconnected. A peer without that evidence gets `getheaders` and no role, and its silence
+  has no penalty: Zakura, Zebra and zcashd send no `headers` message when they have no
+  header after the locator.
+- Idle poll. While no peer has the role of the header sync, the node sends `getheaders` to
+  one connected peer at a time, in rotation. The delay starts at `header_poll_ms` (30 s) and
+  doubles after each poll, up to `header_poll_max_ms` (8 min). News sets the delay back to
+  `header_poll_ms`: a new header, an `inv` with an unknown block, a new block of the relay,
+  a new peer that reports more than the best header. A poll without an answer costs the
+  peer nothing. An `inv` with an unknown block is followed
   by `getheaders` to its peer, and by at most 5 more each 300 ms while the header is
   missing (a hayaid peer announces a block before it serves the header). Each header passes the proof of work, the contextual header
   rules and the checkpoint list (`hayai_sync::headers`).
@@ -291,7 +302,9 @@ error when the key changes the consensus rules, the network or a data location.
 | | `ban_secs` | `86400` | Full mode: duration of a ban |
 | `[sync]` | `memory_budget_bytes` | `1073741824` | Full mode: bound of the downloaded blocks in memory plus 2 MB for each request without an answer |
 | | `request_timeout_ms` | `8000` | Full mode: a peer with a request that sends no block for this time stalls; two stalls disconnect it |
-| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync is disconnected after this time without an answer |
+| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync must add 160 headers in this time, or it is disconnected. Only a peer with evidence of more headers than the node has is that peer |
+| | `header_poll_ms` | `30000` | Full mode: first delay of the idle poll of the header sync (`getheaders` to one peer). The delay doubles after each poll, and a new block sets it back |
+| | `header_poll_max_ms` | `480000` | Full mode: largest delay of the idle poll of the header sync |
 | `[network.zakura]` | `trace_dir` | none | JSONL trace directory; none: tracing is off |
 | `[state]` | `cache_dir` | `hayaid-data` | Coins store, block files and state logs; an empty directory starts a new node, a hayaid directory resumes it (Restart) |
 | | `backend` | `memory` | `memory` (`MemBacking`: log and snapshots) or `rocksdb` (`RocksBacking`) |

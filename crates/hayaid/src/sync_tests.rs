@@ -24,6 +24,7 @@ use hayai_net::PeerProtocol;
 use hayai_rpc::BlockGenerator;
 use hayai_wire::header::{BlockHash, BlockHeader};
 use hayai_wire::{merkle_root, RawBlock};
+use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::config::Config;
@@ -337,6 +338,216 @@ fn with_bodies(blocks: &[Bytes]) -> Vec<(BlockHeader, Option<Bytes>)> {
         .iter()
         .map(|bytes| (parse(bytes).header, Some(bytes.clone())))
         .collect()
+}
+
+/// A legacy peer that answers `getheaders` only when it has a header after the locator, as
+/// Zakura, Zebra and zcashd do. It serves one connection and records each `getheaders`
+/// message.
+struct QuietPeer {
+    addr: SocketAddr,
+    blocks: Arc<Mutex<Vec<Bytes>>>,
+    /// The arrival time of each `getheaders` message, and whether the peer answered it.
+    asked: Arc<Mutex<Vec<(Instant, bool)>>>,
+    /// The connection of the node, for the messages that the peer sends.
+    stream: Arc<Mutex<Option<TcpStream>>>,
+    /// Connections that the node closed.
+    closed: Arc<AtomicUsize>,
+}
+
+impl QuietPeer {
+    fn serve(ip: [u8; 4], chain: &[Bytes]) -> Self {
+        let listener = TcpListener::bind((IpAddr::from(ip), 0)).expect("bind");
+        let peer = Self {
+            addr: listener.local_addr().expect("addr"),
+            blocks: Arc::new(Mutex::new(chain.to_vec())),
+            asked: Arc::default(),
+            stream: Arc::default(),
+            closed: Arc::default(),
+        };
+        let (blocks, asked) = (peer.blocks.clone(), peer.asked.clone());
+        let (writer, closed) = (peer.stream.clone(), peer.closed.clone());
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            *writer.lock() = Some(stream.try_clone().expect("a second handle"));
+            let reply = |message: &LegacyMessage| {
+                let mut guard = writer.lock();
+                let Some(stream) = guard.as_mut() else {
+                    unreachable!("the connection is set");
+                };
+                // The test ended the node: the read loop sees the closed connection.
+                let _ = send(stream, message);
+            };
+            reply(&version(blocks.lock().len() as u32));
+            while let Ok(message) = read_message(&mut stream, NET, usize::MAX) {
+                match message {
+                    LegacyMessage::Version(_) => reply(&LegacyMessage::Verack),
+                    LegacyMessage::Ping(nonce) => reply(&LegacyMessage::Pong(nonce)),
+                    LegacyMessage::GetHeaders(request) => {
+                        let headers: Vec<BlockHeader> =
+                            blocks.lock().iter().map(|b| parse(b).header).collect();
+                        let from = request
+                            .locator
+                            .iter()
+                            .find_map(|hash| headers.iter().position(|h| h.hash() == *hash))
+                            .map_or(0, |at| at + 1);
+                        let news = headers[from..].to_vec();
+                        asked.lock().push((Instant::now(), !news.is_empty()));
+                        if !news.is_empty() {
+                            reply(&LegacyMessage::Headers(news));
+                        }
+                    }
+                    LegacyMessage::GetData(items) => {
+                        for item in items {
+                            let InvItem::Block(hash) = item else { continue };
+                            let block = blocks
+                                .lock()
+                                .iter()
+                                .find(|b| parse(b).header.hash() == hash)
+                                .cloned();
+                            if let Some(bytes) = block {
+                                reply(&LegacyMessage::Block(bytes));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            closed.fetch_add(1, Ordering::Relaxed);
+        });
+        peer
+    }
+
+    /// The peer gets `block` and announces it with an `inv` message.
+    fn announce(&self, block: &Bytes) {
+        let hash = parse(block).header.hash();
+        self.blocks.lock().push(block.clone());
+        let mut guard = self.stream.lock();
+        let stream = guard.as_mut().expect("the node is connected");
+        send(stream, &LegacyMessage::Inv(vec![InvItem::Block(hash)])).expect("inv");
+    }
+
+    /// Waits for `count` `getheaders` messages without an answer in a row: the first
+    /// ones when `answered` is false, else the ones after the answered message. Gives
+    /// their times, after the time of the answered message.
+    fn polls(&self, answered: bool, count: usize) -> Vec<Instant> {
+        let mut times = Vec::new();
+        wait_for("the polls of the node", || {
+            let asked = self.asked.lock();
+            let from = match answered {
+                true => asked.iter().position(|(_, answer)| *answer),
+                false => Some(0),
+            };
+            let Some(from) = from else {
+                return false;
+            };
+            times = asked[from..]
+                .iter()
+                .enumerate()
+                .take_while(|(at, (_, answer))| !answer || (answered && *at == 0))
+                .map(|(_, (time, _))| *time)
+                .collect();
+            times.len() >= count + usize::from(answered)
+        });
+        times
+    }
+}
+
+/// A node at the height 5 that then connects to its only peer: a quiet peer with the same
+/// chain, which has no answer to its `getheaders`. The node has a window of the header
+/// sync of 500 ms and the idle poll delays `poll_ms` and `poll_max_ms`. Also gives the
+/// block of the height 6 and its tip.
+fn start_at_the_tip_of_a_quiet_peer(
+    dir: &Path,
+    ip: [u8; 4],
+    poll_ms: u64,
+    poll_max_ms: u64,
+) -> (Node, QuietPeer, Bytes, (u32, BlockHash)) {
+    let a = start(dir, "a", true, false);
+    generate(&a, 5);
+    let mut config = config_with(dir, "x", false, false, "");
+    config.sync.header_timeout_ms = 500;
+    config.sync.header_poll_ms = poll_ms;
+    config.sync.header_poll_max_ms = poll_max_ms;
+    let x = Node::start(&config).expect("x starts");
+    x.relay.connect(addr(&a)).expect("x dials a");
+    wait_tip(&x, a.tip.tip());
+    disconnect_all(&x);
+    wait_for("the end of the connection with a", || {
+        x.relay.peers().is_empty()
+    });
+    generate(&a, 1);
+    let next_tip = a.tip.tip();
+    let blocks = fetch_chain(&a);
+    a.shutdown().expect("clean shutdown");
+    let quiet = QuietPeer::serve(ip, &blocks[..5]);
+    x.relay.connect(quiet.addr).expect("x dials the quiet peer");
+    (x, quiet, blocks[5].clone(), next_tip)
+}
+
+/// The only peer of a node has the chain of the node and does not answer `getheaders`.
+/// After more than 6 windows of the header sync the peer is connected and has no penalty.
+/// Then the peer announces a new block: the node gets it at once, long before its next
+/// poll.
+#[test]
+fn a_peer_without_news_that_is_silent_stays_and_its_next_block_arrives_at_once() {
+    let dir = scratch();
+    let (x, quiet, next, next_tip) =
+        start_at_the_tip_of_a_quiet_peer(dir.path(), [127, 0, 0, 21], 200, 60_000);
+    // One `getheaders` at the connection, then the polls after 200, 400, 800 and 1,600 ms:
+    // 3 s, and the window is 500 ms. The next poll comes 3,200 ms after the last one.
+    let polls = quiet.polls(false, 5);
+    let peers = x.relay.peers();
+    assert!(
+        matches!(&peers[..], [peer] if peer.established && peer.addr == quiet.addr),
+        "the quiet peer is connected"
+    );
+    assert_eq!(quiet.closed.load(Ordering::Relaxed), 0);
+    assert_eq!(x.relay.peer_manager().score(quiet.addr.ip()), 0);
+    assert!(!x.relay.peer_manager().is_banned(quiet.addr.ip()));
+
+    quiet.announce(&next);
+    wait_tip(&x, next_tip);
+    let since_poll = polls[4].elapsed();
+    assert!(
+        since_poll < Duration::from_millis(3_200),
+        "the block came before the next poll: {since_poll:?}"
+    );
+    assert_eq!(x.relay.peer_manager().score(quiet.addr.ip()), 0);
+    x.shutdown().expect("clean shutdown");
+}
+
+/// The delay of the idle poll doubles up to its largest value, and a new block sets it
+/// back to its first value.
+#[test]
+fn the_idle_poll_of_the_header_sync_backs_off_and_starts_again_after_news() {
+    let dir = scratch();
+    let (x, quiet, next, next_tip) =
+        start_at_the_tip_of_a_quiet_peer(dir.path(), [127, 0, 0, 22], 200, 800);
+    // One `getheaders` at the connection, then the polls after 200, 400, 800 and 800 ms.
+    let polls = quiet.polls(false, 5);
+    let gaps: Vec<Duration> = polls.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    assert!(
+        gaps[0] < gaps[2] && gaps[1] < gaps[2],
+        "the delay grows: {gaps:?}"
+    );
+    assert!(
+        gaps[3] < gaps[2] * 3 / 2,
+        "the delay stays at its largest value: {gaps:?}"
+    );
+
+    quiet.announce(&next);
+    wait_tip(&x, next_tip);
+    // The node asked for the header of the announced block: the answered message.
+    let after = quiet.polls(true, 2);
+    let again = [after[1] - after[0], after[2] - after[1]];
+    assert!(
+        again.iter().all(|gap| *gap < gaps[3] * 3 / 4),
+        "the delay starts again: {again:?} after {gaps:?}"
+    );
+    assert_eq!(quiet.closed.load(Ordering::Relaxed), 0);
+    x.shutdown().expect("clean shutdown");
 }
 
 /// A node synchronizes 300 blocks from the genesis block from three peers, and uses more

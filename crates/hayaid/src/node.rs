@@ -2559,6 +2559,8 @@ impl Node {
                             ..DownloadConfig::default()
                         },
                         header_timeout_ms: config.sync.header_timeout_ms,
+                        header_poll_ms: config.sync.header_poll_ms,
+                        header_poll_max_ms: config.sync.header_poll_max_ms,
                     },
                     SyncParts {
                         headers,
