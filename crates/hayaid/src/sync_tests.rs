@@ -176,6 +176,10 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
             other => panic!("unexpected {other:?}"),
         }
     }
+    // The node sets its tip a moment before it tells the relay that the block is validated,
+    // and the relay serves a header only after that. An empty answer in that moment is not
+    // an error: the helper asks again until the deadline.
+    let deadline = Instant::now() + WAIT;
     let mut hashes: Vec<BlockHash> = Vec::new();
     while hashes.len() < tip as usize {
         let last = hashes.last().copied().unwrap_or(genesis);
@@ -190,7 +194,15 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
                 break headers;
             }
         };
-        assert!(!headers.is_empty(), "the node serves its whole chain");
+        if headers.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "the node serves its whole chain: {} of {tip} headers",
+                hashes.len()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
         hashes.extend(headers.iter().map(BlockHeader::hash));
     }
     let mut blocks = Vec::with_capacity(hashes.len());
