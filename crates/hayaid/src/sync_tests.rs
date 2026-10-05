@@ -374,7 +374,17 @@ fn a_node_synchronizes_from_three_peers_from_the_genesis_block() {
     peers.sort_unstable();
     peers.dedup();
     assert!(peers.len() >= 2, "blocks came from the peers {peers:?}");
-    assert!(received.iter().any(|row| row["event"] == "sync_progress"));
+    let mut events: Vec<&str> = received
+        .iter()
+        .filter_map(|row| row["event"].as_str())
+        .collect();
+    events.sort_unstable();
+    events.dedup();
+    assert!(
+        events.contains(&"sync_progress"),
+        "no sync_progress row in {} rows; the events are {events:?}",
+        received.len()
+    );
     let commits = rows(dir.path(), "x", "commit_state.jsonl");
     let committed = commits
         .iter()

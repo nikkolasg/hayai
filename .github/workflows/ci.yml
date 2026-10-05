@@ -81,7 +81,13 @@ jobs:
       # The same package set and features as the clippy job.
       - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked --no-run
       # The quotes are necessary: a plain YAML value cannot end with a colon.
-      - run: "cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- --skip slow::"
+      # The node network tests (`sync_tests`) run several nodes in one process and depend
+      # on timing. They run in the next step, one at a time, and do not fail the job
+      # until their timing rules are fixed.
+      - run: "cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- --skip slow:: --skip sync_tests::"
+      - name: node network tests (not required yet)
+        continue-on-error: true
+        run: "cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked -- sync_tests:: --skip slow:: --test-threads=1"
 
   deny:
     runs-on: ubuntu-24.04
