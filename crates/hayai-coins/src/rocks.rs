@@ -60,6 +60,25 @@ pub struct RocksBacking {
     db: DB,
 }
 
+fn best_block_of(db: &DB) -> Result<Option<BestBlock>, Error> {
+    let Some(cf) = db.cf_handle(CF_META) else {
+        return Err(Error::MissingColumnFamily(CF_META));
+    };
+    let Some(bytes) = db.get_pinned_cf(cf, KEY_BEST_BLOCK)? else {
+        return Ok(None);
+    };
+    let Some((height, hash)) = bytes
+        .split_first_chunk::<4>()
+        .filter(|(_, hash)| hash.len() == BEST_BLOCK_BYTES - 4)
+    else {
+        return Err(Error::MalformedBestBlock(bytes.len()));
+    };
+    Ok(Some(BestBlock {
+        height: u32::from_le_bytes(*height),
+        hash: hash.try_into().expect("32 bytes"),
+    }))
+}
+
 impl RocksBacking {
     /// Opens or creates the store at `path`.
     pub fn open(path: &Path, config: &Config) -> Result<Self, Error> {
@@ -91,20 +110,18 @@ impl RocksBacking {
     /// The block whose state the store holds: the record of the last generation written,
     /// `None` for a store no generation reached yet. Recovery replays the blocks after it.
     pub fn best_block(&self) -> Result<Option<BestBlock>, Error> {
-        let cf = self.cf(CF_META)?;
-        let Some(bytes) = self.db.get_pinned_cf(cf, KEY_BEST_BLOCK)? else {
-            return Ok(None);
-        };
-        let Some((height, hash)) = bytes
-            .split_first_chunk::<4>()
-            .filter(|(_, hash)| hash.len() == BEST_BLOCK_BYTES - 4)
-        else {
-            return Err(Error::MalformedBestBlock(bytes.len()));
-        };
-        Ok(Some(BestBlock {
-            height: u32::from_le_bytes(*height),
-            hash: hash.try_into().expect("32 bytes"),
-        }))
+        best_block_of(&self.db)
+    }
+
+    /// The best block of the store at `path`, read through a read-only open of RocksDB.
+    /// The function writes nothing to `path` and takes no lock of the store.
+    pub fn stored_best_block(path: &Path) -> Result<Option<BestBlock>, Error> {
+        best_block_of(&DB::open_cf_for_read_only(
+            &Options::default(),
+            path,
+            [CF_META],
+            false,
+        )?)
     }
 
     fn cf(&self, name: &'static str) -> Result<&rocksdb::ColumnFamily, Error> {

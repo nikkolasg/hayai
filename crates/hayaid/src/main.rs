@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use crossbeam_channel::{bounded, select};
 use hayaid::config::StateSection;
-use hayaid::persist::StateLog;
+use hayaid::node::stored_tip;
 use hayaid::{default_toml, Config, NetworkKind, Node};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -26,7 +26,7 @@ commands:
   start [FILTER]                        run the node (the default command)
   generate [-o <file>]                  print a default configuration (Mainnet)
   config --network <network>            print the default configuration of a network
-  tip-height -n <network> [-c <dir>]    print the height of the state on disk
+  tip-height -n <network> [-c <dir>]    print the height of the best tip on disk
   help                                  print this text
 
 options:
@@ -298,9 +298,13 @@ fn generate(network: NetworkKind, output: Option<PathBuf>) -> Result<(), String>
     }
 }
 
-/// Prints the height of the newest state record in the data directory: the block from
-/// which a restart continues. The directory is `cache_dir`, or `[state] cache_dir` of the
+/// Prints the height of the best tip that the data directory holds: the tip that a
+/// restart of the node resumes at (`hayaid::node::stored_tip`). The command starts no
+/// node and writes nothing. The directory is `cache_dir`, or `[state] cache_dir` of the
 /// configuration file, or the default of that key when there is no file.
+///
+/// An error has the text of `zakurad`. `zakurad` logs it and exits with the status 0.
+/// hayaid exits with the status 1, as for each other error.
 fn tip_height(
     config: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
@@ -316,14 +320,15 @@ fn tip_height(
         }
         (None, Err(_)) => StateSection::default().cache_dir,
     };
-    let (stored, height) = StateLog::newest(&dir).map_err(|e| e.to_string())?;
+    let failed = |cause: String| format!("Failed to read chain tip height from state: {cause}");
+    let (stored, height) = stored_tip(&dir).map_err(|e| failed(e.to_string()))?;
     if stored != network {
-        return Err(format!(
+        return Err(failed(format!(
             "{} belongs to a {} node, not to a {} node",
             dir.display(),
             stored.name(),
             network.name()
-        ));
+        )));
     }
     println!("{height}");
     Ok(())

@@ -178,7 +178,35 @@ impl BlockStore {
             .map(|name| ColumnFamilyDescriptor::new(name, Options::default()));
         let db = DB::open_cf_descriptors(&opts, dir.join("index"), cfs)?;
         index_by_hash(&db)?;
+        Self::with_index(
+            dir,
+            db,
+            max_file_bytes,
+            OpenOptions::new().create(true).append(true),
+        )
+    }
 
+    /// Opens an existing store for reads. The open writes nothing to `dir` and takes no
+    /// lock of the index, so it is safe while a node has the store open: the store then
+    /// holds the blocks that the index had at the open. An append is an error.
+    pub fn open_read_only(dir: impl AsRef<Path>) -> Result<Self, Error> {
+        let dir = dir.as_ref().to_path_buf();
+        let db = DB::open_cf_for_read_only(
+            &Options::default(),
+            dir.join("index"),
+            [CF_HEIGHT_TO_LOC, CF_HASH_TO_HEIGHT, CF_HASH_TO_LOC],
+            false,
+        )?;
+        Self::with_index(dir, db, MAX_FILE_BYTES, OpenOptions::new().read(true))
+    }
+
+    /// The store over the open index `db`. `data_file` opens the current data file.
+    fn with_index(
+        dir: PathBuf,
+        db: DB,
+        max_file_bytes: u64,
+        data_file: &OpenOptions,
+    ) -> Result<Self, Error> {
         let tip = {
             let cf = db.cf_handle(CF_HEIGHT_TO_LOC).expect("cf created");
             match db.iterator_cf(cf, IteratorMode::End).next() {
@@ -205,10 +233,7 @@ impl BlockStore {
                 file_no = file_no.max(n);
             }
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join(data_file_name(file_no)))?;
+        let file = data_file.open(dir.join(data_file_name(file_no)))?;
         let size = file.metadata()?.len();
 
         Ok(Self {
@@ -574,6 +599,57 @@ mod tests {
                 len: 3
             })
         );
+    }
+
+    /// Each file below `dir` with its length, its modification time and its content.
+    fn listing(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let meta = std::fs::metadata(&path).unwrap();
+            match meta.is_dir() {
+                true => files.extend(listing(&path)),
+                false => files.push((
+                    path.clone(),
+                    meta.len(),
+                    meta.modified().unwrap(),
+                    std::fs::read(&path).unwrap(),
+                )),
+            }
+        }
+        files.sort();
+        files
+    }
+
+    /// A read-only open reads the blocks of a store that was not closed with a sync, and
+    /// also while the store is open for writes. It changes no file, it does not append,
+    /// and it does not make a store.
+    #[test]
+    fn a_read_only_open_reads_the_blocks_and_writes_nothing() {
+        let dir = tempdir();
+        let store = BlockStore::open(dir.path()).unwrap();
+        store.append_bytes(1, &hash(1), b"one").unwrap();
+        store.append_bytes(2, &hash(2), b"two").unwrap();
+        let live = BlockStore::open_read_only(dir.path()).unwrap();
+        assert_eq!(live.tip_height(), Some(2));
+        drop((live, store));
+
+        let before = listing(dir.path());
+        let read = BlockStore::open_read_only(dir.path()).unwrap();
+        assert_eq!(read.tip_height(), Some(2));
+        assert_eq!(read.get_bytes(1).unwrap().unwrap(), &b"one"[..]);
+        assert_eq!(read.get_by_hash(&hash(2)).unwrap().unwrap(), &b"two"[..]);
+        let Err(_) = read.append_bytes(3, &hash(3), b"three") else {
+            panic!("an append to a read-only store");
+        };
+        drop(read);
+        assert_eq!(listing(dir.path()), before);
+
+        let empty = tempdir();
+        let Err(_) = BlockStore::open_read_only(empty.path()) else {
+            panic!("a read-only open of a directory without a store");
+        };
+        assert_eq!(listing(empty.path()), Vec::new());
     }
 
     #[test]

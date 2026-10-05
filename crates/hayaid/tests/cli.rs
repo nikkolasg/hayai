@@ -258,8 +258,10 @@ fn start_warns_about_each_zakura_key_that_it_does_not_use() {
     assert!(!log.contains('\u{1b}'), "ANSI escape in {log}");
 }
 
-/// `tip-height` prints the height of the state of a data directory: the directory of
-/// `--cache-dir`, or the one of the configuration file.
+/// `tip-height` reads the data directory of `--cache-dir`, or the one of the configuration
+/// file. A directory of another network, an empty directory and a missing directory are
+/// each an error with the text of `zakurad` and the exit status 1, and the command makes
+/// no file.
 #[test]
 fn tip_height_prints_the_height_of_the_state_on_disk() {
     let dir = scratch();
@@ -277,22 +279,117 @@ fn tip_height_prints_the_height_of_the_state_on_disk() {
     assert_eq!(run(&["tip-height", "-n", "Regtest", "-c", data]), ok);
     assert_eq!(run(&["-c", config, "tip-height", "-n", "regtest"]), ok);
 
-    let (code, stdout, stderr) = run(&["tip-height", "-n", "mainnet", "-c", data]);
-    assert_eq!((code, stdout.as_str()), (Some(1), ""));
+    const FAILED: &str = "hayaid: Failed to read chain tip height from state";
     assert_eq!(
-        stderr,
-        format!("hayaid: {data} belongs to a regtest node, not to a mainnet node\n")
+        run(&["tip-height", "-n", "mainnet", "-c", data]),
+        (
+            Some(1),
+            String::new(),
+            format!("{FAILED}: {data} belongs to a regtest node, not to a mainnet node\n")
+        )
     );
     let empty = dir.path().join("empty");
-    let (code, _, stderr) = run(&[
-        "tip-height",
-        "-n",
-        "regtest",
-        "-c",
-        empty.to_str().expect("UTF-8"),
-    ]);
-    assert_eq!(code, Some(1));
-    assert!(stderr.contains("state.log"), "{stderr}");
+    std::fs::create_dir(&empty).expect("empty directory");
+    let missing = dir.path().join("missing");
+    for path in [&empty, &missing] {
+        let path = path.to_str().expect("UTF-8");
+        assert_eq!(
+            run(&["tip-height", "-n", "regtest", "-c", path]),
+            (
+                Some(1),
+                String::new(),
+                format!(
+                    "{FAILED}: State directory doesn't have a chain tip block: {path} has no \
+                     state.log\n"
+                )
+            )
+        );
+    }
+    assert_eq!(listing(&empty), Vec::new());
+    assert!(!missing.exists());
+}
+
+/// Each file below `dir` with its length, its modification time and its content.
+fn listing(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime, Vec<u8>)> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("read dir") {
+        let path = entry.expect("entry").path();
+        let meta = std::fs::metadata(&path).expect("metadata");
+        match meta.is_dir() {
+            true => files.extend(listing(&path)),
+            false => files.push((
+                path.clone(),
+                meta.len(),
+                meta.modified().expect("mtime"),
+                std::fs::read(&path).expect("read"),
+            )),
+        }
+    }
+    files.sort();
+    files
+}
+
+/// `tip-height` prints the tip that a restart of the node resumes at, and it changes no
+/// file of the data directory. 1,010 blocks put the base of the state at height 10, so the
+/// command reads the record of the state log above the start record and the blocks above
+/// it. After a clean stop the tip is the tip of the node. After a stop as a crash, without
+/// the last flush, it is the tip of the node that then starts on the directory. While a
+/// node runs on the directory, the command prints the tip of that node.
+#[test]
+fn tip_height_prints_the_tip_that_a_restart_resumes_at() {
+    use hayai_rpc::BlockGenerator;
+
+    for backend in ["memory", "rocksdb"] {
+        let dir = scratch();
+        let data = dir.path().join("data");
+        let config = hayaid::Config::parse(&format!(
+            "[network]\nnetwork = \"Regtest\"\n\
+             [state]\ncache_dir = \"{}\"\nbackend = \"{backend}\"\n\
+             flush_interval_blocks = 4\n\
+             [mining]\nminer_script = \"51\"\nregtest_produce = true\n",
+            data.display()
+        ))
+        .expect("test config");
+        let generate = |node: &hayaid::Node, n: u32| {
+            let producer = node.producer.as_ref().expect("a producer");
+            producer.generate(n).expect("generate");
+            node.tip.tip().0
+        };
+        let data_arg = data.to_str().expect("UTF-8");
+        // The command and the files of the directory before and after it.
+        let tip_height = || {
+            let before = listing(&data);
+            let (code, stdout, stderr) = run(&["tip-height", "-n", "regtest", "-c", data_arg]);
+            assert_eq!((code, stderr.as_str()), (Some(0), ""), "{backend}");
+            assert_eq!(listing(&data), before, "{backend}: a file changed");
+            stdout
+        };
+
+        let node = hayaid::Node::start(&config).expect("first start");
+        assert_eq!(generate(&node, 1_010), 1_010, "{backend}");
+        node.shutdown().expect("clean stop");
+        assert_eq!(tip_height(), "1010\n", "{backend}: clean stop");
+
+        let node = hayaid::Node::start(&config).expect("restart");
+        assert_eq!(node.tip.tip().0, 1_010, "{backend}");
+        let tip = generate(&node, 7);
+        // The node runs on the directory, and it wrote each block before it set its tip.
+        let (code, stdout, stderr) = run(&["tip-height", "-n", "regtest", "-c", data_arg]);
+        assert_eq!(
+            (code, stdout, stderr.as_str()),
+            (Some(0), format!("{tip}\n"), ""),
+            "{backend}: a node runs"
+        );
+        node.abandon().expect("stop as a crash");
+        let printed = tip_height();
+        let node = hayaid::Node::start(&config).expect("restart after the crash");
+        assert_eq!(
+            printed,
+            format!("{}\n", node.tip.tip().0),
+            "{backend}: stop as a crash"
+        );
+        node.shutdown().expect("clean stop");
+    }
 }
 
 /// Each other command of `zakurad` is one line that names the command, with the exit

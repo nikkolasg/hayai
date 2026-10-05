@@ -70,7 +70,7 @@ use hayai_validate::{
     apply_checkpointed, commit_prebuilt, prebuild, validate_block, BlockError, CommitError,
     HeaderPolicy, Timings, ValidateConfig,
 };
-use hayai_wire::header::BlockHash;
+use hayai_wire::header::{BlockHash, BlockHeader};
 use hayai_wire::{RawBlock, RawTx, WtxId};
 use parking_lot::{Condvar, Mutex, RwLock};
 use serde_json::json;
@@ -1868,6 +1868,84 @@ struct Replay<'a> {
     start_height: u32,
 }
 
+/// Height of the last block that [`replay`] reads for a base at `base_height`: the end of
+/// the block store. `None` when the store is empty and the base is the start record.
+fn replay_end(
+    blocks: &BlockStore,
+    base_height: u32,
+    start_height: u32,
+) -> Result<Option<u32>, NodeError> {
+    match blocks.tip_height() {
+        None if base_height == start_height => Ok(None),
+        Some(last) if last >= base_height => Ok(Some(last)),
+        stored => Err(NodeError(format!(
+            "the block store ends at {stored:?}, below the state at height {base_height}: \
+             the block files do not match the coins store"
+        ))),
+    }
+}
+
+/// The block that the block store holds at `height`, with its header, when it extends the
+/// block `tip`. `None` ends the replay.
+fn stored_child(
+    blocks: &BlockStore,
+    height: u32,
+    tip: BlockHash,
+) -> Result<Option<(bytes::Bytes, BlockHeader)>, NodeError> {
+    let bytes = blocks
+        .get_bytes(height)
+        .map_err(|e| fatal("block store", e))?
+        .ok_or_else(|| NodeError(format!("the block store has no block at height {height}")))?;
+    let header =
+        BlockHeader::parse(&bytes).map_err(|e| fatal(&format!("replay of block {height}"), e))?;
+    if header.prev_hash != tip {
+        tracing::warn!(
+            height,
+            hash = %header.hash(),
+            %tip,
+            "stored block does not extend the replayed chain; the replay ends"
+        );
+        return Ok(None);
+    }
+    Ok(Some((bytes, header)))
+}
+
+/// The network of the data directory `data_dir` and the height of the tip that a restart
+/// of the node on it resumes at. The function starts no node and writes nothing.
+///
+/// It applies the rule of the restart with the same code: the best block of the coins
+/// store selects the record of the state log ([`StateLog::resume_point`]), and the blocks
+/// of the block store above that base count while each one extends the block before
+/// ([`replay_end`], [`stored_child`]). The restart also validates each of these blocks. A
+/// block that fails there stops the start of the node, so it gives no other tip.
+///
+/// A node can run on `data_dir` during the call. The result is then a tip that the
+/// directory held during the read, or an error when the node changed a file under it.
+pub fn stored_tip(data_dir: &Path) -> Result<(NetworkKind, u32), NodeError> {
+    if !StateLog::exists(data_dir) {
+        return Err(NodeError(format!(
+            "State directory doesn't have a chain tip block: {} has no {}",
+            data_dir.display(),
+            StateLog::FILE
+        )));
+    }
+    let best = hayai_coins::stored_best_block(&data_dir.join("coins"))
+        .map_err(|e| fatal("coins store", e))?;
+    let resume = StateLog::resume_point(data_dir, best).map_err(|e| fatal("state log", e))?;
+    let blocks =
+        BlockStore::open_read_only(data_dir.join("blocks")).map_err(|e| fatal("block store", e))?;
+    let (mut height, mut hash) = (resume.height, resume.hash);
+    if let Some(last) = replay_end(&blocks, height, resume.start_height)? {
+        for next in height + 1..=last {
+            let Some((_, header)) = stored_child(&blocks, next, hash)? else {
+                break;
+            };
+            (height, hash) = (next, header.hash());
+        }
+    }
+    Ok((resume.network, height))
+}
+
 /// Pushes the blocks of the block store above the chain's tip, so that the layer window and
 /// the tip are what they were before the stop. A block above the last checkpoint of the
 /// network is validated in full. A block at or below it takes the checkpoint path of a
@@ -1877,15 +1955,8 @@ struct Replay<'a> {
 /// pushed.
 fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     let base_height = chain.tip().height;
-    let last = match r.blocks.tip_height() {
-        None if base_height == r.start_height => return Ok(0),
-        Some(last) if last >= base_height => last,
-        stored => {
-            return Err(NodeError(format!(
-                "the block store ends at {stored:?}, below the state at height {base_height}: \
-                 the block files do not match the coins store"
-            )))
-        }
+    let Some(last) = replay_end(r.blocks, base_height, r.start_height)? else {
+        return Ok(0);
     };
     let store = PreparedStore::new(
         r.params.epoch_at(base_height + 1).map_err(no_rules)?,
@@ -1896,23 +1967,11 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     let mut finalized = 0;
     let mut replayed = 0u32;
     for height in base_height + 1..=last {
-        let bytes = r
-            .blocks
-            .get_bytes(height)
-            .map_err(|e| fatal("block store", e))?
-            .ok_or_else(|| NodeError(format!("the block store has no block at height {height}")))?;
+        let Some((bytes, _)) = stored_child(r.blocks, height, chain.tip().hash)? else {
+            break;
+        };
         let raw = RawBlock::parse(bytes, r.params.branch_at(height).map_err(no_rules)?)
             .map_err(|e| fatal(&format!("replay of block {height}"), e))?;
-        let tip = chain.tip();
-        if raw.header.prev_hash != tip.hash {
-            tracing::warn!(
-                height,
-                hash = %raw.hash(),
-                tip = %tip.hash,
-                "stored block does not extend the replayed chain; the replay ends"
-            );
-            break;
-        }
         // The contextual header rules run in `validate_block`. The proof of work runs here,
         // and the rule against the clock of the node does not run on a stored block.
         hayai_consensus::header::check_proof_of_work(r.params.kind, &raw.header)

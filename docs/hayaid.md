@@ -245,6 +245,20 @@ A replay ends at the first stored block that does not extend the replayed chain:
 reorg to a shorter branch, the index by height names a block of the old branch above the
 tip of the new branch.
 
+`hayaid tip-height -n <network> [-c <dir>]` prints the height of the tip that a restart
+resumes at. It applies steps 1 to 3 without the validation, without a start of the node
+and without a write to `cache_dir`:
+
+| Case | Result |
+|---|---|
+| No node runs on `cache_dir` | The height of the tip after the restart, exit status 0 |
+| A node runs on `cache_dir` | A tip that the directory held during the read, or an error when the node changed a file during the read. The command takes no lock and changes no file |
+| `cache_dir` is empty, is absent or has no `state.log` | `hayaid: Failed to read chain tip height from state: State directory doesn't have a chain tip block: <dir> has no state.log`, exit status 1 |
+| `cache_dir` belongs to another network, or a file is damaged | One line that starts with `hayaid: Failed to read chain tip height from state:`, exit status 1 |
+
+A stored block that fails the validation of step 3 stops the start of the node. The command
+does not validate, so it prints a height at or above that block.
+
 A failed first start removes what it created in `cache_dir`, up to the write of the start
 record. A seed that fails (the Zakura node is not reachable or not synchronized) leaves
 `cache_dir` as it was. A node refuses a `cache_dir` of another network or mode.

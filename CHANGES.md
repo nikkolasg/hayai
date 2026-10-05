@@ -1229,3 +1229,17 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
     file first and stop when it is absent.
   - The server reads the body of a request before it answers 401. An answer before the
     read can be lost when the server closes a connection with data that it did not read.
+
+## 2026-10-05 — `tip-height` prints the restart tip (owner decision, hayai-l91)
+
+- `hayaid::node::stored_tip` is the rule of the restart without the validation: best block
+  of the coins store, record of `state.log` for it, then the stored blocks that extend it.
+  `replay` and `stored_tip` share `replay_end` and `stored_child`, and `StateLog::open` and
+  `StateLog::resume_point` share `select`. A change of the restart rule goes into these.
+- Each store has a read that writes nothing: `hayai_coins::stored_best_block` (header of the
+  snapshot and scan of the log, or a read-only open of RocksDB), `BlockStore::open_read_only`.
+- Lessons:
+  - A read-only open of RocksDB 11.8 makes no `LOG` file and takes no `LOCK`. A test that
+    compares the files before and after showed it: no logger option is necessary.
+  - `zakurad tip-height` writes its error to stdout and exits with the status 0, and it does
+    not take `regtest` as a network. hayaid keeps stderr and the status 1.
