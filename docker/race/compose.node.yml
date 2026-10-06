@@ -1,11 +1,20 @@
-# One node machine of the race (docs/sync-race.md): one node, its RPC caller and
-# node-exporter.
+# One node machine of the race (docs/sync-race.md): one node, its RPC caller, its
+# sidecar and node-exporter.
 # Machine A runs the profile zakurad. Machine B runs the profile hayaid. The two nodes
 # never run on one machine.
 #
 #   docker compose -f compose.node.yml up -d node-exporter
-#   docker compose -f compose.node.yml --profile zakurad up -d zakurad zakurad-caller   # machine A
-#   docker compose -f compose.node.yml --profile hayaid up -d hayaid hayaid-caller      # machine B
+#   docker compose -f compose.node.yml --profile zakurad up -d zakurad zakurad-caller zakurad-sidecar  # A
+#   docker compose -f compose.node.yml --profile hayaid up -d hayaid hayaid-caller hayaid-sidecar      # B
+#
+# The sidecar (scripts/race_sidecar.py) writes the race_* metrics of its machine each
+# second to a textfile that node-exporter exports: the durations of the last block, the
+# answers of the RPC caller, and the CPU, memory and disk I/O of the node container from
+# its cgroup. Each node container has its own cgroup parent (race-<node>.slice), and
+# the sidecar reads the files of that slice through a read-only mount of
+# /sys/fs/cgroup. It needs no privilege, no host PID namespace and no Docker socket. The
+# host must use cgroup v2 with the systemd cgroup driver of Docker (Ubuntu 22.04 and
+# later): the slice is then /sys/fs/cgroup/race.slice/race-<node>.slice.
 #
 # The RPC caller (scripts/race_rpc_caller.py) sends one `getblocktemplate` call each
 # RACE_CALLER_INTERVAL seconds to the node of its machine. Without it the node has no
@@ -30,7 +39,9 @@
 #   RACE_CALLER_SCRIPT     the caller program (default ../../scripts/race_rpc_caller.py)
 #   RACE_CALLER_IMAGE      image with Python 3.11 or later (default python:3.13.7-alpine3.22)
 #   RACE_CALLER_INTERVAL   seconds between two calls without `longpollid` (default 5)
-#   RACE_CALLER_LONGPOLL   1: the caller also holds one long poll. 0 (default): no long poll
+#   RACE_CALLER_LONGPOLL   1 (default): the caller also holds one long poll, and sends one
+#                          call without `longpollid` after each long-poll answer. 0: no long poll
+#   RACE_SCRIPTS_DIR       directory with race_sidecar.py and race_blocks.py (default ../../scripts)
 
 name: race-node
 
@@ -73,7 +84,26 @@ x-caller: &caller
     - --cookie=/node-data/.cookie
     - --out=/var/lib/race-caller/getblocktemplate.jsonl
     - --interval=${RACE_CALLER_INTERVAL:-5}
-    - --longpoll=${RACE_CALLER_LONGPOLL:-0}
+    - --longpoll=${RACE_CALLER_LONGPOLL:-1}
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+# The two sidecar services have the same program, image and limits as the callers. They
+# need no network. Each mount is read-only but the textfile directory.
+x-sidecar: &sidecar
+  image: ${RACE_CALLER_IMAGE:-python:3.13.7-alpine3.22}
+  network_mode: none
+  restart: unless-stopped
+  cpus: 0.5
+  cpu_shares: 64
+  mem_limit: 128m
+  read_only: true
+  cap_drop: ["ALL"]
+  cap_add: ["DAC_READ_SEARCH"]
+  security_opt: ["no-new-privileges:true"]
   logging:
     driver: json-file
     options:
@@ -86,6 +116,8 @@ services:
     profiles: ["zakurad"]
     container_name: race-zakurad
     image: ${RACE_ZAKURA_IMAGE:-zakurad:race}
+    # The cgroup that the sidecar reads: /sys/fs/cgroup/race.slice/race-zakurad.slice.
+    cgroup_parent: race-zakurad.slice
     command: ["zakurad", "-c", "/etc/zakura/zakurad.toml", "start"]
     # The label `node` of the trace rows of zakurad. With the network of the host the
     # container has the host name of the machine without this variable.
@@ -106,11 +138,36 @@ services:
       - zakurad-data:/node-data:ro
       - zakurad-caller:/var/lib/race-caller
 
+  zakurad-sidecar:
+    <<: *sidecar
+    profiles: ["zakurad"]
+    container_name: race-zakurad-sidecar
+    # The paths of docker/race/config/zakurad.*.toml below the data volume.
+    command:
+      - python3
+      - /race/race_sidecar.py
+      - --node=zakurad
+      - --out=/textfile/race_zakurad.prom
+      - --data=/node-data
+      - --traces=/node-data/traces
+      - --log=/node-data/zakurad.log
+      - --caller=/caller/getblocktemplate.jsonl
+      - --cgroup=/host/cgroup/race.slice/race-zakurad.slice
+    volumes:
+      - ${RACE_SCRIPTS_DIR:-../../scripts}/race_sidecar.py:/race/race_sidecar.py:ro
+      - ${RACE_SCRIPTS_DIR:-../../scripts}/race_blocks.py:/race/race_blocks.py:ro
+      - zakurad-data:/node-data:ro
+      - zakurad-caller:/caller:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - textfile:/textfile
+
   hayaid:
     <<: *node
     profiles: ["hayaid"]
     container_name: race-hayaid
     image: ${RACE_HAYAI_IMAGE:-hayaid:race}
+    # The cgroup that the sidecar reads: /sys/fs/cgroup/race.slice/race-hayaid.slice.
+    cgroup_parent: race-hayaid.slice
     # The command line of zakurad: hayaid takes the same form.
     command: ["-c", "/etc/hayai/hayaid.toml", "start"]
     # The health check of the image reads port 19101 of docker/config. The race reads
@@ -132,10 +189,33 @@ services:
       - hayaid-data:/node-data:ro
       - hayaid-caller:/var/lib/race-caller
 
-  # CPU, memory, disk I/O and network interfaces of the machine, and the file system of
-  # the node data. The container has no mount of the host root and no host PID namespace:
-  # /proc has the values of the machine, the host network gives the interfaces, and the
-  # two data volumes (read-only) are on the file system that the race fills.
+  hayaid-sidecar:
+    <<: *sidecar
+    profiles: ["hayaid"]
+    container_name: race-hayaid-sidecar
+    # The paths of docker/race/config/hayaid.*.toml below the data volume.
+    command:
+      - python3
+      - /race/race_sidecar.py
+      - --node=hayaid
+      - --out=/textfile/race_hayaid.prom
+      - --data=/node-data
+      - --traces=/node-data/traces
+      - --caller=/caller/getblocktemplate.jsonl
+      - --cgroup=/host/cgroup/race.slice/race-hayaid.slice
+    volumes:
+      - ${RACE_SCRIPTS_DIR:-../../scripts}/race_sidecar.py:/race/race_sidecar.py:ro
+      - ${RACE_SCRIPTS_DIR:-../../scripts}/race_blocks.py:/race/race_blocks.py:ro
+      - hayaid-data:/node-data:ro
+      - hayaid-caller:/caller:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - textfile:/textfile
+
+  # CPU, memory, disk I/O and network interfaces of the machine, the file system of the
+  # node data, and the textfile of the sidecar. The container has no mount of the host
+  # root and no host PID namespace: /proc has the values of the machine, the host network
+  # gives the interfaces, and the two data volumes (read-only) are on the file system
+  # that the race fills.
   node-exporter:
     container_name: race-node-exporter
     image: prom/node-exporter:v1.9.1
@@ -143,12 +223,15 @@ services:
     restart: unless-stopped
     command:
       - --web.listen-address=${RACE_NODE_EXPORTER_ADDR:-:9100}
+      - --collector.textfile.directory=/textfile
     volumes:
       - zakurad-data:/data/zakurad:ro
       - hayaid-data:/data/hayaid:ro
+      - textfile:/textfile:ro
 
 volumes:
   zakurad-data:
   hayaid-data:
   zakurad-caller:
   hayaid-caller:
+  textfile:

@@ -8,6 +8,7 @@
 - `CHANGES.md` records design decisions and lessons (short sections, behaviour-level). `CHANGELOG.md` records user-visible changes in one line each.
 - Rust style: use pattern matching (`let Some(x) = .. else`, `match`, `matches!`) instead of `.is_some()/.is_none()/.is_ok()/.is_err()`. No speculative abstractions. No dangling code. Every feature has a test.
 - Consensus-critical code never silently skips a check. It must return an error.
+- hayai is a performance-first implementation. Every hot path uses the best method that measurement supports: batched reads and writes, no read-before-write, work in parallel off the critical path with bounded queues, preallocated and reused buffers, fixed-size keys with locality, and a stated bound for each in-memory structure. No vector that grows for the life of the process, no unbounded queue, no random access without a measured reason. Measure before and after; never adopt a method on a claim.
 - Code reaches cryptographic primitives through the `hayai-crypto` facade. The facade re-exports the upstream Zcash crates by default and the `zakura-*` forks under its `zakura` feature. Crates never name `orchard`, `zcash_primitives`, `pasta_curves`, ... directly, so both backends build. `hayai-bench` additionally depends on the `zakura-*` crates and on `zebra-chain` as the comparison baselines, behind its default feature `baselines`. The Zakura backend with the baselines is `--no-default-features --features zakura,baselines`.
 
 ## Containers

@@ -24,3 +24,20 @@ scrape_configs:
   - job_name: race
     file_sd_configs:
       - files: [/prometheus/targets.json]
+    relabel_configs:
+      - source_labels: [job]
+        regex: zakurad|hayaid
+        action: keep
+
+  # node-exporter of each node machine. The race_* metrics of the textfile of the
+  # sidecar (scripts/race_sidecar.py) have their own label `node`, and it wins over the
+  # label of the target: in the dry run one node-exporter reads the files of both nodes.
+  # node-exporter writes no other metric with the label `node`, `job` or `instance`.
+  - job_name: race-node-exporter
+    honor_labels: true
+    file_sd_configs:
+      - files: [/prometheus/targets.json]
+    relabel_configs:
+      - source_labels: [job]
+        regex: node
+        action: keep

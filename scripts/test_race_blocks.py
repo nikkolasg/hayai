@@ -14,7 +14,9 @@ long poll 400 µs after its commit and on the block 102 by a call without `longp
 1.995 s after its commit, and has no answer on the blocks 103 and 104. zakurad answers
 on the block 101 by long poll 1,500 µs after its log line, on the block 102 100 µs before
 its log line, and on the block 103 by a call without `longpollid` 1.98 s after its log
-line. Each file has one error line.
+line. After a long-poll answer on the blocks 101 (both nodes) and 102 (zakurad) the
+caller has a call without `longpollid` (mode `after_longpoll`) with 2, 3 and 1
+transactions. Each file has one error line.
 """
 
 import csv
@@ -133,21 +135,36 @@ class RaceBlocks(unittest.TestCase):
         self.assertEqual(
             [row["zakura_template_served_s"] for row in rows], ["0.001500", "-0.000100", "1.980000", ""]
         )
+        # The first answer without `longpollid` at or after the first answer on the block.
+        self.assertEqual([row["hayai_template_transactions"] for row in rows], ["2", "0", "", ""])
+        self.assertEqual([row["zakura_template_transactions"] for row in rows], ["3", "1", "0", ""])
         self.assertIn("Error of each Zakura value from the clock calibration: 0.000075 s", summary)
-        # Calls without `longpollid`, their mean time, long poll answers, errors, and the
-        # mode of the first answer on a block of the table.
-        self.assertIn("| hayaid | 3 | 0.000400 | 2 | 1 | 1 | 1 |", summary)
-        self.assertIn("| zakurad | 2 | 0.002000 | 2 | 1 | 2 | 1 |", summary)
+        # Calls without `longpollid` (each interval and after a long poll), their mean
+        # time, long poll answers, errors, and the mode of the first answer on a block of
+        # the table.
+        self.assertIn("| hayaid | 4 | 0.000425 | 2 | 1 | 1 | 1 |", summary)
+        self.assertIn("| zakurad | 4 | 0.001275 | 2 | 1 | 2 | 1 |", summary)
         self.assertIn("Scrape intervals with 2 or more blocks (no value): 1.", summary)
 
     def test_the_caller_file_gives_the_first_answer_on_each_block(self):
-        answers, stats = race_blocks.caller_answers(FIXTURE / "hayaid-getblocktemplate.jsonl")
-        # The later answers on the block 101 (a template change, a call) do not count.
-        self.assertEqual(answers["65" * 32], (1700000075003400, "longpoll"))
-        self.assertEqual(answers["66" * 32], (1700000152000000, "poll"))
-        self.assertEqual(
-            stats, {"polls": 3, "long_polls": 2, "errors": 1, "mean_poll_s": 0.0004}
-        )
+        answers = race_blocks.caller_answers(FIXTURE / "hayaid-getblocktemplate.jsonl")
+        # The later answers on the block 101 (a call, a template change, a call) do not count.
+        self.assertEqual(answers.first["65" * 32], (1700000075003400, "longpoll"))
+        self.assertEqual(answers.first["66" * 32], (1700000152000000, "poll"))
+        # The call after the long poll, not the template change or the later call.
+        self.assertEqual(answers.transactions["65" * 32], (1700000075003900, 2))
+        self.assertEqual(answers.stats, {"polls": 4, "long_polls": 2, "errors": 1})
+        self.assertAlmostEqual(answers.mean_plain_s(), 0.000425, places=9)
+
+    def test_a_call_before_the_first_answer_gives_no_transaction_count(self):
+        answers = race_blocks.CallerAnswers()
+        block = "ab" * 32
+        answers.add({"unix_us": 20, "mode": "longpoll", "duration_us": 9, "ok": True, "previousblockhash": block, "transactions": 0})
+        answers.add({"unix_us": 25, "mode": "after_longpoll", "duration_us": 5, "ok": True, "previousblockhash": block, "transactions": 7})
+        # A line that the other thread wrote later, with an earlier answer.
+        answers.add({"unix_us": 10, "mode": "poll", "duration_us": 4, "ok": True, "previousblockhash": block, "transactions": 3})
+        self.assertEqual(answers.first[block], (10, "poll"))
+        self.assertEqual(answers.transactions[block], (10, 3))
 
     def test_no_template_served_value_without_a_caller_file(self):
         hayai = race_blocks.hayai_blocks(FIXTURE / "hayaid-traces")

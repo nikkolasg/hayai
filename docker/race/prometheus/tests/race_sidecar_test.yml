@@ -1,0 +1,60 @@
+# promtool test rules tests/race_sidecar_test.yml (from docker/race/prometheus).
+#
+# The rules of the race_* metrics of the sidecars. One sample each 5 seconds, as the
+# scrape interval of prometheus.yml. Both node-exporters have the job node; the label
+# `node` comes from the sidecar.
+rule_files:
+  - ../rules/race.yml
+
+evaluation_interval: 5s
+
+# A rate of the test series has a rounding error in its last digits.
+fuzzy_compare: true
+
+tests:
+  # zakurad uses 2 cores and hayaid 0.5 core. zakurad reads 1 MB and writes 4 MB each
+  # second. The caller of zakurad makes 1 call each 5 s of 0.010 s, and the caller of
+  # hayaid 1 call each 5 s of 0.001 s.
+  - interval: 5s
+    input_series:
+      - series: 'race_node_cpu_seconds_total{job="node", node="zakurad", instance="a.example:9100"}'
+        values: '0+10x80'
+      - series: 'race_node_cpu_seconds_total{job="node", node="hayaid", instance="b.example:9100"}'
+        values: '0+2.5x80'
+      - series: 'race_node_io_read_bytes_total{job="node", node="zakurad", instance="a.example:9100"}'
+        values: '0+5000000x80'
+      - series: 'race_node_io_write_bytes_total{job="node", node="zakurad", instance="a.example:9100"}'
+        values: '0+20000000x80'
+      - series: 'race_rpc_getblocktemplate_seconds_sum{job="node", node="zakurad", instance="a.example:9100"}'
+        values: '0+0.010x80'
+      - series: 'race_rpc_getblocktemplate_seconds_count{job="node", node="zakurad", instance="a.example:9100"}'
+        values: '0+1x80'
+      - series: 'race_rpc_getblocktemplate_seconds_sum{job="node", node="hayaid", instance="b.example:9100"}'
+        values: '0+0.001x80'
+      - series: 'race_rpc_getblocktemplate_seconds_count{job="node", node="hayaid", instance="b.example:9100"}'
+        values: '0+1x80'
+    promql_expr_test:
+      - expr: race:node_cpu_cores
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:node_cpu_cores{job="node", node="zakurad", instance="a.example:9100"}'
+            value: 2
+          - labels: 'race:node_cpu_cores{job="node", node="hayaid", instance="b.example:9100"}'
+            value: 0.5
+      - expr: race:node_io_read_bytes_per_second
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:node_io_read_bytes_per_second{job="node", node="zakurad", instance="a.example:9100"}'
+            value: 1000000
+      - expr: race:node_io_write_bytes_per_second
+        eval_time: 5m
+        exp_samples:
+          - labels: 'race:node_io_write_bytes_per_second{job="node", node="zakurad", instance="a.example:9100"}'
+            value: 4000000
+      - expr: round(race:rpc_getblocktemplate_seconds:mean5m, 0.000001)
+        eval_time: 6m
+        exp_samples:
+          - labels: '{job="node", node="zakurad", instance="a.example:9100"}'
+            value: 0.010
+          - labels: '{job="node", node="hayaid", instance="b.example:9100"}'
+            value: 0.001

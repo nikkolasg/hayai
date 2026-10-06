@@ -1334,3 +1334,18 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
   - A rule that sends a request must not take the answer to that request as news.
   - `peers = 1` in the warning shows the cause in the first line. A debug log was
     necessary to find it.
+
+## 2026-10-06 — Race sidecar: one method on both machines
+
+- A compared quantity comes from one program with the same method on both machines (the
+  sidecar, `scripts/race_sidecar.py`), not from the metric of each node. Node metrics
+  with one name had different meanings: `rpc_request_duration_seconds` contains the wait
+  of each long poll on both nodes, and zakurad has no process metric.
+- Resources of a node come from the cgroup v2 of its container. A fixed cgroup parent
+  (`race-<node>.slice`) gives a known path, and a read-only mount of `/sys/fs/cgroup`
+  reads it without privilege and without the Docker socket. `io.stat` lists a
+  device-mapper device and its disk: count only devices without `slaves`.
+- The live Zakura value reuses the calibration of `scripts/race_blocks.py` on bounded
+  recent rows. Two programs with one function cannot drift apart.
+- A textfile with its own label `node` needs `honor_labels` on the node-exporter job, or
+  Prometheus renames the label to `exported_node`.
