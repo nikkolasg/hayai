@@ -74,8 +74,10 @@
 //!   one `getdata` message and are silent for the others. zcashd answers each request.
 //!   One message has at most 16 blocks, and fewer when the blocks before the last one
 //!   reach 1 MB at two times the mean size of the recent blocks. When the answers to one
-//!   message reached 1 MB and the peer then sends no body for the request timeout, the
-//!   other requests of the message are free again without a penalty.
+//!   message reached 1 MB, the requests of the message after its answered requests are
+//!   free again without a penalty: at once when the peer answers a later message, and
+//!   after the request timeout when the peer sends no body. A row of large blocks after
+//!   small blocks gives such messages.
 //! - `notfound` moves the request to another peer without a penalty. When no connected peer
 //!   supplied a block, the scheduler waits before it requests the block again.
 //! - A body that is not an answer to a request gives [`Misbehaviour::Unsolicited`]. The
@@ -352,9 +354,9 @@ pub struct Scheduler<P> {
     requested: u32,
     /// The number of `getdata` messages that the scheduler made.
     messages: u64,
-    /// For each `getdata` message with a request in flight and an answer: its peer and
-    /// the bytes of its answers.
-    answered_bytes: HashMap<u64, (P, u64)>,
+    /// For each `getdata` message with a request in flight and an answer: its peer, the
+    /// bytes of its answers and the largest height of an answered block.
+    answered_bytes: HashMap<u64, (P, u64, u32)>,
     /// Moving average of the size of the received blocks.
     mean_block_bytes: u64,
     peers: BTreeMap<P, Peer>,
@@ -756,7 +758,7 @@ impl<P: Copy + Ord + Debug> Scheduler<P> {
             self.window[at].state = SlotState::Missing;
             self.scan_from = self.scan_from.min(at);
             self.mark_overtaken(peer, at, answered, now);
-            self.count_answer(peer, message, bytes_len);
+            self.count_answer(peer, message, bytes_len, self.window[at].block.height);
         }
         let slot = &mut self.window[at];
         if bytes_len > max_block_bytes {
@@ -795,9 +797,9 @@ impl<P: Copy + Ord + Debug> Scheduler<P> {
         actions.push(Action::Store { hash });
     }
 
-    /// The peer sent `bytes_len` bytes as an answer to a request of the `getdata` message
-    /// `message`.
-    fn count_answer(&mut self, peer: P, message: u64, bytes_len: u32) {
+    /// The peer sent `bytes_len` bytes, the block of `height`, as an answer to a request of
+    /// the `getdata` message `message`.
+    fn count_answer(&mut self, peer: P, message: u64, bytes_len: u32, height: u32) {
         let open = self.window.iter().any(
             |slot| matches!(slot.state, SlotState::Requested { message: m, .. } if m == message),
         );
@@ -805,8 +807,9 @@ impl<P: Copy + Ord + Debug> Scheduler<P> {
             self.answered_bytes.remove(&message);
             return;
         }
-        let (_, total) = self.answered_bytes.entry(message).or_insert((peer, 0));
+        let (_, total, highest) = self.answered_bytes.entry(message).or_insert((peer, 0, 0));
         *total += u64::from(bytes_len);
+        *highest = (*highest).max(height);
     }
 
     /// Blocks of the next `getdata` message, at most: the blocks before the last one must
@@ -818,22 +821,37 @@ impl<P: Copy + Ord + Debug> Scheduler<P> {
     }
 
     /// Frees the requests that a peer with the answer limits does not answer: the answers
-    /// to their `getdata` message reached [`GETDATA_ANSWER_BYTES`], and the peer sent no
-    /// body for the request timeout. The peer gets no penalty, and the scheduler sends the
-    /// requests in a new message.
+    /// to their `getdata` message reached [`GETDATA_ANSWER_BYTES`], the requests are after
+    /// each answered request of the message, and the peer sent no body for the request
+    /// timeout or answered a later message. The peer gets no penalty, and the scheduler
+    /// sends the requests in a new message. A request before an answered request of its
+    /// message stays: the peer keeps that block back.
     fn free_unanswered(&mut self, now: u64) {
         if self.answered_bytes.is_empty() {
             return;
         }
         // A stall, a rescue or a reorg can end the requests of a message.
-        let open: std::collections::HashSet<u64> = self
-            .window
-            .iter()
-            .filter_map(|slot| match slot.state {
-                SlotState::Requested { message, .. } => Some(message),
-                _ => None,
-            })
-            .collect();
+        let mut open = std::collections::HashSet::new();
+        // The messages with a request after their answers that a later answer overtook.
+        let mut passed = std::collections::HashSet::new();
+        for slot in &self.window {
+            let SlotState::Requested {
+                message,
+                overtaken_at,
+                ..
+            } = slot.state
+            else {
+                continue;
+            };
+            open.insert(message);
+            let after_answers = matches!(
+                self.answered_bytes.get(&message),
+                Some((_, _, highest)) if slot.block.height > *highest
+            );
+            if let (Some(_), true) = (overtaken_at, after_answers) {
+                passed.insert(message);
+            }
+        }
         self.answered_bytes
             .retain(|message, _| open.contains(message));
         let late = self.late(now);
@@ -842,21 +860,24 @@ impl<P: Copy + Ord + Debug> Scheduler<P> {
         let silent: Vec<u64> = self
             .answered_bytes
             .iter()
-            .filter(|(_, (peer, total))| {
+            .filter(|(message, (peer, total, _))| {
                 *total >= GETDATA_ANSWER_BYTES
-                    && matches!(peers.get(peer), Some(entry) if now >= entry.last_arrival + timeout)
+                    && (passed.contains(*message)
+                        || matches!(peers.get(peer), Some(entry) if now >= entry.last_arrival + timeout))
             })
             .map(|(message, _)| *message)
             .collect();
         for message in silent {
-            let Some((peer, _)) = self.answered_bytes.remove(&message) else {
+            let Some((peer, _, highest)) = self.answered_bytes.remove(&message) else {
                 unreachable!("the message is in the map");
             };
             let Some(entry) = self.peers.get_mut(&peer) else {
                 unreachable!("the filter found the peer");
             };
             for (at, slot) in self.window.iter_mut().enumerate() {
-                if !matches!(slot.state, SlotState::Requested { message: m, .. } if m == message) {
+                if !matches!(slot.state, SlotState::Requested { message: m, .. } if m == message)
+                    || slot.block.height < highest
+                {
                     continue;
                 }
                 slot.state = SlotState::Missing;

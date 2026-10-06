@@ -8,6 +8,8 @@
 //! payload  kind u8 | body
 //!          kind 0: the serialized block header
 //!          kind 1: the hash of a block whose body is not valid (32 bytes)
+//!          kind 2: the hash of a header that the chain removed and accepted again
+//!                  (32 bytes); the log has the header in an earlier record of kind 0
 //! ```
 //!
 //! The frame CRC covers the first 16 frame bytes, so the reader detects a damaged length
@@ -30,6 +32,7 @@ const MAGIC: u32 = 0x474c_4848;
 const FRAME_BYTES: usize = 20;
 const KIND_HEADER: u8 = 0;
 const KIND_INVALID: u8 = 1;
+const KIND_AGAIN: u8 = 2;
 /// Longest payload: the kind byte and a header with a (200, 9) solution.
 const MAX_PAYLOAD: u64 = 1 + PowParams::MAINNET.header_len() as u64;
 
@@ -40,6 +43,8 @@ pub enum Record {
     Header(BlockHeader),
     /// The body of this block is not valid.
     Invalid(BlockHash),
+    /// The chain accepted again this header, which it removed after an earlier record.
+    Again(BlockHash),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +121,12 @@ fn decode(payload: &[u8]) -> Result<Record, &'static str> {
                 return Err("invalid-block record is not 32 bytes");
             };
             Ok(Record::Invalid(BlockHash(hash)))
+        }
+        KIND_AGAIN => {
+            let Ok(hash) = <[u8; 32]>::try_from(body) else {
+                return Err("accepted-again record is not 32 bytes");
+            };
+            Ok(Record::Again(BlockHash(hash)))
         }
         _ => Err("record has an unknown kind"),
     }
@@ -249,6 +260,15 @@ impl HeaderLog {
         Ok(())
     }
 
+    /// Records that the chain accepted again the removed header `hash`. The log has the
+    /// header one time, in its first record.
+    pub fn append_again(&mut self, hash: &BlockHash) -> Result<(), StoreError> {
+        let mut payload = vec![KIND_AGAIN];
+        payload.extend_from_slice(&hash.0);
+        self.append(&payload)?;
+        Ok(())
+    }
+
     /// Reads the header whose record starts at `offset`.
     pub fn read_header(&self, offset: u64) -> Result<BlockHeader, StoreError> {
         let corrupt = |reason| StoreError::Corrupt { offset, reason };
@@ -268,7 +288,7 @@ impl HeaderLog {
         }
         match decode(&payload).map_err(corrupt)? {
             Record::Header(header) => Ok(header),
-            Record::Invalid(_) => Err(corrupt("record is not a header")),
+            Record::Invalid(_) | Record::Again(_) => Err(corrupt("record is not a header")),
         }
     }
 

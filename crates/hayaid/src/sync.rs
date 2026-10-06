@@ -37,10 +37,13 @@
 //! out of the fork choice (`HeaderChain::mark_unavailable`) and downloads the chain with
 //! the most work among the other chains, as zcashd does: zcashd activates the chain with
 //! the most work among the chains whose blocks it has. The template is always on the
-//! committed tip. The headers come back into the fork choice when a peer sends a header
-//! of the chain again, when the relay completes a block of it, and after a back-off of
-//! [`WITHHELD_RETRY_MS`] that doubles at each exclusion in a row. The mark is not on
-//! disk. `hayai_sync_bodies_withheld` is 1 while a chain is out of the fork choice.
+//! committed tip. The headers come back into the fork choice when a peer that connected
+//! after the exclusion sends a header of the chain, when the relay completes a block of
+//! it, and after a back-off of [`WITHHELD_RETRY_MS`] that doubles at each exclusion in a
+//! row. A peer that was connected at the exclusion did not send the block: its headers of
+//! the chain are the answer to the `getheaders` of the exclusion and do not end it. The
+//! mark is not on disk. `hayai_sync_bodies_withheld` is 1 while a chain is out of the fork
+//! choice. The log has one warning for an excluded block, then at most one for each wait.
 //!
 //! Bodies. The node holds the bodies of the blocks that the scheduler stored
 //! ([`Action::Store`]) and the bodies that the relay completed (compact relay, a local
@@ -433,6 +436,10 @@ struct Withheld {
     until_ms: u64,
     /// Exclusions in a row.
     rounds: u32,
+    /// The block of the last exclusion.
+    block: BlockHash,
+    /// No warning for an exclusion of `block` before this time.
+    warn_at_ms: u64,
 }
 
 struct SyncPeer {
@@ -444,6 +451,9 @@ struct SyncPeer {
     /// The node sent `getheaders` to the peer since the last change of the header sync
     /// peer.
     asked: bool,
+    /// The peer was connected at an exclusion of a chain without bodies: it did not send
+    /// the block, so its headers of that chain do not end the exclusion.
+    withheld: bool,
 }
 
 /// The peer of the header sync and its progress in the current window. The peer must add
@@ -774,18 +784,36 @@ impl Sync {
             .lock()
             .mark_unavailable(&block.hash)
             .map_err(|e| fatal("header chain", e))?;
-        tracing::warn!(
-            height = block.height,
-            hash = %block.hash,
-            new_best = ?change.map(|change| change.new),
-            "no peer sends the block: its header chain is out of the fork choice"
-        );
         let rounds = self.withheld.map_or(0, |withheld| withheld.rounds);
+        let wait_ms = Self::withheld_wait_ms(rounds);
+        // One warning for a block, then at most one for each wait.
+        let warn_at_ms = match self.withheld {
+            Some(last) if last.block == block.hash && self.now_ms < last.warn_at_ms => {
+                tracing::debug!(height = block.height, hash = %block.hash, "no peer sends the block again");
+                last.warn_at_ms
+            }
+            _ => {
+                tracing::warn!(
+                    height = block.height,
+                    hash = %block.hash,
+                    new_best = ?change.map(|change| change.new),
+                    peers = self.peers.len(),
+                    wait_ms,
+                    "no peer sends the block: its header chain is out of the fork choice"
+                );
+                self.now_ms + wait_ms
+            }
+        };
         self.withheld = Some(Withheld {
             excluded: true,
-            until_ms: self.now_ms + Self::withheld_wait_ms(rounds),
+            until_ms: self.now_ms + wait_ms,
             rounds: rounds + 1,
+            block: block.hash,
+            warn_at_ms,
         });
+        for peer in self.peers.values_mut() {
+            peer.withheld = true;
+        }
         self.metrics.sync_withheld_chains.inc();
         self.metrics.sync_bodies_withheld.set(1.0);
         self.best_chain_changed()?;
@@ -803,10 +831,20 @@ impl Sync {
             return Ok(());
         }
         withheld.excluded = false;
+        let waited = self.now_ms >= withheld.until_ms;
         withheld.until_ms = self.now_ms + Self::withheld_wait_ms(withheld.rounds);
         self.metrics.sync_bodies_withheld.set(0.0);
         if self.headers.lock().clear_unavailable() {
-            tracing::info!("the header chains without bodies are in the fork choice again");
+            // The end of a wait is at most one line for each wait. A new peer or a block
+            // of the relay can end the exclusion more often.
+            match waited {
+                true => {
+                    tracing::info!("the header chains without bodies are in the fork choice again")
+                }
+                false => {
+                    tracing::debug!("the header chains without bodies are in the fork choice again")
+                }
+            }
             self.best_chain_changed()?;
         }
         Ok(())
@@ -985,6 +1023,7 @@ impl Sync {
                         start_height,
                         tip: None,
                         asked: false,
+                        withheld: false,
                     },
                 );
                 self.step(Event::PeerConnected {
@@ -1106,9 +1145,12 @@ impl Sync {
                     })?;
                     self.update_fork_points()?;
                 }
-                // The peer sends a header of a chain that is out of the fork choice: it
-                // can have the blocks.
-                if matches!(last_entry, Some(entry) if entry.unavailable) {
+                // A peer that connected after the exclusion sends a header of a chain that
+                // is out of the fork choice: it can have the blocks. A peer that was
+                // connected at the exclusion sends such headers as the answer to the
+                // `getheaders` of the exclusion.
+                let failed = matches!(self.peers.get(&id), Some(peer) if peer.withheld);
+                if matches!(last_entry, Some(entry) if entry.unavailable) && !failed {
                     self.include_withheld()?;
                 }
                 // More headers follow a full message that added a header. A full message

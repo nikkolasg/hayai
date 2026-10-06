@@ -37,8 +37,9 @@
 //! A header that does not extend the best tip and has no more work than the best tip is a
 //! side entry. The chain holds at most [`ChainConfig::max_side_headers`] side entries when
 //! a side header arrives (a reorg can put the blocks of the old best chain above the
-//! bound until then). At the bound, the side entry without a child and with the least
-//! work leaves the chain. A
+//! bound until then). The bound does not count the unavailable entries: they are the chain
+//! with the most work, and the node has them again when the mark ends. At the bound, the
+//! side entry without a child and with the least work leaves the chain. A
 //! new header with no more work than that entry is refused before it is in the log. A
 //! header of an honest fork has about the work of the best tip, so it stays, and headers at
 //! the minimum difficulty of Testnet leave first.
@@ -60,8 +61,14 @@
 //! shows that the chain wrote the record after these checks. The body states are not in
 //! the log, except [`Status::Invalid`]. The node sets them again from its block state
 //! ([`HeaderChain::mark_body_valid`]).
+//!
+//! The log has one header record for each header. When the chain accepts again a header
+//! that it removed, the log gets a mark with the hash, and the entry uses the header
+//! record that the log has. An earlier version wrote a second header record: the start
+//! counts such a record ([`HeaderChain::duplicate_records`]) when the header has an entry,
+//! and uses the first record.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 
@@ -251,8 +258,6 @@ pub enum OpenError {
     Store(#[from] StoreError),
     #[error("header log record at offset {offset}: {reason}")]
     Replay { offset: u64, reason: RejectReason },
-    #[error("header log record at offset {offset}: header {hash} is in the log twice")]
-    DuplicateHeader { offset: u64, hash: BlockHash },
     #[error("header log record at offset {offset}: {reason}")]
     ReplayMark { offset: u64, reason: MarkError },
 }
@@ -292,6 +297,26 @@ struct Entry {
     unavailable: bool,
 }
 
+/// The fields of a header that an entry reads.
+#[derive(Clone, Copy)]
+struct Link {
+    hash: BlockHash,
+    prev_hash: BlockHash,
+    time: u32,
+    bits: u32,
+}
+
+impl Link {
+    fn of(header: &BlockHeader, hash: BlockHash) -> Self {
+        Self {
+            hash,
+            prev_hash: header.prev_hash,
+            time: header.time,
+            bits: header.bits,
+        }
+    }
+}
+
 /// A header that passed the structural checks, before it becomes an entry.
 struct Connection {
     parent: u32,
@@ -316,6 +341,9 @@ struct Dag {
     best_chain: Vec<u32>,
     /// Entries that are not on the best chain and that the chain did not remove.
     side: BTreeSet<u32>,
+    /// The position of the entry of each header that the chain removed and did not accept
+    /// again. The log has the record of the header.
+    removed: HashMap<BlockHash, u32>,
     /// No best-chain entry below this height has the state [`Status::HeaderValid`].
     download_from: u32,
 }
@@ -348,6 +376,7 @@ impl Dag {
             hasher: RandomState::new(),
             best_chain: vec![ROOT],
             side: BTreeSet::new(),
+            removed: HashMap::new(),
             download_from: 1,
         };
         dag.insert_entry(Entry {
@@ -421,13 +450,18 @@ impl Dag {
     }
 
     /// The checks that read the entries: parent, checkpoint, finality.
-    fn connect(&self, header: &BlockHeader, hash: &BlockHash) -> Result<Connection, RejectReason> {
-        let Some(parent) = self.lookup(&header.prev_hash) else {
-            return Err(RejectReason::Unconnected(header.prev_hash));
+    fn connect(
+        &self,
+        prev_hash: &BlockHash,
+        bits: u32,
+        hash: &BlockHash,
+    ) -> Result<Connection, RejectReason> {
+        let Some(parent) = self.lookup(prev_hash) else {
+            return Err(RejectReason::Unconnected(*prev_hash));
         };
         let parent_entry = self.entry(parent);
         if let Some(Status::Invalid) = parent_entry.status {
-            return Err(RejectReason::InvalidParent(header.prev_hash));
+            return Err(RejectReason::InvalidParent(*prev_hash));
         }
         let height = parent_entry.height + 1;
         if let Some(expected) = self.checkpoints.hash_at(height) {
@@ -445,8 +479,8 @@ impl Dag {
                 finalized_height,
             });
         }
-        let Some(work) = block_work(header.bits) else {
-            return Err(HeaderRuleError::Pow(PowError::InvalidBits(header.bits)).into());
+        let Some(work) = block_work(bits) else {
+            return Err(HeaderRuleError::Pow(PowError::InvalidBits(bits)).into());
         };
         let Some(work) = parent_entry.work.checked_add(work) else {
             return Err(HeaderRuleError::WorkOverflow.into());
@@ -476,23 +510,28 @@ impl Dag {
         }
     }
 
-    /// Adds the entry of a connected header and selects the best tip.
-    fn push(&mut self, header: &BlockHeader, hash: BlockHash, connection: Connection, offset: u64) {
+    /// Adds the entry of a connected header and selects the best tip. `offset` is the
+    /// offset of the header record.
+    fn push(&mut self, link: Link, connection: Connection, offset: u64) {
         let best = self.best();
+        self.removed.remove(&link.hash);
         let id = self.insert_entry(Entry {
-            hash,
+            hash: link.hash,
             work: connection.work,
             offset,
             parent: connection.parent,
             height: connection.height,
-            time: header.time,
-            bits: header.bits,
+            time: link.time,
+            bits: link.bits,
             status: Some(Status::HeaderValid),
             unavailable: connection.unavailable,
         });
         // Strictly more work: on equal work the first-seen entry stays the best tip. An
-        // unavailable entry is never the best tip.
-        if connection.unavailable || connection.work <= self.entry(best).work {
+        // unavailable entry is never the best tip, and the bound of the side entries does
+        // not count it.
+        if connection.unavailable {
+            self.side.insert(id);
+        } else if connection.work <= self.entry(best).work {
             self.side.insert(id);
             self.evict_side();
         } else if connection.parent == best {
@@ -553,6 +592,7 @@ impl Dag {
     fn forget(&mut self, id: u32) {
         self.side.remove(&id);
         let hash = self.entry(id).hash;
+        self.removed.insert(hash, id);
         let Ok(slot) = self
             .index
             .find_entry(self.hasher.hash_one(hash.0), |other| {
@@ -564,25 +604,37 @@ impl Dag {
         slot.remove();
     }
 
-    /// The side entry without a child in the side set that has the least work. On equal
-    /// work it is the newest one.
+    /// The side entries that the bound counts: the ones that are not unavailable.
+    fn counted_side(&self) -> usize {
+        self.side
+            .iter()
+            .filter(|id| !self.entry(**id).unavailable)
+            .count()
+    }
+
+    /// The counted side entry without a child in the side set that has the least work. On
+    /// equal work it is the newest one.
     fn weakest_side_leaf(&self) -> Option<u32> {
         let parents: BTreeSet<u32> = self.side.iter().map(|id| self.entry(*id).parent).collect();
         self.side
             .iter()
-            .filter(|id| !parents.contains(id))
+            .filter(|id| !self.entry(**id).unavailable && !parents.contains(id))
             .min_by_key(|id| (self.entry(**id).work, std::cmp::Reverse(**id)))
             .copied()
     }
 
-    /// Removes side entries while the chain has more than its maximum of them.
+    /// Removes counted side entries while the chain has more than its maximum of them.
     fn evict_side(&mut self) {
-        while self.side.len() > self.max_side_headers {
+        let mut counted = self.counted_side();
+        while counted > self.max_side_headers {
+            // Each counted entry can have an unavailable child. Then no entry leaves, and
+            // the chain refuses the next side header (`side_is_full_for`).
             let Some(id) = self.weakest_side_leaf() else {
-                unreachable!("a side set that is not empty has an entry without a child");
+                break;
             };
             self.entries[id as usize].status = None;
             self.forget(id);
+            counted -= 1;
         }
     }
 
@@ -590,9 +642,8 @@ impl Dag {
     /// header, the side set is full, and the header has no more work than the entry that
     /// would leave for it.
     fn side_is_full_for(&self, connection: &Connection) -> bool {
-        let best = self.best();
-        let side = connection.unavailable || connection.work <= self.entry(best).work;
-        if !side || self.side.len() < self.max_side_headers {
+        let side = !connection.unavailable && connection.work <= self.entry(self.best()).work;
+        if !side || self.counted_side() < self.max_side_headers {
             return false;
         }
         match self.weakest_side_leaf() {
@@ -702,12 +753,45 @@ impl Dag {
     }
 }
 
+/// What a start does with one header of the log: the entry, or no entry for a header that
+/// this start refuses and an earlier start accepted. `offset` is the offset of the header
+/// record.
+fn replay_header(
+    dag: &mut Dag,
+    skipped: &mut HashSet<BlockHash>,
+    link: Link,
+    offset: u64,
+) -> Result<(), RejectReason> {
+    // A header whose parent the start skipped is skipped too.
+    let connection = match skipped.contains(&link.prev_hash) {
+        true => Err(RejectReason::Unconnected(link.prev_hash)),
+        false => dag.connect(&link.prev_hash, link.bits, &link.hash),
+    };
+    match connection {
+        Ok(connection) => dag.push(link, connection, offset),
+        // The checkpoint list or the finalized height of this start refuses a header that
+        // an earlier start accepted: a release with a new checkpoint, or a side header
+        // whose branch is now final on the other side. The record stays in the log
+        // without an entry.
+        Err(RejectReason::CheckpointMismatch { .. } | RejectReason::ForkBelowFinalized { .. }) => {
+            skipped.insert(link.hash);
+        }
+        Err(RejectReason::Unconnected(parent)) if skipped.contains(&parent) => {
+            skipped.insert(link.hash);
+        }
+        Err(reason) => return Err(reason),
+    }
+    Ok(())
+}
+
 /// The header chain of one network. See the module documentation.
 pub struct HeaderChain {
     dag: Dag,
     log: HeaderLog,
     /// Records of the log that have no entry after [`HeaderChain::open`].
     skipped_records: u64,
+    /// Header records of the log that repeat a header with an entry.
+    duplicate_records: u64,
 }
 
 impl HeaderChain {
@@ -717,36 +801,43 @@ impl HeaderChain {
     pub fn open(config: ChainConfig, path: &Path) -> Result<(Self, LoadReport), OpenError> {
         let mut dag = Dag::new(config)?;
         let mut skipped: HashSet<BlockHash> = HashSet::new();
+        let mut duplicate_records = 0u64;
         let (log, report) = HeaderLog::open(path, |offset, record| match record {
             Record::Header(header) => {
                 let hash = header.hash();
+                // A second record of a header with an entry changes nothing. The hash
+                // covers each byte of the header, so the two records have the same header.
                 let None = dag.lookup(&hash) else {
-                    return Err(OpenError::DuplicateHeader { offset, hash });
+                    duplicate_records += 1;
+                    return Ok(());
                 };
-                // A header whose parent the start skipped is skipped too.
-                let connection = match skipped.contains(&header.prev_hash) {
-                    true => Err(RejectReason::Unconnected(header.prev_hash)),
-                    false => dag.connect(&header, &hash),
-                };
-                match connection {
-                    Ok(connection) => dag.push(&header, hash, connection, offset),
-                    // The checkpoint list or the finalized height of this start refuses a
-                    // header that an earlier start accepted: a release with a new
-                    // checkpoint, or a side header whose branch is now final on the other
-                    // side. The record stays in the log without an entry.
-                    Err(
-                        RejectReason::CheckpointMismatch { .. }
-                        | RejectReason::ForkBelowFinalized { .. },
-                    ) => {
-                        skipped.insert(hash);
-                    }
-                    Err(RejectReason::Unconnected(parent)) if skipped.contains(&parent) => {
-                        skipped.insert(hash);
-                    }
-                    Err(reason) => return Err(OpenError::Replay { offset, reason }),
-                }
-                Ok(())
+                replay_header(&mut dag, &mut skipped, Link::of(&header, hash), offset)
+                    .map_err(|reason| OpenError::Replay { offset, reason })
             }
+            Record::Again(hash) => match dag.removed.get(&hash).copied() {
+                Some(old) => {
+                    let entry = dag.entry(old);
+                    let link = Link {
+                        hash,
+                        prev_hash: dag.entry(entry.parent).hash,
+                        time: entry.time,
+                        bits: entry.bits,
+                    };
+                    let header_offset = entry.offset;
+                    replay_header(&mut dag, &mut skipped, link, header_offset)
+                        .map_err(|reason| OpenError::Replay { offset, reason })
+                }
+                // The start did not remove the header, or skipped it: the mark has no
+                // effect.
+                None if skipped.contains(&hash) => Ok(()),
+                None => match dag.lookup(&hash) {
+                    Some(_) => Ok(()),
+                    None => Err(OpenError::ReplayMark {
+                        offset,
+                        reason: MarkError::Unknown(hash),
+                    }),
+                },
+            },
             Record::Invalid(hash) => {
                 match dag.lookup(&hash) {
                     Some(id) => dag.invalidate(id),
@@ -767,6 +858,7 @@ impl HeaderChain {
                 dag,
                 log,
                 skipped_records: skipped.len() as u64,
+                duplicate_records,
             },
             report,
         ))
@@ -838,7 +930,7 @@ impl HeaderChain {
                 _ => Ok(false),
             };
         }
-        let connection = self.dag.connect(header, &hash)?;
+        let connection = self.dag.connect(&header.prev_hash, header.bits, &hash)?;
         if self.dag.side_is_full_for(&connection) {
             return Err(RejectReason::SideHeaderLimit);
         }
@@ -853,9 +945,17 @@ impl HeaderChain {
                 bits,
             },
         )?;
-        // The record is in the log before the entry is in memory.
-        let offset = self.log.append_header(header)?;
-        self.dag.push(header, hash, connection, offset);
+        // The record is in the log before the entry is in memory. The log has the header
+        // record of a header that the chain removed: the header gets a mark and no second
+        // header record.
+        let offset = match self.dag.removed.get(&hash) {
+            Some(old) => {
+                self.log.append_again(&hash)?;
+                self.dag.entry(*old).offset
+            }
+            None => self.log.append_header(header)?,
+        };
+        self.dag.push(Link::of(header, hash), connection, offset);
         Ok(true)
     }
 
@@ -1094,6 +1194,13 @@ impl HeaderChain {
     /// the finalized height refused the header or an ancestor of it.
     pub fn skipped_records(&self) -> u64 {
         self.skipped_records
+    }
+
+    /// Header records of the log that repeated a header with an entry at the start. An
+    /// earlier version wrote a second header record when it accepted a removed header
+    /// again.
+    pub fn duplicate_records(&self) -> u64 {
+        self.duplicate_records
     }
 
     /// The position of `hash`, which must be in the chain and not invalid.

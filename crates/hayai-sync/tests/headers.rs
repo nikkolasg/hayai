@@ -18,7 +18,7 @@ use hayai_sync::headers::{
     RejectReason, Status, Tip,
 };
 use hayai_sync::locator::locator_heights;
-use hayai_sync::store::StoreError;
+use hayai_sync::store::{HeaderLog, StoreError};
 use hayai_wire::header::{BlockHash, BlockHeader, PowError, PowParams};
 use proptest::prelude::*;
 
@@ -1256,5 +1256,146 @@ fn an_unavailable_block_moves_the_best_tip_until_the_mark_ends() {
     assert!(matches!(
         chain.mark_unavailable(&common[4].hash()),
         Err(MarkError::ValidBody(_))
+    ));
+}
+
+/// The first sync of Testnet, 2026-10-05: the node excluded a block of the best chain,
+/// and more blocks left the best chain than the bound of the side headers. The next header
+/// on the excluded chain made the chain remove the tip of that chain. The chain accepted
+/// the removed headers again later and wrote a second record for each of them, and the
+/// next start refused the log. The bound does not count the excluded headers, each header
+/// has one record, and a start gives the same chain.
+#[test]
+fn an_excluded_chain_longer_than_the_side_bound_keeps_its_headers_and_one_record_each() {
+    let dir = scratch();
+    let mut config = regtest();
+    config.max_side_headers = 3;
+    let mut chain = open(dir.path(), config.clone());
+    let main = branch(genesis(), 10, EASY, 0);
+    accept(&mut chain, &main);
+    // The blocks 5 to 10 leave the best chain: 6 headers, and the bound is 3.
+    let change = chain.mark_unavailable(&main[4].hash()).unwrap().unwrap();
+    assert_eq!(change.new, tip(4, &main[3]));
+    // The header sync continues on the excluded chain.
+    let more = branch(main[9].hash(), 2, EASY, 1_000);
+    let accepted = chain.accept_headers(&more, &Permissive, NOW).unwrap();
+    assert_eq!((accepted.added, accepted.tip_change), (2, None));
+    for header in main[4..].iter().chain(&more) {
+        assert_eq!(status(&chain, header), Some(Status::HeaderValid));
+    }
+    // A peer sends the headers again, before and after the end of the exclusion.
+    let log = dir.path().join("headers.log");
+    let bytes = std::fs::metadata(&log).unwrap().len();
+    let again: Vec<BlockHeader> = main[4..].iter().chain(&more).cloned().collect();
+    let accepted = chain.accept_headers(&again, &Permissive, NOW).unwrap();
+    assert_eq!((accepted.added, accepted.known), (0, 8));
+    assert!(chain.clear_unavailable());
+    assert_eq!(chain.best_tip(), tip(12, &more[1]));
+    let accepted = chain.accept_headers(&again, &Permissive, NOW).unwrap();
+    assert_eq!((accepted.added, accepted.known), (0, 8));
+    assert_eq!(std::fs::metadata(&log).unwrap().len(), bytes);
+
+    drop(chain);
+    let (reopened, report) = HeaderChain::open(config, &log).unwrap();
+    assert_eq!(report.records, 12);
+    assert_eq!(reopened.duplicate_records(), 0);
+    assert_eq!(reopened.best_tip(), tip(12, &more[1]));
+}
+
+/// A side header that left the chain at the bound has its header record in the log. When
+/// the chain accepts the header again, the log gets a mark of 32 bytes and no second
+/// header record, and a start gives the entries of the run.
+#[test]
+fn a_removed_header_that_comes_back_gets_a_mark_and_no_second_header_record() {
+    // The frame, the kind and the hash.
+    const MARK_BYTES: u64 = 20 + 1 + 32;
+    let dir = scratch();
+    let mut config = regtest();
+    config.max_side_headers = 2;
+    let mut chain = open(dir.path(), config.clone());
+    let main = branch(genesis(), 10, HARD, 0);
+    accept(&mut chain, &main);
+    // A side branch of 2 headers, then a side header with more work: the tip of the
+    // branch leaves.
+    let weak = branch(main[4].hash(), 2, EASY, 1_000);
+    accept(&mut chain, &weak);
+    let strong = header(main[8].hash(), 2, EASY, 2_000);
+    accept(&mut chain, std::slice::from_ref(&strong));
+    assert_eq!(status(&chain, &weak[1]), None);
+    let log = dir.path().join("headers.log");
+    assert_eq!(std::fs::metadata(&log).unwrap().len(), 13 * RECORD_BYTES);
+    // The removed header has more work than the weakest side header, so the chain
+    // accepts it again. A header on it makes its branch the best chain.
+    let accepted = chain.accept_headers(&weak[1..], &Permissive, NOW).unwrap();
+    assert_eq!(accepted.added, 1);
+    assert_eq!(
+        std::fs::metadata(&log).unwrap().len(),
+        13 * RECORD_BYTES + MARK_BYTES
+    );
+    assert_eq!(status(&chain, &weak[1]), None);
+    let accepted = chain.accept_headers(&weak[1..], &Permissive, NOW).unwrap();
+    assert_eq!(accepted.added, 1);
+
+    // A start reads the two marks and removes the header as the run did.
+    drop(chain);
+    let (reopened, report) = HeaderChain::open(config.clone(), &log).unwrap();
+    assert_eq!(report.records, 15);
+    assert_eq!(reopened.duplicate_records(), 0);
+    assert_eq!(reopened.skipped_records(), 0);
+    assert_eq!(reopened.best_tip(), tip(10, &main[9]));
+    assert_eq!(status(&reopened, &weak[1]), None);
+    assert_eq!(status(&reopened, &weak[0]), Some(Status::HeaderValid));
+    assert_eq!(status(&reopened, &strong), Some(Status::HeaderValid));
+    drop(reopened);
+
+    // A mark of a header that the log does not have stops the start.
+    let (mut raw, _) = HeaderLog::open(&log, |_, _| Ok::<(), StoreError>(())).unwrap();
+    raw.append_again(&BlockHash([7; 32])).unwrap();
+    drop(raw);
+    assert!(matches!(
+        HeaderChain::open(config, &log),
+        Err(OpenError::ReplayMark {
+            reason: MarkError::Unknown(_),
+            ..
+        })
+    ));
+}
+
+/// A log of an earlier version has a second record of a header. The start uses the first
+/// record, counts the second one, and gives the chain of the log without it. A record
+/// that fails its checksum in the middle of such a log stops the start.
+#[test]
+fn a_second_record_of_a_header_is_counted_and_changes_nothing() {
+    let dir = scratch();
+    let path = dir.path().join("headers.log");
+    let main = branch(genesis(), 6, EASY, 0);
+    let mut chain = open(dir.path(), regtest());
+    accept(&mut chain, &main[..4]);
+    drop(chain);
+    // The writer of the earlier version: the headers 3 and 4 again, then new headers.
+    let (mut log, _) = HeaderLog::open(&path, |_, _| Ok::<(), StoreError>(())).unwrap();
+    for header in main[2..].iter() {
+        log.append_header(header).unwrap();
+    }
+    drop(log);
+
+    let (reopened, report) = HeaderChain::open(regtest(), &path).unwrap();
+    assert_eq!(report.records, 8);
+    assert_eq!(reopened.duplicate_records(), 2);
+    assert_eq!(reopened.skipped_records(), 0);
+    assert_eq!(reopened.best_tip(), tip(6, &main[5]));
+    assert_eq!(
+        reopened.headers_after(&[genesis()], &ZERO, 10).unwrap(),
+        main
+    );
+    drop(reopened);
+
+    // One changed byte in the first of the two second records.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[(4 * RECORD_BYTES + RECORD_BYTES / 2) as usize] ^= 1;
+    std::fs::write(&path, bytes).unwrap();
+    assert!(matches!(
+        HeaderChain::open(regtest(), &path),
+        Err(OpenError::Store(StoreError::Corrupt { .. }))
     ));
 }

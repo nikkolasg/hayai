@@ -1306,3 +1306,31 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
 - Lesson: silence is a stall only with evidence that the peer has more than the node. Read
   what the other implementations send for an empty result before a timeout becomes a
   penalty.
+
+## 2026-10-05 — First sync of Testnet: lost peers, the withheld rule, the header log
+
+- Cause chain of the stop at height 4,393,339. A row of 2 MB blocks near 4,308,000 followed
+  small blocks. A Zakura peer answers at most 1 MB of one `getdata` message, and the
+  scheduler gave a stall for the other 15 requests when the peer answered a later
+  message. Two stalls disconnect a peer, and the node refuses it for 10 min for each
+  stall. The peer that stayed answers `notfound` for each block.
+- The scheduler frees the requests after the answered blocks of a message that reached
+  1 MB when the peer answers a later message. A request before an answered block of its
+  message keeps the stall rule: the peer keeps that block back.
+- The withheld rule ended an exclusion at each `headers` message of the excluded chain.
+  The exclusion itself sends `getheaders`, so the node did one exclusion each second.
+  Only a peer that connected after the exclusion ends it with its headers.
+- An exclusion moved more than 65,536 headers of the best chain into the side set. The
+  bound then removed the newest of them, and the chain wrote a second record when a peer
+  sent them again. The bound does not count excluded headers.
+- The header log is an operation log: a start must get the entries of the run. A header
+  that the chain removed and accepts again gets a mark record, not a second header
+  record. Without the mark a start does not know that the header came back.
+- Lessons:
+  - A state in memory only (the exclusion) must not change what the log replay does. Each
+    removal that a run does and a start does not do gives a log that the start refuses.
+  - A rule for the limits of another implementation needs a test with a change of the
+    block size, not only with one size.
+  - A rule that sends a request must not take the answer to that request as news.
+  - `peers = 1` in the warning shows the cause in the first line. A debug log was
+    necessary to find it.
