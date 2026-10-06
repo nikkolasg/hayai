@@ -245,8 +245,10 @@ uses this crate.
 
   An activation block commits to the whole tree of the previous upgrade.
 - Seed of the tree: before Heartwood the tree is empty, and every layer knows it. A base at or
-  after Heartwood starts unknown. The node seeds `Base::history` with
-  `HistoryState::from_peaks`, because the node cannot derive the peaks from headers.
+  after Heartwood comes back from the state log with `HistoryState::from_peaks`. The start
+  state of a shadow node has no peaks, because the node cannot derive them from headers, so
+  its tree stays unknown. The node does not check the header commitment of a block on an
+  unknown tree, and the layer records `history: None` (issue hayai-k6y).
 - The rule set of an upgrade names the tree version (`RuleSet::history`). From NU6.3 the tree
   has version 3. An upgrade without a rule set returns `HistoryError::Unsupported`.
 - `Layer::history_root()` is the `history_root` of a template `Tip` on that layer.
@@ -313,14 +315,18 @@ uses this crate.
   parts are `check_contextual`, `check_local_time` and `check_proof_of_work`. `check_version`
   is the version rule, for a caller that has no context (the header chain). The result
   `HeaderVerdict::ContextTooShort` names the rules that did not run because the context
-  holds fewer blocks than they read (`docs/consensus.md`, Header rule paths). `NetworkParams`
+  holds fewer blocks than they read (section Header rule paths). `NetworkParams`
   holds the values that the rules read: `disable_pow` (Regtest), `min_difficulty_start_height`
   (Testnet 299,188), `max_time_start_height` (Mainnet 2, Testnet 653,606, Regtest 2).
 - NU7 has a rule set when the crypto backend has the NU7 branch id
   (`hayai_crypto::nu7_branch()`, the only `cfg` for it). The `zakura` backend has it. The
-  upstream backend does not have it. The NU7 activation height is a constant of hayai-consensus
-  on every backend: Testnet 4,465,026 (Zakura `zakura-chain/src/parameters/constants.rs:80`),
-  no height on Mainnet, and the configured height on Regtest.
+  upstream backend does not have it: `zcash_protocol` `BranchId` has no NU7 value outside
+  `cfg(zcash_unstable = "nu7")`, and `zcash_primitives` 0.30.1 `Transaction::read` refuses a v5
+  or v6 transaction with another branch id. The NU7 activation height is a constant of
+  hayai-consensus on every backend: Testnet 4,465,026 (Zakura
+  `zakura-chain/src/parameters/constants.rs:80`), no height on Mainnet, and the configured
+  height on Regtest. The rules give Regtest no NSM reissuance height. A test sets one with
+  `RegtestConfig::with_test_reissuance_height`, and no configuration file sets it.
 - hayaid takes the branch, the epoch and the validation configuration of every height through
   `rules_at`. A node without the rule set therefore stops with the error before it prepares or
   validates anything at that height. The schedule functions (`subsidy::halving`,
@@ -344,6 +350,41 @@ uses this crate.
   (`CheckConfig { network, rules }`, history tree version, `LAYER_WINDOW`), hayai-validate
   (`ValidateConfig { network, rules, keys, header }`), hayaid (`params.rs` is a thin
   wrapper).
+
+### Header rule paths
+
+`hayai_consensus::header::check_header` is the one function of the header rules: the
+contextual rules (`check_contextual`), the local time rule when the caller gives a clock, and
+the proof of work (`check_proof_of_work`). The local time rule (time ≤ clock of the node +
+2 h) is a local rule, not a consensus rule. The header checks of hayai-relay and hayaid apply
+it. Block validation and the replay at a restart do not apply it.
+
+| Path | Rules | Context |
+|---|---|---|
+| Relay header check (`hayai_relay::StandardHeaderCheck`) | `check_header` with the clock | `HeaderContext::parent` |
+| hayaid header check (`NodeHeaderCheck`: relay, `submitblock`, shadow follower) | `check_header` with the clock | the header index: committed and pending headers |
+| Block validation (`validate_block`, `build_layer`, `commit_prebuilt`) | `check_contextual` (`hayai_validate::check_block_header`) | the view: `ChainView::recent_times`, `difficulty_context` |
+| Header chain (`hayai_sync::HeaderChain::accept_headers`) | `check_version`, `check_proof_of_work`, then the `HeaderRules` of the node. A chain whose work is 2^256 or more is `HeaderRuleError::WorkOverflow` (possible on Regtest only) | the ancestors of the branch |
+| Replay at a restart | `check_proof_of_work`, then block validation | the view |
+| Checkpoint path (`apply_checkpointed`) | none: the header chain applied the rules to the header before the download | none |
+
+The contextual rules read the times of the 28 blocks before the header and the `bits` of the
+17 blocks before it before NU7, and 113 and 102 blocks from NU7 (ZIP 218). Near the genesis
+block they read fewer blocks. A context that holds fewer blocks than a rule reads gives the
+result `HeaderVerdict::ContextTooShort` with the rules that did not run. That result is never
+a pass:
+
+- A full node starts at the genesis block and has the whole context. It rejects such a
+  header (`HeaderPolicy::Enforce`).
+- A shadow node starts from the state of upstream. Its seed holds the time and the `bits` of
+  the start block and of the blocks before it, 113 blocks in all, in the header index and in
+  the base of the view. Every header rule therefore runs from the first block after the
+  start, in the header check and in block validation. A seed without these blocks fails. The
+  policy of a shadow node is `HeaderPolicy::TrustShortContext`: a header whose context is too
+  short passes the rules that did not run and is counted in
+  `hayai_shadow_trusted_bits_total`. With a whole seed the counter reads 0.
+- `HeaderPolicy::GeneratedBlocks` runs no header rule. Only the generated blocks of
+  hayai-bench use it: their headers have no proof of work.
 
 ## hayai-sinsemilla
 
@@ -601,10 +642,72 @@ uses this crate.
   - it appends the trees;
   - it applies the header commitment rule with the history append.
 
-  The layer equals the layer of `validate_block` for a valid block. `docs/consensus.md`,
-  section Checkpoints, lists what the path checks.
+  The layer equals the layer of `validate_block` for a valid block. The state update is
+  complete: coins, nullifiers, the note commitment trees, the history tree, the value pools
+  and the header context. A JoinSplit adds its nullifiers, its note commitments and its value
+  to the Sprout state, and the path reads no proof of it. A test runs a generated chain
+  through both paths and compares the states.
+- The checkpoint path checks these rules, and leaves the others to the checkpoint hash:
+
+  | Checked | Not checked |
+  |---|---|
+  | The parent is the tip of the state | Scripts and transparent signatures |
+  | The block hash is `expected`, and it is the checkpoint hash at a checkpoint height | Sapling, Orchard, Ironwood and Sprout proofs and signatures |
+  | The merkle root of the header matches the transactions, and no txid is in the block twice | Equihash and the contextual header rules (the header chain applied them) |
+  | The header commitment (offset 68) to the Sapling root, to the history tree of the parent, and from NU5 to the authorizing data | Coinbase rules and terms, coinbase maturity, ZIP 213 |
+  | Each transparent input spends a coin that exists; no outpoint is spent twice in the block | The order of a parent and its child in the block |
+  | No nullifier is revealed twice in the block | Nullifiers against earlier blocks, anchors |
+  | No value pool is negative, and the total is at most `MAX_MONEY` | Expiry, lock time, the pools of the height, the block limits, the context-free transaction rules |
+
+  The caller supplies `expected`: the hash of the best header chain at the height of the
+  block. The function does not read the header chain. A height between two checkpoints has
+  no checkpoint, so `expected` is the only bond between the block and the checkpointed chain
+  there. A caller that passes the hash of the block itself as `expected` removes that
+  comparison.
 - `validate_block`, `build_layer` and `commit_prebuilt` refuse a block at or below
   `Network::mandatory_checkpoint_height()` (`BlockError::BelowMandatoryCheckpoint`).
+
+### Consensus implementation notes
+
+- Script verification uses the Rust interpreter of `zcash_script` 0.6, not the C++
+  `zcash_script` library. ECC maintains the Rust interpreter and tests it against the C++
+  implementation. The differential tests of hayai against Zakura (C++ interpreter) are the
+  acceptance gate for consensus parity. The flags are those of `ConnectBlock` of zcashd and of
+  the verifier of Zakura (`zakura-script/src/lib.rs:173`): `P2SH | CHECKLOCKTIMEVERIFY`.
+- The Sapling verifying keys are the first 1,636 bytes of `sapling-spend.params` and the
+  first 1,444 bytes of `sapling-output.params` (`crates/hayai-prepared/src/sapling_vk/`).
+  `scripts/extract-sapling-vk.sh` writes them from files with the BLAKE2b-512 hashes of
+  `zcash_proofs`. A test compares them with the parameters of the `wagyu-zcash-parameters`
+  crate.
+- The Sprout verifying key is the first 1,828 bytes of `sprout-groth16.params`
+  (`crates/hayai-prepared/src/sprout_vk/`). `scripts/extract-sprout-vk.sh` writes it from a
+  file with the size and the BLAKE2b-512 hash of `zcash_proofs` (`scripts/fetch-params.sh
+  --sprout` downloads the file). The file is equal to `sprout-groth16.vk` of Zakura. A test
+  pins its hash, and `hayai-bench/tests/sprout.rs` uses it to verify the 5 Groth16
+  JoinSplits of the published block vectors that need no spent coin (Mainnet 419,201 and
+  903,000, Testnet 925,483).
+- No header commits to the Sprout root. Before Sapling the header field at offset 68 is
+  reserved, and hayai does not check it, as Zakura (`zakura-state/src/service/check.rs:272`,
+  `PreSaplingReserved`).
+- The Sprout treestates are in memory: the base holds the frontier of the final treestate of
+  every block that changed the tree, by root (about 1 kB each). hayaid writes the new
+  treestates of each flush to `state.log` and reads all of them at a restart.
+- The upstream Sapling batch validator applies the canonical point encodings of ZIP 216 at
+  every height. ZIP 216 activates with Canopy. Zebra and Zakura do the same, because no block
+  before Canopy has a non-canonical encoding.
+- The sigop count follows zcashd (`GetLegacySigOpCount` plus `GetP2SHSigOpCount`). Zebra
+  counts only the legacy sigops.
+- Block validation evaluates lock times against the height and the header time of the block
+  itself (`ContextualCheckBlock` of zcashd with `nLockTimeFlags = 0`). The median-time-past
+  rule applies to mempool admission only.
+- The cache of context-free results has one entry set for each
+  `RuleEpoch { branch_id, script_flags }`. An epoch change drops the cache.
+- The finalized anchors are an in-memory set for each pool (Sapling, Orchard, Ironwood). The
+  set starts with the root of the empty tree (`GetSaplingAnchorAt` and `GetOrchardAnchorAt` of
+  zcashd treat it as always present). hayaid persists the set in `state.log` (the new anchors
+  of each flush) and rebuilds it at a restart (`docs/hayaid.md`, Restart).
+- The Orchard soft fork of ZIP 257 applies to blocks (`rules_at`). The mempool admission of
+  hayaid uses the rule set of the branch and does not apply the range (plan item B10).
 
 ## hayai-relay
 

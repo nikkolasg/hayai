@@ -18,8 +18,8 @@ The mainnet profile runs hayaid in shadow mode on Mainnet. No code refuses Mainn
 does not enforce these consensus rules (`docs/hayaid.md`, Mainnet, and `docs/consensus.md`):
 
 - ZIP 221 and ZIP 244 header commitment: the start state of a shadow node has no history
-  tree, so the node does not check `hashBlockCommitments` (`docs/consensus.md`, finding
-  F-P5-1).
+  tree, so the node does not check `hashBlockCommitments` (`docs/consensus.md`, Open points,
+  issue hayai-k6y).
 - Sprout JoinSplits: the start state has no Sprout treestates. The validator returns
   `SproutStateUnknown`, and a shadow node stops when upstream accepts such a block.
 
