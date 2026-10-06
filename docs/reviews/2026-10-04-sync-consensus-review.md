@@ -3,11 +3,14 @@
 Scope: `hayai-consensus`, `hayai-state` (check, checkpoint), `hayai-validate`, `hayai-prepared`,
 `hayai-sync`, `hayai-net`, `hayaid`, `hayai-template`. Reference: Zakura clone at
 `../zakura-src` (revision `1377915`), the ZIPs and the protocol specification.
-Method: code reading only. No build and no test ran. A finding is verified against the code
-unless it has the mark "unverified".
+Method: a review of the code only. No build and no test ran. The reviewer verified each finding
+against the code, except a finding with the mark "unverified".
 
-Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura/crates/zakura-chain/src`,
-`ZS` = `zakura/crates/zakura-state/src/service`.
+Path abbreviations:
+
+- `ZC` = `zakura/crates/zakura-consensus/src`;
+- `ZCH` = `zakura/crates/zakura-chain/src`;
+- `ZS` = `zakura/crates/zakura-state/src/service`.
 
 ## Summary
 
@@ -19,8 +22,8 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 | Low | 14 |
 
 - One consensus divergence in the header rules (C1).
-- Three remote stops of the node (C2, C3, C4).
-- Two paths that mark an honest block invalid in the header log, which a restart does not repair (C5, C6).
+- 3 remote stops of the node (C2, C3, C4).
+- 2 paths that mark an honest block invalid in the header log. A restart does not repair the mark (C5, C6).
 - No divergence in difficulty, subsidy, funding streams, lockbox, value pools, anchors, expiry, lock time or sigops.
 
 ## Critical findings
@@ -32,7 +35,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 - Fault: hayai compares the version as `u32` with 4 only.
 - Input: a header with `version = 0x8000_0004`, valid `bits`, valid Equihash and valid times. hayai accepts the header. Zakura and zcashd reject it.
 - Cost of the input: the work of one block.
-- Fix: reject when `version >> 31 != 0 || version < 4` in the two functions. Add the case to `crates/hayai-consensus/tests/header.rs`.
+- Fix: reject when `version >> 31 != 0 || version < 4` in the 2 functions. Add the case to `crates/hayai-consensus/tests/header.rs`.
 
 ### C2. Body with a duplicated transaction on the checkpoint path
 
@@ -49,16 +52,16 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 - Reference: `ZC/block/check.rs:68` (`coinbase_is_first`) returns an error.
 - Fault: `commit_prebuilt` does not check the shape of `txs[0]` before `draft`. A transaction with a transparent input and an empty coin list reaches the assertion.
 - Input: a header on the committed tip with valid proof of work. The body has `txs[1..]` equal to a prebuilt body of the node and a `txs[0]` with one transparent input (prevout not null).
-- Precondition: a prebuilt body matches. `mining.prebuild_own` is on by default (`crates/hayaid/src/config.rs:200`). With an empty mempool the own body has zero transactions (`crates/hayaid/tests/regtest_pair.rs:380`). The trace of `prebuild` for an empty list is unverified.
+- Precondition: a prebuilt body matches. `mining.prebuild_own` is on by default (`crates/hayaid/src/config.rs:200`). With an empty mempool the own body has 0 transactions (`crates/hayaid/tests/regtest_pair.rs:380`). The trace of `prebuild` for an empty list is unverified.
 - Cost of the input: the work of one block. On Testnet the minimum-difficulty rule makes the cost small.
-- Fix: return `ContextError::NoCoinbase` in `commit_prebuilt` when `txs[0]` is not a coinbase. Change the two assertions in `draft` to a `PrepareError`.
+- Fix: return `ContextError::NoCoinbase` in `commit_prebuilt` when `txs[0]` is not a coinbase. Change the 2 assertions in `draft` to a `PrepareError`.
 
 ### C4. Lock order inversion in the relay
 
 - Location: `crates/hayai-net/src/relay.rs:1487-1488` (`BatchRequest`: `lanes`, then `own_batches`) and `crates/hayai-net/src/relay.rs:2136-2137` (`send_compact_block`: `own_batches`, then `lanes`, held during the send loop).
 - Input: a peer sends `BatchRequest` messages in a loop. One message can hold about 250,000 ids (8 MB payload limit, `crates/hayai-relay/src/message.rs:37`). The next forwarded block takes the locks in the opposite order.
 - Result: the reader thread and the sender thread wait for each other. The ticker stops at `sweep_pending` (`relay.rs:1043`), and the driver stops at `announce_batch` (`relay.rs:1960`) or in `forward_block`.
-- Fix: take `lanes` before `own_batches` at lines 2136-2137, or copy the batch list and release the two locks before the send loop.
+- Fix: take `lanes` before `own_batches` at lines 2136-2137. Alternatively, copy the batch list and release the 2 locks before the send loop.
 
 ### C5. Changed coinbase script on the prebuilt path
 
@@ -87,7 +90,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 
 - Location: `crates/hayai-state/src/check.rs:1012-1014` (`DuplicateTxid`), `crates/hayaid/src/node/full.rs:60-63` (`auth_data_matches` returns true before NU5), `crates/hayaid/src/node/full.rs:81-86`.
 - Input: the body of C2 for a block before NU5 that takes the full path. The honest block gets the invalid mark.
-- Reach: each block before NU5 on a network without checkpoints (Regtest). On Mainnet the block must be above 1,046,399, below 1,687,104 and not yet checkpointed in the header chain. The Mainnet case is unverified.
+- Reach: each block before NU5 on a network without checkpoints (Regtest). On Mainnet the case needs a block above 1,046,399 and below 1,687,104, without a checkpoint yet in the header chain. The Mainnet case is unverified.
 - Fix: the fix of C2.
 
 ### H2. Ban for a rule of the local clock
@@ -100,7 +103,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 ### H3. Header synchronization peer without progress
 
 - Location: `crates/hayaid/src/sync.rs:524-529` (selection by the reported `start_height`), `crates/hayaid/src/sync.rs:692-708` (160 headers refresh `since_ms` with no check of `accepted.added`), `crates/hayaid/src/sync.rs:709-713`.
-- Input: a peer reports the height `0xffffffff` and answers each `getheaders` with the same 160 known headers. The timeout of 120 s does not fire. No penalty applies. Other peers get no continuation.
+- Input: a peer reports the height `0xffffffff` and answers each `getheaders` with the same 160 known headers. The timeout of 120 s does not occur. No penalty applies. Other peers get no continuation.
 - Result: the header chain grows only through announcements. A node that is far behind does not reach the tip.
 - Fix: continue and refresh the timer only when `added > 0`. Set a minimum header rate. Do not select by the reported height.
 
@@ -109,7 +112,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 - Location: `crates/hayai-net/src/transport.rs:69,136` (1,024 frames), `crates/hayai-net/src/relay.rs:1404-1422` (`on_getdata` ignores the result of `send` and continues).
 - Reference: zcashd stops `getdata` when the send buffer is full.
 - Input: a peer sends `getdata` for 1,024 blocks of 2 MB and does not read. About 2 GB stays in the queue of one connection. After `QueueFull`, the loop reads each remaining block from disk.
-- The queue size and the loop are verified. The write timeout and the 20 min ping timeout are unverified.
+- The review verified the queue size and the loop. The write timeout and the 20 min ping timeout are unverified.
 - Fix: a byte budget for each queue. Stop the loop at the first failed send.
 
 ### H5. Scheduler preference for a peer without a measured rate
@@ -128,7 +131,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 ### H7. Race between mempool admission and commit
 
 - Location: `crates/hayaid/src/mempool.rs:112` (copy of the view) to `:164` (insert), `crates/hayaid/src/node.rs:1036-1042` (the driver writes the view, then cleans the store).
-- Reference: ZIP 317 block production needs valid transactions. Zakura checks against the state at the insert.
+- Reference: the block production of ZIP 317 needs valid transactions. Zakura checks against the state at the insert.
 - Input: transaction T spends an outpoint that block N+1 also spends. A relay thread prepares T on tip N. The driver commits N+1 and cleans the store. The relay thread then inserts T.
 - Result: no later step removes T before its expiry height. With expiry 0, T stays. Each template that selects T is an invalid block.
 - Fix: a tip generation in the store. `admit` reads it before the view, and the insert refuses a changed generation.
@@ -168,7 +171,7 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 | L7 | Regtest: cumulative work addition can overflow (unverified). | `crates/hayai-sync/src/headers.rs:412` |
 | L8 | Inbound slots have no eviction. | `crates/hayai-net/src/connect.rs:243-248` |
 | L9 | `mempool` requests have no rate limit. | `crates/hayai-net/src/relay.rs:1424-1430` |
-| L10 | A transaction that does not parse is dropped with a debug line and no score. | `crates/hayai-net/src/relay.rs:1435-1441` |
+| L10 | The relay drops a transaction that does not parse, with a debug line and no score. | `crates/hayai-net/src/relay.rs:1435-1441` |
 | L11 | The address source limit uses the full IPv6 address, not the /64. | `crates/hayai-net/src/addrbook.rs:388,403` |
 | L12 | `headers_after` reads 160 headers from disk under the header chain mutex. | `crates/hayaid/src/node.rs:344-351` |
 | L13 | `open_header_chain` applies the local time rule to committed headers. | `crates/hayaid/src/node/full.rs:482-490` |
@@ -176,8 +179,24 @@ Path abbreviations: `ZC` = `zakura/crates/zakura-consensus/src`, `ZCH` = `zakura
 
 ## Checkpoint path
 
-- Checked: parent, hash at a checkpoint height, merkle root, coin existence, double spend in the block, duplicate nullifier in the block, value pools, header commitment.
-- Not checked: scripts, proofs, signatures, coinbase rules and terms, maturity, the coinbase-spend rule, parent order in the block, nullifiers of earlier blocks, anchors, expiry, lock time, block limits, duplicate txids, each context-free transaction rule.
+- Checks on the path:
+  - parent;
+  - hash at a checkpoint height;
+  - merkle root;
+  - coin existence;
+  - double spend in the block;
+  - duplicate nullifier in the block;
+  - value pools;
+  - header commitment.
+- No check on the path:
+  - scripts, proofs, signatures;
+  - coinbase rules and terms, maturity, the coinbase-spend rule;
+  - parent order in the block;
+  - nullifiers of earlier blocks, anchors;
+  - expiry, lock time;
+  - block limits;
+  - duplicate txids;
+  - each context-free transaction rule.
 - Before NU5 the txid binds the whole transaction. From NU5 `hashBlockCommitments` binds the authorizing data, and a mismatch is a wrong body.
 - The only body that a peer can change under the same hash is the duplicate of C2.
 - A block at or below the mandatory checkpoint waits for a checkpoint above it (`crates/hayaid/src/node/full.rs:175`). A false header chain below a checkpoint does not change the state.
@@ -245,13 +264,17 @@ hayai checks the Sapling root commitment of the header from Sapling to Heartwood
 - A missing verifying key at an epoch change (C6).
 - The checkpoint path of the driver.
 - A header that fails only the local time rule, and its score (H2).
-- A header peer with no progress (H3). A `getdata` to a peer that does not read (H4).
-- A peer without a rate against measured peers (H5). A queue flood with no tick (H6).
-- An admission during a commit (H7). A power loss of the block store (H8).
+- A header peer with no progress (H3).
+- A `getdata` to a peer that does not read (H4).
+- A peer without a rate against measured peers (H5).
+- A queue flood with no tick (H6).
+- An admission during a commit (H7).
+- A power loss of the block store (H8).
 - Lock time as a time, and the boundaries `lock == height` and `lock == block time`.
 - Sigops at 20,000 exactly.
 - Duplicate nullifier in a block on the checkpoint path (Sapling, Orchard).
 - `PrepareError::ExpiryTooHigh`, `PrepareError::V4ValueBalance` in `draft`, `Reject::OrchardDisabled`, `Reject::NullifierInChain`.
 - A JoinSplit with valid proofs and a wrong `joinSplitSig`.
-- Header log replay with another checkpoint list (M6). Testnet minimum-difficulty headers in the header chain (M7).
+- A replay of the header log with another checkpoint list (M6).
+- Testnet minimum-difficulty headers in the header chain (M7).
 - Crash during a reorg, and a restart after a reorg.

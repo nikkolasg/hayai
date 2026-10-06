@@ -15,10 +15,10 @@ vectors are `#[cfg(test)]` or `pub(crate)` items: a test of hayai must copy them
 | Set | Location | Content | Cases | Use in hayai | Rules |
 |---|---|---|---|---|---|
 | Zebra block vectors | `zebra/zebra-test/src/vectors/block-*.txt`, `*.bin` (checkout 02f9648). The same 93 files are in `zakura-src/zakura/crates/zakura-test/src/vectors/` | Whole blocks, Mainnet and Testnet, genesis to NU5 | 90 blocks: 42 Mainnet, 47 Testnet, 1 invalid (Mainnet 202, `-bad`) | All 90 in `hayai-bench/tests/conformance_blocks.rs` (copies in `hayai-bench/tests/vectors/`). 6 in `hayai-wire/tests/vectors.rs`, 2 in `hayai-state/tests/history.rs` | H1–H5, H12, H13, H14; B1–B6, B12, B22–B27, B29; T1, T3–T5, T11–T13, T17–T21, T25. Sprout: T23 on the 5 Groth16 JoinSplits of 4 transactions without a transparent input (`hayai-bench/tests/sprout.rs`); B28 on Mainnet 396 and Testnet 2,259 |
-| Zebra final roots | `zebra-test/src/vectors/block.rs` | Final Sprout, Sapling and Orchard roots after a block | 70 roots: 7 Sprout, 52 Sapling, 11 Orchard | Sprout, Sapling and Orchard roots in `conformance_blocks.rs` (`final-roots.json`). The Sprout roots of Mainnet 0 and 396 and of Testnet 0 and 2,259 in `hayai-bench/tests/sprout.rs`. Two Sapling roots in `hayai-state/tests/history.rs` | H12, B27, B28, B29 |
+| Zebra final roots | `zebra-test/src/vectors/block.rs` | Final Sprout, Sapling and Orchard roots after a block | 70 roots: 7 Sprout, 52 Sapling, 11 Orchard | Sprout, Sapling and Orchard roots in `conformance_blocks.rs` (`final-roots.json`). The Sprout roots of Mainnet 0 and 396 and of Testnet 0 and 2,259 in `hayai-bench/tests/sprout.rs`. 2 Sapling roots in `hayai-state/tests/history.rs` | H12, B27, B28, B29 |
 | Zebra Sapling tree state | `zebra-test/src/vectors/sapling-treestate-main-0-419-201.txt` | The Sapling commitment tree after Mainnet 419,201 (`zcashd` encoding) | 1 | Seed of Mainnet 419,202 in `conformance_blocks.rs` | H12, B27 |
 | Zebra Orchard note encryption | `zebra-test/src/vectors/orchard_note_encryption.rs` | Orchard note encryption vectors | 20 | None | B18 (ZIP 213, plan item A3) |
-| ZIP 143, 243, 244 transactions | `zcash_primitives-0.30.1/src/transaction/tests/data.rs` (in-crate). The same vectors are in `zebra-test/src/zip0143.rs`, `zip0243.rs`, `zip0244.rs` | Generated transactions, their ids, digests and sighash values | 10 + 10 + 10 | Parse, transaction id and authorizing digest in `hayai-wire/tests/scan.rs`. `draft` in `hayai-bench/tests/conformance_txs.rs`. The sighash values are not tested (bd hayai-xya) | T19 |
+| ZIP 143, 243, 244 transactions | `zcash_primitives-0.30.1/src/transaction/tests/data.rs` (in-crate). The same vectors are in `zebra-test/src/zip0143.rs`, `zip0243.rs`, `zip0244.rs` | Generated transactions, their ids, digests and sighash values | 10 + 10 + 10 | Parse, transaction id and authorizing digest in `hayai-wire/tests/scan.rs`. `draft` in `hayai-bench/tests/conformance_txs.rs`. No test checks the sighash values (bd hayai-xya) | T19 |
 | v4 transaction of Testnet 280,003 | `zcash_primitives-0.30.1/src/transaction/tests/data.rs` (`tx_read_write`) | One real v4 transaction | 1 | `hayai-wire/tests/scan.rs` | Parse |
 | ZIP 233 transactions | `zcash_primitives-0.30.1/src/transaction/tests/data/zip_0233.rs` (in-crate) | v6 transactions of the NU7 format with `zip233_amount`, with sighash values | 10 | None: the parser needs `cfg(zcash_unstable = "nu7")` | T19 for NU7 |
 | Script vectors | `zcash_script-0.6.0/src/test_vectors.rs` (public with the feature `test-dependencies`) | The port of zcashd `script_tests.json` without the CSV, DERSIG, MINIMALIF, NULLFAIL and WITNESS cases: scriptSig, scriptPubKey, flags, result, sigop count | 1,046 | All in `conformance_txs.rs` through `Draft::check_input` and `draft` | T19, B6 |
@@ -34,9 +34,14 @@ vectors are `#[cfg(test)]` or `pub(crate)` items: a test of hayai must copy them
 
 ## Heights of the Zebra block vectors
 
-Activation heights: Mainnet Overwinter 347,500, Sapling 419,200, Blossom 653,600, Heartwood
-903,000, Canopy 1,046,400, NU5 1,687,104. Testnet Overwinter 207,500, Sapling 280,000, Blossom
-584,000, Heartwood 903,800, Canopy 1,028,500, NU5 1,842,420.
+Activation heights:
+
+| Network | Overwinter | Sapling | Blossom | Heartwood | Canopy | NU5 |
+|---|---|---|---|---|---|---|
+| Mainnet | 347,500 | 419,200 | 653,600 | 903,000 | 1,046,400 | 1,687,104 |
+| Testnet | 207,500 | 280,000 | 584,000 | 903,800 | 1,028,500 | 1,842,420 |
+
+Block vectors:
 
 | Network | Upgrade | Blocks | Heights |
 |---|---|---|---|
@@ -63,7 +68,7 @@ Final Orchard roots exist for the 11 NU5 vectors.
 - The newest block vector is Mainnet 1,687,121 and Testnet 1,842,468. No block vector exists
   for NU6, NU6.1, NU6.2, NU6.3 or NU7. The NU6.1 lockbox disbursement block, the Orchard
   soft-fork height, a v6 Ironwood block and a block with a shielded coinbase under NU6.3 have
-  no vector. The NU6.3 rules are tested on generated blocks (`hayai-bench/tests/ironwood.rs`,
+  no vector. Tests of the NU6.3 rules run on generated blocks (`hayai-bench/tests/ironwood.rs`,
   fixtures `nu6_3_block`): v6 transactions with Ironwood bundles and Orchard bundles of NU6.3
   with proofs under the NU6.3 circuit.
 - No vector set of invalid blocks exists. The one invalid block (Mainnet 202, `-bad`) fails at
@@ -78,12 +83,14 @@ Final Orchard roots exist for the 11 NU5 vectors.
   upstream crates copied.
 - The longest contiguous range is 11 blocks (heights 0 to 10). The difficulty adjustment
   (H6) needs 28 blocks of context above height 17, so no vector can test the adjustment
-  itself: the tests of hayai-consensus compare generated chains with a reference
-  implementation. The vectors test the parts of H6 and H7 that need less context: the limit
-  up to height 17 (heights 1 to 10 of both networks, with the time rules), and the Testnet
-  minimum-difficulty blocks (299,188, 299,189, 299,202, 584,000, 903,800, 903,801,
-  1,028,500), which need the time of the parent only. For the other vectors the context
-  stage trusts the rules whose context is too short (`HeaderPolicy::TrustShortContext`).
+  itself. The tests of hayai-consensus compare generated chains with a reference
+  implementation. The vectors test the parts of H6 and H7 that need less context:
+  - the limit up to height 17 (heights 1 to 10 of both networks, with the time rules);
+  - the Testnet minimum-difficulty blocks (299,188, 299,189, 299,202, 584,000, 903,800,
+    903,801, 1,028,500), which need the time of the parent only.
+
+  For the other vectors the context stage trusts the rules whose context is too short
+  (`HeaderPolicy::TrustShortContext`).
 - Context that the set does not hold: the spent coins of most transactions with transparent
   inputs, the Sapling and Orchard frontiers and anchors away from the activation heights
   (except the Sapling tree state of Mainnet 419,201), the nullifier sets, the chain value
@@ -91,9 +98,9 @@ Final Orchard roots exist for the 11 NU5 vectors.
 
 ## Block harness
 
-`crates/hayai-bench/tests/conformance_blocks.rs`, with `tests/conformance/vectors.rs` (the
-vector set), `context.rs` (the chain context) and `expected.rs` (outcomes and the expected
-file).
+The block harness is `crates/hayai-bench/tests/conformance_blocks.rs`. Its modules are
+`tests/conformance/vectors.rs` (the vector set), `context.rs` (the chain context) and
+`expected.rs` (outcomes and the expected file).
 
 ### Stages
 
@@ -123,8 +130,8 @@ The genesis block has no parent state. It stops after `transactions`.
 
 ### Chain context
 
-The vectors of a network run in height order. A valid block is pushed on the chain, so the
-next block of a contiguous range runs on the state that hayai built. Every other block gets a
+The vectors of a network run in height order. The harness pushes a valid block on the chain,
+so the next block of a contiguous range runs on the state that hayai built. Every other block gets a
 new base at its parent with these seeds:
 
 | State | Seed |
@@ -140,8 +147,8 @@ new base at its parent with these seeds:
 
 After the first block of an upgrade from Heartwood, the tree of the new upgrade has one leaf.
 The harness sets that tree on the layer when the parent tree was unknown and the roots are
-known. The next block is then checked against a real commitment (Canopy activation: Mainnet
-1,046,400, Testnet 1,028,500).
+known. The harness then checks the next block against a real commitment (Canopy activation:
+Mainnet 1,046,400, Testnet 1,028,500).
 
 The `context` stage does not run when the block reads state that the base does not hold. The
 result lists that state in `missing`:
@@ -152,16 +159,15 @@ result lists that state in `missing`:
 - an anchor that the chain does not hold, and a value that leaves a pool, when the harness
   does not know the whole pool.
 
-The result lists in `assumed` the context taken on trust: an unknown history tree (the header
-commitment is not checked) and nullifiers that are assumed not revealed.
+The result lists in `assumed` the context that the harness takes on trust: an unknown history
+tree (the harness does not check the header commitment) and nullifiers that the harness
+assumes are not revealed.
 
-The harness uses the Sapling and Sprout verifying keys that hayai embeds.
-
-The harness gives the network to `validate_block`, which takes the coinbase terms of each
+The harness uses the Sapling and Sprout verifying keys that hayai embeds. The harness gives the network to `validate_block`, which takes the coinbase terms of each
 block from `hayai_consensus::coinbase::CoinbaseTerms` (founders' reward, funding stream
 outputs, value rule, deferred pool). `conformance_subsidy.rs` runs the same check on the
 coinbase of each valid block vector. With the `baselines` feature of `hayai-bench` (a
-default feature), it also compares the schedules of hayai-consensus with `zakura-chain` and
+default feature), `conformance_subsidy.rs` also compares the schedules of hayai-consensus with `zakura-chain` and
 `zebra-chain`.
 
 Commands:
@@ -172,7 +178,7 @@ Commands:
 - `cargo test -p hayai-bench --release --no-default-features --features upstream`: the
   vector tests without the comparisons. The build has no zakura-* crate and no
   `zebra-chain`. The CI of each push uses this feature set.
-- On the Zakura backend the two feature sets are `--no-default-features --features
+- On the Zakura backend the 2 feature sets are `--no-default-features --features
   zakura,baselines` and `--no-default-features --features zakura`.
 
 ### Verdicts and the expected file
@@ -186,8 +192,11 @@ Commands:
 
 `tests/vectors/expected-blocks.json` holds, for each vector, the stage, the verdict and the
 error of today. An entry that is not `valid` also holds the reason and the plan item that
-changes it. The test fails when an outcome differs from the file in either direction, when a
-vector has no entry, and when an entry has no vector.
+changes it. The test fails in these conditions:
+
+- an outcome differs from the file in either direction;
+- a vector has no entry;
+- an entry has no vector.
 
 Procedure after a change of an outcome:
 
@@ -198,22 +207,28 @@ Procedure after a change of an outcome:
    and plan item.
 4. Write the reason and the plan item of each changed entry that is not `valid`.
 
-A `rejected` verdict on a vector that is published as valid is a consensus defect. It must not
-go into the expected file: it goes into "Defects found" below and into a bd issue.
+A `rejected` verdict on a vector that its set publishes as valid is a consensus defect. It must
+not go into the expected file: it goes into "Defects found" below and into a bd issue.
 
-Output files in `target/conformance/`: `blocks.results.json` (one record for each vector:
-network, height, upgrade, class, transaction counts, stage, verdict, error, `missing`,
-`assumed`), `blocks.summary.txt` (the table below), `expected-blocks.json`.
+The test writes these output files in `target/conformance/`:
 
-A second test changes one vector (Testnet 1,842,467) at three places and checks that the
-harness stops at the stage of the change: the nonce (`header`), the coinbase lock time
-(`merkle_root`), the Orchard binding signature (`transactions`).
+- `blocks.results.json`: one record for each vector (network, height, upgrade, class,
+  transaction counts, stage, verdict, error, `missing`, `assumed`);
+- `blocks.summary.txt`: the table below;
+- `expected-blocks.json`.
 
-### Seeding binary
+A second test changes one vector (Testnet 1,842,467) at 3 places. It checks that the harness
+stops at the stage of the change:
+
+- the nonce (`header`);
+- the coinbase lock time (`merkle_root`);
+- the Orchard binding signature (`transactions`).
+
+### Context generator
 
 The plan describes `hayai-bench/src/bin/mkcontext.rs`, a generator that reads the context of a
-block from a synced reference node. Owner decision Q7 forbids that source, and the seeds above
-come from the vector set inside the test. The binary does not exist.
+block from a synced reference node. Owner decision Q7 forbids that source. The seeds above come
+from the vector set inside the test, and the binary does not exist.
 
 ## Block outcomes
 
@@ -226,33 +241,35 @@ come from the vector set inside the test. The binary does not exist.
 
 - 46 of the 57 valid blocks have no assumed context. 11 run with an unknown history tree.
 - 47 of the 57 valid blocks are at or below the mandatory checkpoint: they pass the
-  checkpoint path (`apply_checkpointed`), which runs no script, no proof and no coinbase
+  checkpoint path (`apply_checkpointed`). This path runs no script, no proof and no coinbase
   rule. 28 of them are before Sapling activation, and their 28 transactions (coinbase
   transactions of v1 and v3) have no verification. The 2 genesis blocks stop after the
   `transactions` stage.
 - The 10 valid blocks above the mandatory checkpoint are coinbase-only blocks. They test the
   header rules, the coinbase rules and the coinbase terms (funding streams, value limit) in
   full validation.
-- The 19 valid blocks from Sapling activation to the mandatory checkpoint test the Sapling
-  root in the header (Sapling and Blossom), the Heartwood activation commitment (Testnet
-  903,800, 903,801) and the Canopy activation commitment (Testnet 1,028,501). Their
-  `transactions` stage runs `draft` on the coinbase.
+- The 19 valid blocks from Sapling activation to the mandatory checkpoint test these rules:
+  - the Sapling root in the header (Sapling and Blossom);
+  - the Heartwood activation commitment (Testnet 903,800, 903,801);
+  - the Canopy activation commitment (Testnet 1,028,501).
+
+  Their `transactions` stage runs `draft` on the coinbase.
 - No block stops at an `Unsupported` error.
-- The 32 context-free blocks have transactions that spend coins from outside the set, or that
-  use tree frontiers, anchors or pool values from outside the set. Testnet 1,842,467 has one
+- The 32 context-free blocks have transactions that spend coins, or use tree frontiers, anchors
+  or pool values, from outside the set. Testnet 1,842,467 has one
   Orchard transaction without transparent inputs: its proof and signatures pass.
 - 9 context-free blocks have JoinSplits on a Sprout state that the set does not hold. In 4 of
   them (Mainnet 419,201, 419,202 and 903,000, Testnet 925,483) the JoinSplits have Groth16
-  proofs: the `transactions` stage verifies the proofs and the JoinSplit signature of every
-  such transaction that has no transparent input from outside the set. The other 5 are
+  proofs. The `transactions` stage verifies the proofs and the JoinSplit signature of each such
+  transaction that has no transparent input from outside the set. The other 5 are
   before Sapling activation (BCTV14 proofs, no verification).
 - Mainnet 396 and Testnet 2,259 hold the first JoinSplit of their network. Each spends one
-  coin from outside the set, so the block stage does not run. `hayai-bench/tests/sprout.rs`
+  coin from outside the set, so the `context` stage does not run. `hayai-bench/tests/sprout.rs`
   appends their commitments to the empty Sprout tree and compares the root with the published
   final root.
 - The embedded verifying keys accept the Sapling proofs and signatures of every transaction
-  that the `transactions` stage prepares: the coinbase transactions and the transactions
-  without transparent inputs from outside the set.
+  that the `transactions` stage prepares. These are the coinbase transactions and the
+  transactions without transparent inputs from outside the set.
 - 5 blocks have a coinbase with Sapling outputs: Mainnet 949,496, 975,066 and 982,681 and
   Testnet 914,678 (Heartwood, lead byte 0x01), Testnet 1,101,629 (Canopy, lead byte 0x02).
   Each output decrypts with the zero outgoing viewing key (ZIP 213).
@@ -279,7 +296,7 @@ The outcomes are the same on the `upstream` and the `zakura` crypto backend.
 
 ## Transaction harness
 
-`crates/hayai-bench/tests/conformance_txs.rs`.
+The transaction harness is `crates/hayai-bench/tests/conformance_txs.rs`.
 
 ### Script vectors
 
@@ -290,7 +307,7 @@ sigop count of the scriptPubKey, read from `PreparedTx::sigops` of a transaction
 output script, must equal the published count.
 
 `check_input` reports an error as text. The test therefore also evaluates each case with the
-interpreter of the crate, and requires the two results to be equal. No signature of the
+interpreter of the crate, and requires the 2 results to be equal. No signature of the
 vectors is valid for the transaction of the test, so a signature check fails, as it does in
 the tests of the crate (no sighash).
 
@@ -310,24 +327,28 @@ outcome and not a defect. `tests/vectors/expected-txs.json` holds the outcomes.
 | ZIP 244 (v5) | 2 | 0 | 8 | 0 |
 
 The 4 unsupported transactions are v3: full validation has no verification for a version
-before Sapling (`docs/consensus-rules.md`, Checkpoints). The 9 rejections are correct: 5
-transactions spend more than `MAX_MONEY`, 1 v4 transaction with two JoinSplits has
-transparent outputs of more than `MAX_MONEY`, 2 transactions have no output and no shielded
-component, and 1 coinbase has Sapling outputs that do not decrypt with the zero outgoing
-viewing key (ZIP 213).
+before Sapling (`docs/consensus-rules.md`, Checkpoints).
 
-The sighash values of the three sets are not tested. hayai computes a sighash only inside
-`hayai-prepared` (`SighashContext`, private), and the vector scripts cannot verify a signature,
-so `check_input` cannot show the value. `tests/vectors/tx-sighash-inputs.json` holds the
+The 9 rejections are correct:
+
+- 5 transactions spend more than `MAX_MONEY`;
+- 1 v4 transaction with 2 JoinSplits has transparent outputs of more than `MAX_MONEY`;
+- 2 transactions have no output and no shielded component;
+- 1 coinbase has Sapling outputs that do not decrypt with the zero outgoing viewing key
+  (ZIP 213).
+
+No test checks the sighash values of the 3 sets. hayai computes a sighash only inside
+`hayai-prepared` (`SighashContext`, private). The vector scripts cannot verify a signature, so
+`check_input` cannot show the value. `tests/vectors/tx-sighash-inputs.json` holds the
 inputs and the published values for that test (bd hayai-xya).
 
 ## Differential fuzzer
 
 `crates/hayai-fuzz` runs hayai and the Zakura library code on the same block in one process
-and compares the two verdicts. A case is a seed block, a list of mutations and a chain
-context. The seeds are the generated fixture blocks of `hayai-bench` (real signatures, real
-Orchard and Ironwood proofs) and generated coinbase-only blocks at a chosen height of Mainnet
-or Testnet. `docs/fuzz-findings.md` has the runs and the findings.
+and compares the 2 verdicts. A case is a seed block, a list of mutations and a chain
+context. The seeds are the generated fixture blocks of `hayai-bench`, with real signatures and
+real Orchard and Ironwood proofs. Other seeds are generated coinbase-only blocks at a chosen
+height of Mainnet or Testnet. `docs/fuzz-findings.md` has the runs and the findings.
 
 Entry points:
 
@@ -341,35 +362,41 @@ Entry points:
 A case seed and a class name give the case. The fuzzer has its own random generator
 (SplitMix64), so a seed gives the same case with every version of every dependency. The
 run loop is a plain loop on the rayon pool. It has no libFuzzer target: the valid seeds have
-proofs and signatures, so coverage feedback on bytes does not reach the rules behind them,
-and the structured mutations do.
+proofs and signatures. Coverage feedback on bytes does not reach the rules behind them, and
+the structured mutations do.
 
 ### Comparison
 
 | Outcome | Meaning |
 |---|---|
-| both accept, both reject | Agreement. The rule class of each reject is counted. |
-| both reject, other rule class | Not a finding. A block can break two rules, and the two implementations order their rules differently. |
-| hayai accepts, reference rejects | Finding. |
-| hayai rejects, reference accepts | Finding, except when hayai rejects with a rule that the oracle does not have (anchor, chain value pool, history tree). |
+| both accept, both reject | Agreement. The fuzzer counts the rule class of each rejection. |
+| both reject, other rule class | Not a finding. A block can break 2 rules, and the 2 implementations order their rules differently. |
+| hayai accepts, oracle rejects | Finding. |
+| hayai rejects, oracle accepts | Finding, except when hayai rejects with a rule that the oracle does not have (anchor, chain value pool, history tree). |
 | a panic | Finding. |
-| known difference | Counted, not written. `src/known.rs` removes the cause from the block and checks that the two implementations then agree. |
+| known difference | Counted, not written. `src/known.rs` removes the cause from the block and checks that the 2 implementations then agree. |
 
 ### Oracle
 
-The reference verdict follows `SemanticBlockVerifier::call` and the transaction `Verifier::call`
+The verdict of the oracle follows `SemanticBlockVerifier::call` and the transaction `Verifier::call`
 of zakura-consensus 10.0.0 in the same order, with the context of the case in place of the
 state service.
 
-zakura-consensus and zakura-state do not link into the process: their `rocksdb` 0.24 and the
+zakura-consensus and zakura-state do not link into the process. Their `rocksdb` 0.24 and the
 `rocksdb` 0.25 of `hayai-coins` both link the native library `rocksdb`, and cargo allows one.
 `src/reference/zakura_consensus/` is a copy of `transaction/check.rs`, `block/check.rs`,
 `block/subsidy.rs`, the error types and one function of zakura-state, from the Zakura source
 tree at commit 1377915. The copy compiles against the published zakura-chain 9.0.0,
 zakura-header-chain 4.0.0 and zakura-script 4.0.0.
 
-Kind of code: **L** linked reference crate, **C** copied reference file, **M** model written for
-the fuzzer after the rule of zakura-state, **none** no rule in the oracle.
+Kinds of code:
+
+| Kind | Meaning |
+|---|---|
+| L | linked reference crate |
+| C | copied reference file |
+| M | model written for the fuzzer after the rule of zakura-state |
+| none | no rule in the oracle |
 
 | Rule class | Rules (plan section 1) | Code | Kind |
 |---|---|---|---|
@@ -388,8 +415,8 @@ the fuzzer after the rule of zakura-state, **none** no rule in the oracle.
 | Scripts | T19 | `zakura_script::CachedFfiTransaction::is_valid` | L |
 | Signature operations | B6 | `Sigops::sigops`, `p2sh_sigops`, the limit of `block.rs` | L |
 | Orchard and Ironwood proofs and signatures | T21, T22 | `zakura_orchard` `BatchValidator` with the key of the upgrade, sighash of zakura-chain | L |
-| Nullifiers | B26 (Orchard, Ironwood) | no nullifier two times in the block or in the chain of the case | M |
-| Header commitments | H12 from NU5 | parse of the field, authorizing data root and hash of the two roots: zakura-chain. The history root is a value of the case. | L, M |
+| Nullifiers | B26 (Orchard, Ironwood) | no nullifier 2 times in the block or in the chain of the case | M |
+| Header commitments | H12 from NU5 | parse of the field, authorizing data root and hash of the 2 roots: zakura-chain. The history root is a value of the case. | L, M |
 | Sapling and Sprout proofs and signatures | T20, T23 | none: a block with such a part is "not covered" | none |
 | Anchors | B27, B28 | none | none |
 | Chain value pools | B21 | none | none |
@@ -402,7 +429,7 @@ proof of work, so the contextual header rules do not run in them. The classes `h
 and `pow` compare the header rules on headers alone.
 
 On the `zakura` backend, hayai and the oracle use the same `zakura-*` cryptography crates. The
-proof and signature rows then compare the code of hayai around the verifier, not two
+proof and signature rows then compare the code of hayai around the verifier, not 2
 verifiers. On the default backend they compare upstream `orchard` with `zakura-orchard`.
 
 ### Mutation classes
@@ -423,22 +450,22 @@ verifiers. On the default backend they compare upstream `orchard` with `zakura-o
 | `header-context` | a header on a generated chain: time around the median-time-past and its limit, `nBits` at and near the expected value, gaps for the Testnet minimum difficulty rule |
 | `pow` | bit flips in the headers of the Mainnet blocks 1 and 1,687,106 |
 
-After the mutations, the header gets the merkle root and the commitments of the new body,
-unless the class tests these fields. The reference code computes the two values. When the
-reference does not parse the block, the code of hayai computes them, so a block that only
-hayai parses reaches the rules of hayai.
+After the mutations, the fuzzer sets the merkle root and the commitments of the new body in
+the header, unless the class tests these fields. The oracle computes the 2 values. When the
+oracle does not parse the block, the code of hayai computes them, so a block that only hayai
+parses reaches the rules of hayai.
 
 ## Defects found
 
-None. No vector that is published as valid is rejected by hayai at any stage.
+None. hayai rejects no vector that its set publishes as valid, at any stage.
 
 Limits of this statement:
 
 - 32 block vectors stop at missing context. The rules after that point did not run on them.
 - 47 valid blocks pass the checkpoint path only: their scripts, proofs, signatures and
   coinbase rules did not run.
-- A transaction with transparent inputs from outside the set is not prepared, so its Sapling
-  and JoinSplit proofs are not verified. In the 32 context-free blocks, the `transactions`
+- The harness does not prepare a transaction with transparent inputs from outside the set, so
+  no check verifies its Sapling and JoinSplit proofs. In the 32 context-free blocks, the `transactions`
   stage prepares 64 transactions and does not prepare 165: 110 without their coins, and 55 of
   a version before Sapling.
 - No vector holds a JoinSplit block whose whole context is in the set. The Sprout state rules

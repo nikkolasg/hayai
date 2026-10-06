@@ -38,7 +38,7 @@ Tree: the workspace at 19:15 on 2026-10-04. Wall time: 2,606 s (43 min).
 | `structure` | 139,264 | 200 | 14,287 | 113,310 | 0 | 11,667 | 0 |
 | `txfields` | 183,808 | 200 | 58,824 | 124,984 | 0 | 0 | 0 |
 
-"Both reject" includes the rejects with two different rule classes (for example 55,128 of
+"Both reject" includes the rejects with 2 different rule classes (for example 55,128 of
 the `coinbase` cases). "No oracle" in `header`: hayai rejects a header whose `nBits` encode no
 target at the history tree append, and the oracle has no rule for that append.
 
@@ -54,7 +54,7 @@ height). The owner stopped the run after 3 classes.
 | `structure` | 84,480 | 151 | 8,584 | 68,815 | 0 | 7,081 | 0 |
 | `coinbase` | 103,936 | 150 | 18,845 | 85,091 | 0 | 0 | 0 |
 
-Run 2 (seed 20261005) was stopped before it wrote a report. It gives no number.
+Run 2 (seed 20261005) stopped before it wrote a report. It gives no number.
 
 ### Smoke run
 
@@ -72,13 +72,13 @@ classes, on both backends, on the current tree: no finding. Test time: 9 s on an
 - Reference: accept. The block message decoder of Zakura reads the block and ignores the
   bytes after it (`zakura-network/src/protocol/external/codec.rs:534`).
 - Rule: none in the consensus rules. The block and its hash are the same with and without the
-  bytes. The difference is in the wire policy, and hayai is the stricter side.
+  bytes. The difference is in the wire policy. hayai is the stricter side.
 - Effect in hayaid: a block message with bytes after the block is a malformed body
   (`hayaid/src/sync.rs`, `parse_body`, `BodyError::Malformed`). The header does not become
   invalid. A node that forwards a block writes it again from the parsed form, so the bytes
   do not spread.
 - Count: 14,468 cases in run 1, 7,081 in run 3. For each case the fuzzer removes the bytes
-  after the block and checks that the two verdicts then agree.
+  after the block and checks that the 2 verdicts then agree.
 
 ### K2. Header version in a block case (classification 3, harness)
 
@@ -94,7 +94,7 @@ classes, on both backends, on the current tree: no finding. Test time: 9 s on an
 - The class `header-context` compares that rule: 164,020,224 cases in run 1, with versions 0,
   3, 4, 5, `0x7fffffff`, `0x80000000`, `0x80000004` and `0xffffffff`, no finding.
 - Count: 8,408 cases in run 1, 6,159 in run 3. For each case the fuzzer sets the version to 4
-  and checks that the two verdicts then agree.
+  and checks that the 2 verdicts then agree.
 
 ## Harness errors found and corrected during development
 
@@ -106,8 +106,8 @@ was an error of the harness. They are not in the runs above.
 - Case: class `height`, case seed `0xbdf6b6797f24f61d`: the coinbase-only block at the Mainnet
   height 3,146,400 (NU6.1 activation, lockbox disbursement).
 - hayai: reject, `CoinbaseError::NegativeDeferredPool`. Reference: accept.
-- Cause: the context had a deferred pool of 0. The rule is a chain value pool rule, and the
-  oracle has none (zakura-state).
+- Cause: the context had a deferred pool of 0. The rule is a rule of the chain value pools.
+  The oracle has no such rule (zakura-state).
 - Correction: the context has a deferred pool of 100,000 ZEC. The error maps to the rule
   class `ValuePool`, which has no oracle.
 
@@ -116,7 +116,7 @@ was an error of the harness. They are not in the runs above.
 - Case: class `txfields`, case seed `0xc0c3527ecaa24e70`: a spend of a coin of 21,000,000 ZEC.
 - hayai: reject, `ContextError::ValueOverflow` (the chain value pools after the block hold
   more than the money limit). Reference: accept.
-- Cause: the coins of the context held more than the money limit, which no chain state can.
+- Cause: the coins of the context held more than the money limit, which no chain state can hold.
 - Correction: a coin of a context holds at most the money limit minus 400,000 ZEC.
 
 ### G3. Merkle root of a block without transactions (classification 3)
@@ -133,8 +133,8 @@ was an error of the harness. They are not in the runs above.
   and Sprout proofs and signatures, anchors, chain value pools, the history tree append, NU7,
   checkpoints, the clock rule (`docs/conformance.md`).
 - The shielded cases with valid proofs are the seed transactions. A mutation of a signed
-  field makes the proof or a signature invalid, so the shielded rules after the proof are
-  compared only on blocks that both implementations reject.
+  field makes the proof or a signature invalid. Thus the fuzzer compares the shielded rules
+  after the proof only on blocks that both implementations reject.
 - The model rules of the oracle (transparent spends in a block, nullifier sets, parent and
   height) are code of the fuzzer, not of the reference.
 - Run 3 covers 3 of the 13 classes on the current tree. The other 10 classes ran on the

@@ -22,38 +22,39 @@ directory.
 | Z2 | No commit trace rows with the legacy stack | Zakura behaviour | Recorded |
 | Z3 | `submitblock` verdict for an unknown parent | Wording | Recorded |
 
-No block that both nodes validated had two verdicts, except the block of F1.
+No block that both nodes validated had 2 verdicts, except the block of F1.
 
 ## Runs of 2026-10-05
 
 Each run has the code with the fixes F2 to F7. `default` is the hayaid of the default
-crypto backend, `zakura` the hayaid of the Zakura backend.
+crypto backend. `zakura` is the hayaid of the Zakura backend.
 
 | Scenario | Backend | Checks | Failed | Result |
 |---|---|---|---|---|
 | a (with f) | default | 69 | 0 | Same tip and state at each 20th height up to 320; hayaid resumes after SIGINT and SIGKILL; zakurad resumes |
 | b | default | 73 | 0 | zakurad accepts each block of hayaid up to 321, with Orchard and Ironwood transactions |
-| c | default | 28 | 0 | 4 relayed transactions mined by the other node; 9 policy cases |
+| c | default | 28 | 0 | The other node mines the 4 relayed transactions; 9 policy cases |
 | d | default | 14 | 0 | 6 reorgs of depth 1, 3 and 10, 3 for each winner |
-| e | default | 28 | 0 | 20 invalid blocks refused by both; no ban; 2 valid blocks accepted |
-| nu61 | default | 4 | 0 | F1 as described |
+| e | default | 28 | 0 | Both nodes refuse the 20 invalid blocks; no ban; both nodes accept the 2 valid blocks |
+| nu61 | default | 4 | 0 | The result of F1 |
 | g | default | 15 | 0 | 30 min, 622 blocks, no failed round, 12 equal state comparisons |
-| a, b, e | zakura | 170 | 0 | As the default backend |
+| a, b, e | zakura | 170 | 0 | The same result as the default backend |
 | c, after the change of the unpaid action limit | default | 26 | 0 | P1 |
 | nu61, after the fix of F1 | default | 14 | 0 | zakurad accepts block 100 of hayaid with a disbursement of 10 ZEC and the funding streams; the same state at the heights 99, 100 and 110 |
-| e, with the funding streams | default | 30 | 0 | 21 invalid blocks refused by both, one of them with a wrong funding stream output; 2 valid blocks accepted |
+| e, with the funding streams | default | 30 | 0 | Both nodes refuse the 21 invalid blocks, one of them with a wrong funding stream output; both nodes accept the 2 valid blocks |
 | c, after the fix of P1 | default | 25 | 0 | 4 relayed transactions; 9 policy cases with the same verdict on both nodes |
 | nu7 | zakura | 56 | 0 | NU7 at height 250: hayaid follows zakurad across the activation; zakurad accepts 19 blocks of hayaid after it, 4 of them with 2 transactions of 20,000 zatoshis fee each; the same state at each compared height |
 
-zakurad follows a burst of 99 blocks of hayaid in 9 to 12 s (scenario b): it reads them in
-the rounds of its block sync. A single block of hayaid is the tip of zakurad after 2.4 ms
+zakurad follows a series of 99 blocks of hayaid in 9 s to 12 s (scenario b). It reads them
+in the rounds of its block sync. A single block of hayaid is the tip of zakurad after 2.4 ms
 (median, scenario g).
 
 ## F1: NU6.1 activation block without a lockbox disbursement
 
 - Zakura: `zakura-consensus/src/block/check.rs`, `subsidy_is_valid`. At the NU6.1 activation
-  height of each network the list `lockbox_disbursements` of the network must not be empty,
-  else the block is invalid (`missing lockbox disbursements for NU6.1 activation block`).
+  height of each network the list `lockbox_disbursements` of the network must not be empty.
+  If the list is empty, the block is invalid
+  (`missing lockbox disbursements for NU6.1 activation block`).
   Each entry must be an output of the coinbase. A block without a subsidy has no such rule.
 - hayai before the fix: Regtest and a configured Regtest had no disbursement and no
   funding stream, and the activation block needed no output.
@@ -65,22 +66,23 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
   100 Zakura applies the same rule.
 - Fix, hayai-consensus: `RegtestConfig::with_lockbox_disbursements` and
   `RegtestConfig::with_funding_streams` take the values with the meaning of
-  `RegtestParameters` of Zakura. `CoinbaseTerms` has the outputs, so the coinbase check
-  and the template use them, and the deferred pool pays the disbursements.
-- Fix, the rule of Zakura: the terms of the NU6.1 activation height of a network without a
-  disbursement are the error `ConsensusError::NoLockboxDisbursement` while the block has a
-  subsidy. The block validation refuses each block at that height, and the template has no
-  coinbase for it. Both nodes refuse the same blocks.
+  `RegtestParameters` of Zakura. `CoinbaseTerms` has the outputs. Thus the coinbase check
+  and the template use them. The deferred pool pays the disbursements.
+- Fix, the rule of Zakura: for a network without a disbursement, the terms of the NU6.1
+  activation height are the error `ConsensusError::NoLockboxDisbursement`. This applies
+  while the block has a subsidy. The block validation refuses each block at that height,
+  and the template has no coinbase for it. Both nodes refuse the same blocks.
 - Fix, hayaid: `[regtest]` has the keys `lockbox_disbursements` and `funding_streams`. A
   network with an `nu6_1` height and no disbursement is a configuration error at the
-  start: the chain of such a network ends below that height on each node, and hayaid
-  cannot make a template on its last block. zakurad starts with such a configuration and
-  stops at the block before that height.
-- Differences of the configuration that stay: hayai needs a `height_range` and
-  `recipients` in each funding stream entry (Zakura takes the Testnet values for an absent
-  key), and hayai has no `extend_funding_stream_addresses_as_required`. hayai refuses at
-  its start a recipient with fewer addresses than its range has address periods; Zakura
-  stops at the first block of a period without an address.
+  start. The chain of such a network ends below that height on each node. hayaid cannot
+  make a template on the last block of that chain. zakurad starts with such a configuration
+  and stops at the block before that height.
+- Differences of the configuration that stay:
+  - hayai needs a `height_range` and `recipients` in each funding stream entry. Zakura
+    takes the Testnet values for an absent key.
+  - hayai has no `extend_funding_stream_addresses_as_required`.
+  - hayai refuses at its start a recipient with fewer addresses than its range has address
+    periods. Zakura stops at the first block of a period without an address.
 - Tests: `a_configured_regtest_pays_its_disbursements_at_nu6_1`,
   `a_regtest_without_a_disbursement_has_no_nu6_1_activation_block`,
   `a_configured_regtest_pays_its_funding_streams` (hayai-consensus),
@@ -95,14 +97,14 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
   `obtain_tips`, 3 requests with a timeout of 6 s). hayai-net did not know the message.
 - Result 1: zakurad did not get the blocks of hayaid. After `generate 5` on hayaid, zakurad
   was at height 1 after 50 s.
-- Result 2: the connection of zakurad takes no other request while it waits for the
-  answer, and its block announcements wait in a queue
+- Result 2: the connection of zakurad accepts no other request while it waits for the
+  answer. Its block announcements wait in a queue
   (`zakura-network/src/peer_set/set.rs`, `broadcast_all`). hayaid got a block of zakurad
   late: 40 single blocks at random times, median 3.7 s, maximum 11.6 s.
 - Fix: `hayai_net::relay` answers `getblocks` with one `inv` of the hashes of the validated
   blocks after the locator, at most 160. Without such a block the answer is the hash of the
   tip. An empty `inv` is not usable: Zakura counts it as a stall and disconnects the peer
-  after 3 (`zakura-network/src/peer_set/stall_tracker.rs`); the run with an empty `inv` had
+  after 3 (`zakura-network/src/peer_set/stall_tracker.rs`). The run with an empty `inv` had
   one disconnect each 10 s.
 - After the fix, the same 40 blocks: median 6 ms in both directions.
 - Tests: `getblocks_is_answered_with_the_block_hashes_after_the_locator` (hayai-net),
@@ -111,18 +113,20 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
 
 ## F3: more than 16 blocks in one `getdata`
 
-- Zakura answers at most 16 blocks and 1 MB for one `getdata` message and never answers
+- Zakura answers at most 16 blocks and 1 MB for one `getdata` message. It never answers
   the other requests of the message (`zakurad/src/components/inbound.rs`,
   `GETDATA_MAX_BLOCK_COUNT`, `GETDATA_SENT_BYTES_LIMIT`). zcashd answers the others later.
 - The scheduler of hayai-sync sent up to 64 hashes in one message. After 20 blocks of
-  zakurad in one burst, the request for the 17th block of the message had no answer.
+  zakurad in one series, the request for the 17th block of the message had no answer.
 - Result: a stall penalty for zakurad after 14 s, the block out of the fork choice after
   22 s, then a new request. In one run the second stall removed zakurad from the block
-  download, and hayaid stayed one block below the tip for 90 s (the end of the run).
+  download. hayaid then stayed one block below the tip for 90 s (the end of the run).
 - Fix: `hayai_sync::download`. One message has at most 16 blocks, and fewer when the blocks
-  before the last one reach 1 MB at two times the mean size of the recent blocks. When the
-  answers to one message reached 1 MB and the peer is silent for the request timeout, the
-  other requests of the message are free again without a penalty.
+  before the last one reach 1 MB at 2 times the mean size of the recent blocks. The other
+  requests of the message are free again without a penalty when both of these conditions
+  are true:
+  - the answers to one message reached 1 MB;
+  - the peer is silent for the request timeout.
 - Test: `the_answer_limits_of_a_zakura_peer_give_no_stall`.
 - Reproduce on the old code: scenario a; rows `hayaid follows to N` of 22 s, or a failed
   row.
@@ -149,8 +153,8 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
 ## F5: `curtime` and `mintime` of `getblocktemplate`
 
 - hayai-rpc gave the clock of the node as `curtime` and the time of the template as
-  `mintime`. On a chain whose newest blocks are old (Regtest, where each block is at the
-  median-time-past plus 90 min at most) `curtime` was above `maxtime`, and a block with
+  `mintime`. On Regtest the newest blocks are old: each block is at the median-time-past
+  plus 90 min at most. On such a chain `curtime` was above `maxtime`. A block with
   `curtime` as its time was invalid.
 - zcashd and Zakura: `mintime` is the median-time-past plus 1 s, and `curtime` is a time
   that the header rules accept.
@@ -162,23 +166,29 @@ the rounds of its block sync. A single block of hayaid is the tip of zakurad aft
 ## F6: query methods of the RPC server
 
 The RPC server of hayaid had no method that shows a block, the state or the mempool, and no
-method that takes a transaction. The server now has `getblockhash`, `getblock` (verbosity
-0), `getblockchaininfo` (height, tip, value pools), `z_gettreestate` (the roots after the
-tip), `getrawmempool` and `sendrawtransaction` (`docs/hayaid.md`).
+method that accepts a transaction. The server now has these methods (`docs/hayaid.md`):
+
+- `getblockhash`;
+- `getblock` (verbosity 0);
+- `getblockchaininfo` (height, tip, value pools);
+- `z_gettreestate` (the roots after the tip);
+- `getrawmempool`;
+- `sendrawtransaction`.
 
 ## F7: no `mempool` request to a peer
 
-- Zakura announces a transaction one time, to the peers that are ready at that time (on
-  Mainnet and Testnet to one third of them: `zakura-network/src/peer_set/set.rs`,
-  `number_of_peers_to_broadcast`), and waits 2 s between two announcements
+- Zakura announces a transaction one time, to the peers that are ready at that time. On
+  Mainnet and Testnet these are 1/3 of the peers (`zakura-network/src/peer_set/set.rs`,
+  `number_of_peers_to_broadcast`). Zakura waits 2 s between 2 announcements
   (`zakurad/src/components/mempool/gossip.rs`). A Zebra or Zakura node reads the mempools
-  of 3 peers each 73 s for the rest (`mempool/crawler.rs`).
+  of 3 peers each 73 s for the other transactions (`mempool/crawler.rs`).
 - hayai-net answered `mempool` and never sent it. A transaction whose announcement zakurad
   did not send reached hayaid only in a block.
-- Result in scenario g: 5 of 39 transactions that zakurad took were not in the mempool of
-  hayaid after 30 s.
+- Result in scenario g: 5 of 39 transactions that zakurad accepted were not in the mempool
+  of hayaid after 30 s.
 - Fix: the relay sends `mempool` to each legacy peer after the handshake and then each
-  60 s (`RelayConfig::mempool_poll`), and requests the transactions that it does not have.
+  60 s (`RelayConfig::mempool_poll`). The relay requests the transactions that it does not
+  have.
 - Test: `a_legacy_peer_gets_mempool_requests_and_its_answer_is_used`.
 
 ## F8: protocol version below the NU7 minimum
@@ -206,13 +216,13 @@ tip), `getrawmempool` and `sendrawtransaction` (`docs/hayaid.md`).
 | Upper bound of the minimum relay fee | 1,000 zatoshis | 800 zatoshis (`MEMPOOL_TX_FEE_REQUIREMENT_CAP`) | 800 zatoshis |
 | Weight ratio cap of the template | 4 | 13 (`BLOCK_PRODUCTION_WEIGHT_RATIO_CAP`) | 13 |
 
-- With a limit of 50 unpaid actions hayaid took and mined transactions that zakurad
-  refused. With the limit 0 and the marginal fee of ZIP 317, zakurad took 4 of the 9
+- With a limit of 50 unpaid actions hayaid accepted and mined transactions that zakurad
+  refused. With the limit 0 and the marginal fee of ZIP 317, zakurad accepted 4 of the 9
   transactions below that hayaid refused.
 - Fix: the policy, the store and the template of hayai have the values of Zakura
   (`Zip317Params::ZAKURA`, `MIN_RELAY_FEE_CAP`; table in `docs/mempool-policy.md`).
 
-Verdicts of scenario c, for a transaction with one input. The count of unpaid actions has
+Verdicts of scenario c, for a transaction with one input. The count of unpaid actions uses
 the marginal fee of 400 zatoshis:
 
 | Outputs | Fee (zatoshis) | Unpaid actions | hayaid in the first runs | zakurad | hayaid now |
@@ -233,11 +243,10 @@ same cases.
 
 ## Z1: a Zakura node that stops loses its newest blocks
 
-zakurad writes its non-finalized blocks to disk from time to time. After SIGINT at height
-240 it started at height 227 in one run and at height 180 in another run, and it read the
-missing blocks from hayaid again. A harness that
-uses a restart of zakurad as a disconnect makes a fork at a height that it does not expect:
-scenario d keeps zakurad running.
+zakurad writes its non-finalized blocks to disk at intervals. After SIGINT at height 240 it
+started at height 227 in one run and at height 180 in another run. It then read the missing
+blocks from hayaid again. A harness that uses a restart of zakurad as a disconnect makes a
+fork at a height that it does not expect. Thus scenario d does not stop zakurad.
 
 ## Z2: no commit trace rows with the legacy stack
 
@@ -249,7 +258,7 @@ from outside.
 
 ## Z3: `submitblock` verdict for an unknown parent
 
-hayaid answers `rejected`, zakurad answers `inconclusive`. No node changes its tip.
+hayaid answers `rejected`. zakurad answers `inconclusive`. No node changes its tip.
 
 ## Measurements of scenario g
 
@@ -279,16 +288,16 @@ Inside hayaid, from its trace rows of the same run:
 
 - The trace of zakurad has no row for these intervals (Z2).
 - A block of zakurad needs 35 ms to become the tip of hayaid, and hayaid needs less than
-  1 ms after it has the body. The run does not show where the other time goes (the
-  announcement of zakurad, the `getheaders` exchange or the `getdata` exchange):
+  1 ms after it has the body. The run does not show which step uses the other time (the
+  announcement of zakurad, the `getheaders` exchange or the `getdata` exchange). Issue:
   hayai-0dn.
-- The values above 1 s are not attributed. Zakura announces a transaction at most each 2 s,
-  and the values above 50 s are transactions that hayaid got with its `mempool` request
-  (F7).
+- The run gives no cause for the values above 1 s. Zakura announces a transaction at most
+  each 2 s. The values above 50 s are transactions that hayaid got with its `mempool`
+  request (F7).
 - A run before F7 and before the last form of F4 had the same medians (36.4 ms and 2.4 ms).
-- Resident memory of hayaid at 0 %, 25 %, 50 %, 75 % and 100 % of the run: 51, 18, 21, 20,
-  26 MB. The layer window holds the newest 1,000 blocks, and the chain had 832 blocks at
-  the end. zakurad: 183, 68, 80, 67, 100 MB.
+- Resident memory of hayaid at 0 %, 25 %, 50 %, 75 % and 100 % of the run: 51 MB, 18 MB,
+  21 MB, 20 MB, 26 MB. The layer window holds the newest 1,000 blocks, and the chain had
+  832 blocks at the end. zakurad: 183 MB, 68 MB, 80 MB, 67 MB, 100 MB.
 
 ## Verdict pairs of scenario e
 
@@ -309,8 +318,8 @@ streams. Both nodes refuse each one.
 | `bits` 0x1f800001 | bits encode no target | `InvalidDifficulty` |
 | Header version 3 | block version is below 4 | parse error: version must be at least 4 |
 | Unknown parent | parent unknown | `inconclusive`, `MissingMinedParent` |
-| Two spends of one coin | input is spent twice in the block | refused |
-| One transaction twice | duplicate txid | `DuplicateTransaction` |
+| 2 spends of one coin | input is spent twice in the block | refused |
+| One transaction 2 times | duplicate txid | `DuplicateTransaction` |
 | Spend of a missing coin | spends a coin that does not exist or was spent | `MissingTransparentInput` |
 | Script that fails | input 0 script failed: evaluated to false | `Script(ScriptInvalid)` |
 | Outputs above inputs | outputs exceed inputs | `IncorrectFee` |
@@ -327,9 +336,9 @@ harder `bits` 0x1f07ffff, are valid for both nodes.
 | Fault | Effect | Fix |
 |---|---|---|
 | Restart of zakurad as a disconnect | A fork at another height (Z1) | hayaid mines alone with a configuration without a peer |
-| Restart of zakurad before hayaid had its blocks | The blocks were lost on both nodes | The scenario waits for hayaid first |
+| Restart of zakurad before hayaid had its blocks | Both nodes lost the blocks | The scenario waits for hayaid first |
 | A block with one more transaction and the coinbase of the template | A second fault: from NU6 the coinbase pays the fees exactly | The block adds the fee to the coinbase |
 | `mintime - 1` as a time that is too low, with the old `mintime` of hayaid | A valid block | F5; the case is the median-time-past |
-| One expected tip for all the invalid blocks | False failures after a block that both nodes accepted | The tip is read before each case |
+| One expected tip for all the invalid blocks | False failures after a block that both nodes accepted | The harness reads the tip before each case |
 | A shielding transaction with the coinbase of block 2 for block 101 | hayaid refused it: the coin is mature at height 102 | hayaid mines block 101 first |
-| `generate` on hayaid at once after `sendrawtransaction` | A block without the transaction: the template takes a transaction after the mempool | The scenario waits for the template |
+| `generate` on hayaid at once after `sendrawtransaction` | A block without the transaction: the template gets a transaction after the mempool | The scenario waits for the template |

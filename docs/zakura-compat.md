@@ -14,7 +14,7 @@ Date: 2026-10-05. Reference: Zakura 1.6.0, commit `13779158253c`.
 | `zakurad start --zcashd-compat`, `--unsafe-low-specs` | Error: `start --zcashd-compat: hayaid does not have the zcashd-compat mode of zakurad` |
 | `zakurad generate` | Prints the default Mainnet configuration of hayaid (shadow mode) |
 | `zakurad generate -o <file>`, `--output-file <file>` | Writes that configuration to the file |
-| `zakurad tip-height -n <network> [-c <dir>]`, `--network`, `--cache-dir` | Prints the height of the best tip that the data directory holds, as `zakurad` does: the tip that a restart of the node resumes at. The command starts no node and writes no file. It reads the best block of the coins store, the record of `state.log` for that block, and the blocks of the block files above it that extend it. A node can run on the directory: the command then prints a tip that the directory held during the read, or an error. The directory is `--cache-dir`, or `[state] cache_dir` of the configuration file, or the default of that key. The networks are `mainnet`, `testnet` and `regtest`. An error is one line on stderr that starts with `hayaid: Failed to read chain tip height from state:`, with the exit status 1. A directory without `state.log` gives `State directory doesn't have a chain tip block: <dir> has no state.log`. `zakurad` writes its error line to stdout and exits with the status 0 |
+| `zakurad tip-height -n <network> [-c <dir>]`, `--network`, `--cache-dir` | Prints the height of the best tip that the data directory holds, as `zakurad` does: the tip that a restart of the node resumes at. The command starts no node and writes no file. It reads the best block of the coins store and the record of `state.log` for that block. It also reads the blocks of the block files above that block that extend it. A node can run on the directory: the command then prints a tip that the directory held during the read, or an error. The directory is `--cache-dir`, or `[state] cache_dir` of the configuration file, or the default of that key. The networks are `mainnet`, `testnet` and `regtest`. An error is one line on stderr that starts with `hayaid: Failed to read chain tip height from state:`, with the exit status 1. A directory without `state.log` gives `State directory doesn't have a chain tip block: <dir> has no state.log`. `zakurad` writes its error line to stdout and exits with the status 0 |
 | `zakurad audit-historical-treestates` | Error, exit status 1: `audit-historical-treestates: hayaid does not have this command of zakurad` |
 | `zakurad verify-historical-treestates` | The same error with its name |
 | `zakurad prune-state` | The same error with its name |
@@ -41,7 +41,7 @@ hayaid reads a configuration of `zakurad` as follows.
 - One error has each such line and each warning line of the file.
 - Each other unknown key is an error.
 
-`crates/hayaid/src/config.rs` has the two lists (`ZAKURA_UNUSED`, `ZAKURA_REFUSED`).
+`crates/hayaid/src/config.rs` has the 2 lists (`ZAKURA_UNUSED`, `ZAKURA_REFUSED`).
 Tests read `docker/default-zakura-config.toml` of Zakura, the output of
 `zakurad generate` and `docker/config/zakurad.testnet.toml`, and compare the exact lines.
 
@@ -61,13 +61,13 @@ Differences that give no message:
 
 | Section | Key | Default of Zakura | Meaning | hayaid |
 |---|---|---|---|---|
-| `[consensus]` | `checkpoint_sync` | `true` | Use the checkpoints during the sync | `true`: no message, hayaid always uses its checkpoints. `false`: error |
+| `[consensus]` | `checkpoint_sync` | `true` | Use of the checkpoints during the sync | `true`: no message, hayaid always uses its checkpoints. `false`: error |
 | | `vct_fast_sync` | none | Fast path for the note commitment trees below the last checkpoint | warning |
 | | `debug_skip_parameter_preload` | `false` | No use in Zakura | warning |
 | `[health]` | `listen_addr`, `min_connected_peers`, `ready_max_blocks_behind`, `enforce_on_test_networks`, `ready_max_tip_age` | none, `1`, `2`, `false`, `5m` | Health endpoints `/healthy` and `/ready` | warning: hayaid has no health endpoint |
 | `[mempool]` | `tx_cost_limit` | `80000000` | ZIP 401 cost limit | same key |
 | | `max_transaction_bytes` | `250000` | Largest transaction of the mempool | warning |
-| | `eviction_memory_time` | `1h` | Time for which an evicted transaction is refused | warning: hayaid has the same value as a constant |
+| | `eviction_memory_time` | `1h` | Time for which the mempool refuses an evicted transaction | warning: hayaid has the same value as a constant |
 | | `max_datacarrier_bytes` | `83` | Largest standard `OP_RETURN` script | warning |
 | | `debug_enable_at_height` | none | Start of the mempool at a height | warning |
 | `[metrics]` | `endpoint_addr` | none | Prometheus endpoint | same key |
@@ -75,7 +75,7 @@ Differences that give no message:
 | | `extra_coinbase_data` | none | Text in the coinbase input after the marker of the node | same key. hayaid writes `hayai: <text>`, 86 bytes of text at most |
 | | `miner_memo` | none | Memo of a shielded coinbase output | warning: hayaid has no shielded coinbase |
 | | `internal_miner` | `false` | Miner inside the node | warning |
-| | `optimistic_block_inventory` | `true` | Announce a mined block before its commit | warning |
+| | `optimistic_block_inventory` | `true` | Announcement of a mined block before its commit | warning |
 | `[network]` | `network` | `Mainnet` | `Mainnet`, `Testnet`, `Regtest` | same key and values. The table form (a configured Testnet or Regtest) is an error |
 | | `listen_addr` | `[::]:8233` | P2P listen address, the port is optional | same key. Default: no listener |
 | | `cache_dir` | `true` | Directory of the peer cache: `true`, `false` or a path | same key: the directory of the address book `peers.dat` |
@@ -87,7 +87,7 @@ Differences that give no message:
 | | `external_addr` | none | Address that the node announces | warning |
 | | `identity_dir`, `zakura_node_secret_key` | `~/.zakura`, none | Identity of the node in the Zakura P2P stack | warning |
 | | `p2p_stack`, `legacy_p2p`, `v2_p2p` | `default` | Choice of the P2P stack | warning: hayaid runs the legacy protocol and its compact-relay extension |
-| | `crawl_new_peer_interval` | `1m 1s` | Time between two searches for peers | warning |
+| | `crawl_new_peer_interval` | `1m 1s` | Time between 2 searches for peers | warning |
 | | `expose_peer_addresses` | `false` | Peer addresses in logs and metrics | warning: the log of hayaid has peer addresses |
 | `[network.zakura]` | `trace_dir` | none | Directory of the JSONL trace tables | same key: the trace tables of hayaid |
 | | `bootstrap_peers`, `listen_addr`, `nat_traversal`, `max_connections`, `max_connections_per_ip`, `max_pending_handshakes`, `stream_open_rate_per_second`, `message_rate_per_second`, `header_sync`, `block_sync`, `dev_network` | see `zakurad generate` | The Zakura P2P stack (QUIC) | warning: hayaid does not have this stack |
@@ -113,13 +113,17 @@ Differences that give no message:
 
 ### Keys of hayaid only
 
-`[network]`: `mode`, `peers`, `compact_relay`, `max_peers`, `prebuilt_candidates`,
-`outbound_peers`, `max_inbound`, `ban_secs`. `[sync]`: `memory_budget_bytes`,
-`request_timeout_ms`, `header_timeout_ms`, `header_poll_ms`, `header_poll_max_ms`. `[state]`: `backend`, `flush_interval_blocks`,
-`snapshot_interval_blocks`, `wallet_index` (Zakura writes its indexes in each
-`storage_mode`). `[trace]`: `node`. `[mining]`: `miner_script`,
-`regtest_produce`, `prebuild_own`, `lane_publication`. The sections `[shadow]` and
-`[regtest]`. `docs/hayaid.md` (Configuration) has each key.
+- `[network]`: `mode`, `peers`, `compact_relay`, `max_peers`, `prebuilt_candidates`,
+  `outbound_peers`, `max_inbound`, `ban_secs`.
+- `[sync]`: `memory_budget_bytes`, `request_timeout_ms`, `header_timeout_ms`,
+  `header_poll_ms`, `header_poll_max_ms`.
+- `[state]`: `backend`, `flush_interval_blocks`, `snapshot_interval_blocks`,
+  `wallet_index` (Zakura writes its indexes in each `storage_mode`).
+- `[trace]`: `node`.
+- `[mining]`: `miner_script`, `regtest_produce`, `prebuild_own`, `lane_publication`.
+- The sections `[shadow]` and `[regtest]`.
+
+`docs/hayaid.md` (Configuration) has each key.
 
 ### Renamed keys
 
@@ -137,8 +141,8 @@ The old names are unknown keys.
 
 ## Metrics
 
-The metrics that the dashboards and the alert rules of Zakura (`docker/observability`)
-use for the basic health of a node. hayaid exports a name only with the meaning of Zakura.
+The dashboards and the alert rules of Zakura (`docker/observability`) use these metrics
+for the basic health of a node. hayaid exports a name only with the meaning of Zakura.
 The other metrics of hayaid start with `hayai_`.
 
 | Metric of Zakura | Labels | hayaid | Meaning in hayaid, or the reason |
@@ -148,7 +152,7 @@ The other metrics of hayaid start with `hayai_`.
 | `state_memory_best_committed_block_height` | none | yes | Height of the tip of the best chain |
 | `state_finalized_block_height` | none | yes | Height of the newest block whose coins are in the coins store on disk (the last flush). `hayai_base_height` is the base in memory: the newest block below the 1,000 layers of the reorganization depth |
 | `sync_downloads_in_flight` | none | yes | Block requests without an answer plus downloaded blocks that wait for the validator. `hayai_sync_requests_in_flight` has the requests only |
-| `sync_block_verify_duration_seconds` | `result` | yes | Reception of a block to its commit (`success`) or to its rejection (`failure`), with the wait for the parent blocks, as in `zakurad`. hayaid exports a histogram (`_bucket`, `_sum`, `_count`); `zakurad` exports a summary (`quantile`, `_sum`, `_count`). The validation time alone is `hayai_validate_stage_duration_seconds{stage="total"}` |
+| `sync_block_verify_duration_seconds` | `result` | yes | Time from the reception of a block to its commit (`success`) or to its rejection (`failure`), with the wait for the parent blocks, as in `zakurad`. hayaid exports a histogram (`_bucket`, `_sum`, `_count`); `zakurad` exports a summary (`quantile`, `_sum`, `_count`). The validation time alone is `hayai_validate_stage_duration_seconds{stage="total"}` |
 | `zcash_net_peers` | none | yes | Connected peers after the handshake |
 | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | none | yes | Bytes of the P2P messages, received and sent |
 | `sync_downloaded_block_count` | none | yes | Blocks that the block download received and stored |
@@ -163,7 +167,6 @@ The other metrics of hayaid start with `hayai_`.
 | `sync_verified_block_count` | none | no | hayaid has no separate count of the verified blocks of the sync. `zcash_chain_verified_block_total` counts each committed block |
 | `sync_block_download_duration_seconds`, `sync_stage_duration_seconds`, `sync_*_hash_count`, `sync_prospective_tips_len`, `sync_cancelled_*` | several | no | Stages of the sync pipeline of Zakura. The sync of hayaid has other stages (`hayai_sync_*`) |
 | `sync_block_best_header_tip_height` | none | no | Metric of the Zakura P2P stack. hayaid has `hayai_sync_header_height` |
-| `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total` | none | no | hayai-net does not count the bytes of the connections |
 | `zcash_net_in_messages`, `zcash_net_out_messages` | `command` | no | hayai-net does not count the messages by command |
 | `zcash_net_peers_connected`, `zcash_net_peers_initial`, `zcash_net_peers_obsolete`, `zcash_net_peers_version_*` | versions, addresses | no | hayaid has no count of peers by version |
 | `zcash_net_peer_handshake_duration_seconds`, `zcash_net_peer_handshake_failures_total` | several | no | hayaid does not measure the handshake |
@@ -175,4 +178,4 @@ The other metrics of hayaid start with `hayai_`.
 | `proofs_*_verified`, `signatures_*_validated`, `zakura_consensus_batch_duration_seconds` | none | no | Batch verifiers of Zakura. hayaid has `hayai_validate_stage_duration_seconds{stage}` |
 
 `scripts/check_metric_names.py` has the names of the rows with "yes" in a list
-(`ZAKURA_NAMES`) and fails when a name is not in the sources of hayaid.
+(`ZAKURA_NAMES`). The script fails when a name is not in the sources of hayaid.

@@ -1,14 +1,14 @@
 # hayaid
 
-Date: 2026-10-04. Scope: the `hayaid` binary, its two modes, its configuration, its traces
+Date: 2026-10-04. Scope: the `hayaid` binary, its 2 modes, its configuration, its traces
 and metrics, and the limits of each mode.
 
 ## Modes
 
 | Mode | Network | State | Purpose |
 |---|---|---|---|
-| `full` | Regtest, Testnet, Mainnet | Own state from the genesis block of the network, synchronized from the peers | Synchronize, produce, validate, relay and serve templates. Phase 2 of `docs/testnet-benchmark-plan.md`. |
-| `shadow` | Testnet, Mainnet (Regtest for tests) | Seeded from a local Zakura node at a start height | Validate every block of the Zakura node and record traces and metrics. Phase 1. |
+| `full` | Regtest, Testnet, Mainnet | Own state from the genesis block of the network, which the node synchronizes from its peers | Synchronize, produce, validate, relay and serve templates. Phase 2 of `docs/testnet-benchmark-plan.md`. |
+| `shadow` | Testnet, Mainnet (Regtest for tests) | A seed from a local Zakura node at a start height | Validate every block of the Zakura node and record traces and metrics. Phase 1. |
 
 One process holds these parts:
 
@@ -20,9 +20,15 @@ One process holds these parts:
 - hayai-trace: the JSONL trace writer.
 
 CPU work runs on the global rayon pool. Every other part is a `std` thread with channels,
-as in hayai-net. The driver owns the chain state. Every block reaches the driver as one
-event, from the relay, from the producer through the relay, from the block download, or
-from the shadow follower.
+as in hayai-net.
+
+The driver owns the chain state. Every block reaches the driver as one event, from one of
+these sources:
+
+- the relay;
+- the producer, through the relay;
+- the block download;
+- the shadow follower.
 
 ## Full mode: synchronization
 
@@ -41,22 +47,26 @@ A full node needs no upstream node. It reads the chain from its peers.
   dials the `peers` of the configuration every 10 s while they are not connected.
 - Header sync. One peer at a time gives the headers. The node sends `getheaders` with the
   locator of its best header chain, and again after each message of 160 headers. When the
-  peer has no more headers, the node asks each other peer one time. Only a peer with
-  evidence of more headers than the node has takes this role: its reported height is above
-  the best header of the node, or it sent a full `headers` message with a new header. Such a
-  peer that adds fewer than 160 headers in `header_timeout_ms` gets a stall penalty and is
-  disconnected. A peer without that evidence gets `getheaders` and no role, and its silence
-  has no penalty: Zakura, Zebra and zcashd send no `headers` message when they have no
-  header after the locator.
+  peer has no more headers, the node asks each other peer one time. Each header passes the
+  proof of work, the contextual header rules and the checkpoint list (`hayai_sync::headers`).
+- Role of the header sync. Only a peer with evidence of more headers than the node has
+  takes this role. The evidence is a reported height above the best header of the node, or
+  a full `headers` message with a new header. Such a peer that adds fewer than 160 headers
+  in `header_timeout_ms` gets a stall penalty, and the node disconnects it. A peer without
+  that evidence gets `getheaders` and no role. Its silence has no penalty. Zakura, Zebra and
+  zcashd send no `headers` message when they have no header after the locator.
 - Idle poll. While no peer has the role of the header sync, the node sends `getheaders` to
   one connected peer at a time, in rotation. The delay starts at `header_poll_ms` (30 s) and
-  doubles after each poll, up to `header_poll_max_ms` (8 min). News sets the delay back to
-  `header_poll_ms`: a new header, an `inv` with an unknown block, a new block of the relay,
-  a new peer that reports more than the best header. A poll without an answer costs the
-  peer nothing. An `inv` with an unknown block is followed
-  by `getheaders` to its peer, and by at most 5 more each 300 ms while the header is
-  missing (a hayaid peer announces a block before it serves the header). Each header passes the proof of work, the contextual header
-  rules and the checkpoint list (`hayai_sync::headers`).
+  doubles after each poll, up to `header_poll_max_ms` (8 min). These events set the delay
+  back to `header_poll_ms`:
+  - a new header;
+  - an `inv` with an unknown block;
+  - a new block of the relay;
+  - a new peer that reports more than the best header.
+
+  A poll without an answer gives the peer no penalty. After an `inv` with an unknown block,
+  the node sends `getheaders` to its peer. While the header is missing, the node sends at
+  most 5 more each 300 ms (a hayaid peer announces a block before it serves the header).
 - Fork choice. The best chain is the header chain with the most cumulative work that has
   no invalid block. On equal work the first-seen chain stays (Bitcoin Core, zcashd).
 - Block download. `hayai_sync::download::Scheduler` is the only sender of `getdata` for a
@@ -65,98 +75,117 @@ A full node needs no upstream node. It reads the chain from its peers.
   with the rule set of its height, and checks the merkle root.
 - Validation. The scheduler delivers the blocks in height order, at most 16 before a
   commit. The driver builds the layer of each delivered block on the speculative tip
-  (`build_layer`, `Chain::push_speculative`), verifies the scripts and the proofs of all
-  of them in parallel (`verify`), and commits them in order (`Chain::confirm`). A block at
+  (`build_layer`, `Chain::push_speculative`). It verifies the scripts and the proofs of all
+  of them in parallel (`verify`). Then it commits them in order (`Chain::confirm`). A block at
   or below the last checkpoint that the header chain reached takes the checkpoint path
   (`apply_checkpointed`). A block at or below the mandatory checkpoint waits until the
   header chain reaches a checkpoint above it.
 - At the tip. A block of the compact relay, or a block of this node, is a body from
-  another source: its header goes into the header chain and the scheduler delivers it. A
+  another source. Its header goes into the header chain, and the scheduler delivers it. A
   downloaded block that is the best header tip goes on to the compact-relay peers before
-  its validation. A legacy peer gets the `inv` of a block after its commit, the headers of
-  validated blocks only, and `notfound` for a block that the node did not validate yet: zcashd, Zebra and Zakura give the penalty for an invalid block
-  to the peer that sent it, and Zakura bans that peer.
+  its validation. When the one delivered block is the best header tip, the template moves
+  to it at the layer build. The template goes back when the verification fails.
+- Legacy peers at the tip. A legacy peer gets these messages:
+  - the `inv` of a block after its commit;
+  - the headers of validated blocks only;
+  - `notfound` for a block that the node did not validate yet.
+
+  zcashd, Zebra and Zakura give the penalty for an invalid block to the peer that sent it.
+  Zakura also bans that peer.
 - Zebra and Zakura peers. The node answers `getblocks` with the hashes of the validated
-  blocks after the locator, or with the hash of its tip when it has none: a Zakura peer
-  waits 6 s for an answer and sends no block announcement on that connection in this
-  time. One `getdata` message has at most 16 blocks, and fewer for large blocks: these
-  peers answer at most 16 blocks and 1 MB for one message. When large blocks follow small
-  blocks, a message of 16 blocks is in flight, and the peer answers only the blocks up
-  to 1 MB. The requests of the message after its answered blocks are free again without
-  a stall when the peer answers a later message. The node sends `mempool` to
-  each legacy peer after the handshake and then each 60 s: these peers announce a
-  transaction one time, to a part of their peers.
-  When the one delivered block is the best header tip, the template moves to it at the
-  layer build and goes back when the verification fails.
-- A block that fails its validation has one of three faults
+  blocks after the locator. When it has no such block, it answers with the hash of its tip.
+  A Zakura peer waits 6 s for an answer, and in this time it sends no block announcement on
+  that connection.
+- Block requests to Zebra and Zakura peers. One `getdata` message has at most 16 blocks,
+  and fewer for large blocks. These peers answer at most 16 blocks and 1 MB for one
+  message. When large blocks follow small blocks, a message of 16 blocks is in flight, and
+  the peer answers only the blocks up to 1 MB. The requests of the message after its
+  answered blocks are free again without a stall when the peer answers a later message.
+- Mempool of legacy peers. The node sends `mempool` to each legacy peer after the handshake
+  and then each 60 s. These peers announce a transaction one time, to a part of their
+  peers.
+- A block that fails its validation has one of 3 faults
   (`crates/hayaid/src/node/fault.rs`):
 
   | Fault | Cause | Result |
   |---|---|---|
   | Wrong body | The body is not the body that the header hash commits to: a parse error, a merkle root mismatch, a transaction twice with the merkle root of the list without the repeat (CVE-2012-2459), or a header commitment mismatch (from NU5 the commitment binds the authorizing data) | The peer gets 100 points (a ban). The header stays valid, and the scheduler asks another peer. No record in `headers.log` |
   | Invalid | The block breaks a consensus rule, and the header hash commits to the fault | The header chain records the block and its descendants as invalid (a record in `headers.log`), the peer gets 100 points, and the node follows the next best chain |
-  | Local | The node cannot validate the block: the Orchard key of the rule set is not built, the node does not know the Sprout state, an upgrade has no rule set, or the driver selected a validation path that the block does not have | The node stops with an error that names the block. No penalty and no record in `headers.log`: the block can be valid |
+  | Local | The node cannot validate the block: the node did not build the Orchard key of the rule set, the node does not know the Sprout state, an upgrade has no rule set, or the driver selected a validation path that the block does not have | The node stops with an error that names the block. No penalty and no record in `headers.log`: the block can be valid |
 
   The check of the body (no merkle mutation, the authorizing data of the header
-  commitment) runs before each commit path: the full path, the prebuilt path and the
-  checkpoint path. A downloaded block that is the best header tip goes on to the peers
+  commitment) runs before each commit path. The commit paths are the full path, the
+  prebuilt path and the checkpoint path. A downloaded block that is the best header tip goes on to the peers
   after this check.
 - Upgrades. Each choice that depends on the height comes from `rules_at(network, height)`
   at the time of its use. The relay parses a transaction under the rule set of the block
-  after the committed tip, and a block under the rule set of its height. At a commit that
-  makes the next block the first block of an upgrade, the prepared store changes its rule
-  epoch and drops each transaction of the old epoch: such a transaction commits to the
-  old consensus branch id in its signature hash, so no block of the new epoch can contain
-  it and no second preparation can make it valid. The mempool takes transactions of the
-  new rule set from that commit on.
+  after the committed tip, and a block under the rule set of its height.
+- Rule epoch of the prepared store. At a commit that makes the next block the first block
+  of an upgrade, the prepared store changes its rule epoch. It then drops each transaction
+  of the old epoch. Such a transaction commits to the old consensus branch id in its
+  signature hash. Thus no block of the new epoch can contain it, and no second preparation
+  can make it valid. The mempool takes transactions of the new rule set from that commit on.
 - Verifying keys. A background thread builds the Orchard key of the rule set of the next
-  block with full validation and the key of the upgrade after it
-  (`VerifyingKeys::prebuild_more`). The node asks for the keys at its start and after
-  each commit, so the key of an upgrade is in work from the activation before it. The
-  driver thread waits for a key (`VerifyingKeys::ready`) before the first batch that
-  needs it. The validation on the rayon pool never builds a key. In the checkpoint range
-  no block reads a key: the node starts the build 1,000 blocks before the last
-  checkpoint.
+  block with full validation. It also builds the key of the upgrade after it
+  (`VerifyingKeys::prebuild_more`). The node asks for the keys at its start and after each
+  commit, so the build of the key of an upgrade starts at the activation before it.
+- Use of the verifying keys. The driver thread waits for a key (`VerifyingKeys::ready`)
+  before the first batch that needs it. The validation on the rayon pool never builds a
+  key. In the checkpoint range no block reads a key. The node starts the build 1,000 blocks
+  before the last checkpoint.
 - Withheld bodies. The node asks a peer for a block only when the chain of the peer can
-  have it: a peer whose last `headers` message ends on another branch gets no request
-  above the fork point. When each peer that can have the lowest missing block of the best
-  header chain failed to send it (a stall, or `notfound`), or no connected peer can have
-  it, the node takes the block and its descendants out of the fork choice. The best header
-  chain is then the chain with the most work among the other chains, and the node
-  downloads its blocks. zcashd has the same result: it activates the chain with the most
-  work among the chains whose blocks it has. Zakura keeps the header chain with the most
-  work and raises an alarm. The headers stay valid. They come back into the fork choice
-  when a peer that connected after the exclusion sends a header of the chain, when the
-  relay completes a block of it, and after 30 s (the time doubles at each exclusion in a
-  row, up to 16 min). The headers of a peer that was connected at the exclusion do not
-  end it: that peer did not send the block. The mark is in memory only, and the bound of
-  the side headers (65,536) does not count the excluded headers. The template and the
-  blocks of the node are always on the committed tip. `hayai_sync_bodies_withheld` is 1
-  while a chain is out of the fork choice. The log has one warning for an excluded block
-  (`no peer sends the block`), then at most one for each wait.
+  have it. A peer whose last `headers` message ends on another branch gets no request above
+  the fork point. The node takes the lowest missing block of the best header chain and its
+  descendants out of the fork choice in these cases:
+  - Each peer that can have the block failed to send it (a stall, or `notfound`).
+  - No connected peer can have the block.
+
+  The best header chain is then the chain with the most work among the other chains. The
+  node downloads its blocks.
+- Withheld bodies in zcashd and Zakura. zcashd has the same result: it activates the chain
+  with the most work among the chains whose blocks it has. Zakura keeps the header chain
+  with the most work and raises an alarm.
+- End of an exclusion. The headers stay valid. They come back into the fork choice in these
+  cases:
+  - a peer that connected after the exclusion sends a header of the chain;
+  - the relay completes a block of the chain;
+  - 30 s pass (the time doubles at each exclusion in a row, up to 16 min).
+
+  The headers of a peer that was connected at the exclusion do not end the exclusion. That
+  peer did not send the block.
+- State of an exclusion. The mark is in memory only. The bound of the side headers (65,536)
+  does not count the excluded headers. The template and the blocks of the node are always
+  on the committed tip. `hayai_sync_bodies_withheld` is 1 while a chain is out of the fork
+  choice. The log has one warning for an excluded block (`no peer sends the block`), then at
+  most one for each wait.
 - Templates during the synchronization. The node builds no template while its committed
   tip is more than 100 blocks below the best header tip (the distance at which Zakura
-  refuses `getblocktemplate`): a block on such a tip is not a block of the chain of the
+  refuses `getblocktemplate`). A block on such a tip is not a block of the chain of the
   network. The driver validates one batch of delivered blocks (at most 16), then takes
-  the messages that wait and runs the tick, then validates the next batch. The template
-  time is the clock of the node, at least the median-time-past plus 1 s and at most the
-  median-time-past plus 90 min from the start height of that rule.
+  the messages that wait and runs the tick, then validates the next batch.
+- Template time. The template time is the clock of the node. It is at least the
+  median-time-past plus 1 s. From the start height of that rule, it is at most the
+  median-time-past plus 90 min.
 - Mempool and commit. The driver counts each change of the tip and cleans the prepared
   store under the lock of the count. An admission that ran its checks on another tip
-  does not insert: it runs again on the new tip, at most 3 times.
+  does not insert the transaction. It runs again on the new tip, at most 3 times.
 - Reorg. When the first delivered block does not extend the committed tip, the driver
-  waits until the delivered blocks of the branch end at the best header tip, or have more
-  work than the committed tip, or number 16. Then it disconnects the committed blocks down
-  to the fork point (at most 1,000, the finality depth) and validates the branch. When a
-  block of the branch is not valid, the next best chain can be the first one: its blocks
-  come back from the block store. A transaction of the mempool stays when its inputs are
-  the same coins and the policy and the tip state accept it on the new tip: its scripts
-  and its proofs do not run again. The transactions of the disconnected blocks pass the
-  whole admission, the newest 4 MB of them.
+  waits until one of these conditions is true:
+  - The delivered blocks of the branch end at the best header tip.
+  - The delivered blocks of the branch have more work than the committed tip.
+  - The delivered blocks of the branch number 16.
+
+  Then it disconnects the committed blocks down to the fork point (at most 1,000, the
+  finality depth) and validates the branch. When a block of the branch is not valid, the
+  next best chain can be the first one. Its blocks come back from the block store.
+- Mempool after a reorg. A transaction of the mempool stays when its inputs are the same
+  coins and the policy and the tip state accept it on the new tip. Its scripts and its
+  proofs do not run again. The newest 4 MB of the transactions of the disconnected blocks
+  pass the whole admission.
 - The block store keeps every committed block by hash. The index by height names the
   block of the newest commit at each height.
 
-## How to run
+## Operation
 
 ### Regtest pair
 
@@ -178,17 +207,20 @@ curl -s -u "$(cat hayaid-data/.cookie)" -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[10]}' http://127.0.0.1:18345/
 ```
 
-The node writes the credentials of its RPC server to the file `.cookie` in `cache_dir`
-(JSON-RPC server, Protection of the port).
+The node writes the credentials of its RPC server to the file `.cookie` in `cache_dir`.
+The command above reads them from that file (JSON-RPC server, Protection of the port).
 
 A second node sets `peers = ["127.0.0.1:18344"]`. A node that starts later synchronizes the
 blocks that it does not have.
 
 ### Testnet shadow
 
-The same steps run a Mainnet shadow node: use `network = "Mainnet"` in `zakurad`, the
-RPC and P2P ports of Mainnet (8232, 8233) and `hayaid config --network mainnet`.
-Read the section Mainnet first.
+The same steps run a Mainnet shadow node. Read the section Mainnet first. For Mainnet, use
+these values:
+
+- `network = "Mainnet"` in `zakurad`;
+- the RPC and P2P ports of Mainnet (8232, 8233);
+- `hayaid config --network mainnet`.
 
 1. Run `zakurad` on Testnet with these settings:
    - `[rpc] listen_addr = "127.0.0.1:18232"` and `enable_cookie_auth = false`;
@@ -201,7 +233,7 @@ Read the section Mainnet first.
    target/release/hayaid config --network testnet > shadow.toml
    ```
 
-   Set `[network] peers` to the P2P address of the Zakura node, and set `[network.zakura] trace_dir`.
+   Set `[network] peers` to the P2P address of the Zakura node. Set `[network.zakura] trace_dir`.
 4. Start the node:
 
    ```
@@ -217,8 +249,8 @@ Read the section Mainnet first.
    ```
 
 The node stops on SIGINT or SIGTERM and, on Regtest, on the `stop` method of the RPC
-server. It flushes the coins, writes a snapshot (memory
-backend), syncs the block files and closes the trace files.
+server. At the stop, it flushes the coins, writes a snapshot (memory backend), syncs the
+block files and closes the trace files.
 
 ### Restart
 
@@ -245,10 +277,10 @@ A restart takes these steps:
    record before the flush that it belongs to, so a record for the best block always exists.
    Without a best block, the start record is the state.
 3. Restore the base of the chain from the record (the node made the block files durable
-   before the coins flush of that record), then validate and push every block of
-   the block files above the base (about the last 1,000 blocks, the finality depth, plus
-   the blocks since the last flush). A block above the last checkpoint of the network is
-   validated in full. A full node applies a block at or below it with the checkpoint path.
+   before the coins flush of that record). Then validate and push every block of the block
+   files above the base (about the last 1,000 blocks, the finality depth, plus the blocks
+   since the last flush). The node validates a block above the last checkpoint of the
+   network in full. A full node applies a block at or below it with the checkpoint path.
 4. Full mode: open the header chain from `headers.log`, without a second run of the header
    rules. The node adds the headers of the committed blocks that the log does not hold,
    from the block files. The committed blocks are valid bodies in the header chain. A log
@@ -256,14 +288,14 @@ A restart takes these steps:
    first record and writes one warning with the number of such records. A record that
    fails its checksum before the end of the log stops the start.
 5. Open the P2P port. A full node continues the header sync from its best header and the
-   block download from its committed tip. The bodies that were in memory are requested
-   again.
+   block download from its committed tip. The node requests again the bodies that were in
+   memory.
 
 A clean stop and a crash differ only in the number of replayed blocks. A shadow node that
-restarts does not read a new seed. Its follower fetches the blocks that it lacks, up to
-`MAX_CATCH_UP` (1,000).
+restarts does not read a new seed. Its follower fetches the blocks that it does not have, up
+to `MAX_CATCH_UP` (1,000).
 
-A replay ends at the first stored block that does not extend the replayed chain: after a
+A replay ends at the first stored block that does not extend the replayed chain. After a
 reorg to a shorter branch, the index by height names a block of the old branch above the
 tip of the new branch.
 
@@ -303,7 +335,7 @@ error when the key changes the consensus rules, the network or a data location.
 | | `cache_dir` | `true` | Directory of the address book `peers.dat`: `true` is `[state] cache_dir`, `false` keeps the address book in memory only, a path is that directory |
 | | `peers` | `[]` | Peers to dial, and to dial again every 10 s while disconnected |
 | | `compact_relay` | `true` | Offer the compact-relay extension |
-| | `max_peers` | `16`; with `peerset_initial_target_size`: the sum of its two limits | The node closes the newest inbound connections above this count |
+| | `max_peers` | `16`; with `peerset_initial_target_size`: the sum of its 2 limits | The node closes the newest inbound connections above this count |
 | | `prebuilt_candidates` | `0` | Candidates of peers' lanes on the tip whose body the node prebuilds while idle, at most; 0: off |
 | | `peerset_initial_target_size` | none | Full mode: the size of the peer set with the rule of Zakura. The node keeps 3/2 of this count as outbound peers and accepts 3 times this count as inbound peers |
 | | `outbound_peers` | `8`, or the value of `peerset_initial_target_size` | Full mode: outbound peers that the peer manager keeps (`outbound_target`) |
@@ -312,15 +344,15 @@ error when the key changes the consensus rules, the network or a data location.
 | | `initial_mainnet_peers` (Mainnet), `initial_testnet_peers` (Testnet and Regtest) | Mainnet: `dnsseed.str4d.xyz:8233`, `dnsseed.z.cash:8233`, `mainnet.seeder.shieldedinfra.net:8233`, `mainnet.seeder.zfnd.org:8233`; Testnet: `dnsseed.testnet.z.cash:18233`, `testnet.seeder.zfnd.org:18233`; Regtest: none | Full mode: DNS seeders as `host:port` |
 | | `ban_secs` | `86400` | Full mode: duration of a ban |
 | `[sync]` | `memory_budget_bytes` | `1073741824` | Full mode: bound of the downloaded blocks in memory plus 2 MB for each request without an answer |
-| | `request_timeout_ms` | `8000` | Full mode: a peer with a request that sends no block for this time stalls; two stalls disconnect it |
-| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync must add 160 headers in this time, or it is disconnected. Only a peer with evidence of more headers than the node has is that peer |
+| | `request_timeout_ms` | `8000` | Full mode: a peer with a request that sends no block for this time stalls; 2 stalls disconnect it |
+| | `header_timeout_ms` | `120000` | Full mode: the peer of the header sync must add 160 headers in this time, or the node disconnects it. Only a peer with evidence of more headers than the node has is that peer |
 | | `header_poll_ms` | `30000` | Full mode: first delay of the idle poll of the header sync (`getheaders` to one peer). The delay doubles after each poll, and a new block sets it back |
 | | `header_poll_max_ms` | `480000` | Full mode: largest delay of the idle poll of the header sync |
-| `[network.zakura]` | `trace_dir` | none | JSONL trace directory; none: tracing is off |
+| `[network.zakura]` | `trace_dir` | none | JSONL trace directory; none: the node writes no traces |
 | `[state]` | `cache_dir` | `hayaid-data` | Coins store, block files and state logs; an empty directory starts a new node, a hayaid directory resumes it (Restart) |
 | | `backend` | `memory` | `memory` (`MemBacking`: log and snapshots) or `rocksdb` (`RocksBacking`) |
-| | `flush_interval_blocks` | `100` | Blocks between two flushes of the finalized coins |
-| | `snapshot_interval_blocks` | `10000` | Memory backend: finalized blocks between two snapshots |
+| | `flush_interval_blocks` | `100` | Blocks between 2 flushes of the finalized coins |
+| | `snapshot_interval_blocks` | `10000` | Memory backend: finalized blocks between 2 snapshots |
 | | `wallet_index` | `false` | Full mode: keep the wallet index in `cache_dir/wallet-index` for `getrawtransaction`, `getaddressbalance`, `getaddresstxids`, `getaddressutxos` and `z_getsubtreesbyindex` (Wallet index). A key of hayaid only: Zakura always keeps its indexes. The index starts at the genesis block, so turn it on with an empty `cache_dir`. A shadow node refuses the key |
 | `[rpc]` | `listen_addr` | none | JSON-RPC server; full mode only |
 | | `enable_cookie_auth` | `true` | Each request needs the credentials of the cookie file (JSON-RPC server, Protection of the port). `false`: no authentication |
@@ -340,7 +372,7 @@ error when the key changes the consensus rules, the network or a data location.
 | | `funding_streams` | `[]` | Regtest only: a list of tables with `height_range = { start = h, end = h }` and `recipients = [{ receiver = "...", numerator = n, addresses = ["t2...", ...] }, ...]`. A recipient gets `numerator` hundredths of the block subsidy from `start` to the block before `end`. `receiver` is `ECC`, `ZcashFoundation`, `MajorGrants` or `Deferred`. `Deferred` is the deferred pool and has no address. Each other recipient needs one P2SH address for each address period of the range: 6 blocks before `nu7`, 18 blocks from `nu7`. The key has the meaning of `funding_streams` of the Regtest parameters of Zakura, with a `height_range` and `recipients` in each entry |
 | `[shadow]` | `rpc_addr` | (required in shadow mode) | JSON-RPC of the Zakura node |
 | | `start_height` | upstream tip | hayai validates from `start_height + 1` |
-| | `poll_interval_ms` | `200` | Time between two `getbestblockhash` calls |
+| | `poll_interval_ms` | `200` | Time between 2 `getbestblockhash` calls |
 | `[tracing]` | `filter` | `info` | The log level: `error`, `warn`, `info`, `debug` or `trace`. hayaid takes one level and no filter of a module |
 | | `use_color` | `true` | ANSI colour codes when the log goes to a terminal |
 | | `force_use_color` | `false` | ANSI colour codes in each case |
@@ -352,8 +384,8 @@ stderr is a terminal, unless `force_use_color` is set.
 ## Lane publication and private transactions
 
 A full node with the compact relay publishes its block template to its hayai peers before
-it finds a block: one batch for the transactions that each template change adds, and one
-candidate for each change (`docs/protocol-compact-relay.md`, Candidates). A peer then
+it finds a block. It publishes one batch for the transactions that each template change
+adds, and one candidate for each change (`docs/protocol-compact-relay.md`, Candidates). A peer then
 rebuilds a block of the node from a reference. `[mining] lane_publication` is the choice of
 the miner:
 
@@ -365,7 +397,7 @@ the miner:
 
 A found block goes out over the compact relay and the legacy protocol with each value. The
 key changes only what the node publishes of its own template. The node offers the same
-feature bits with each value: it takes the batches and the candidates of other miners,
+feature bits with each value. It takes the batches and the candidates of other miners,
 sends them on, and can prebuild them (`prebuilt_candidates`). No peer waits for a
 candidate: a block without one arrives as a compact block.
 
@@ -381,9 +413,13 @@ A private transaction is a transaction that a local client sends with
 - A block of the node with the transaction has its bytes for each compact-relay peer (a
   prefilled transaction). Such a block has no candidate form.
 
-The mark ends when a block with the transaction is committed, when a block removes the
-transaction from the mempool, or when a peer sends the transaction after it left the
-mempool. A node with `lane_publication = "all"` refuses the method,
+The mark ends in these cases:
+
+- The node commits a block with the transaction.
+- A block removes the transaction from the mempool.
+- A peer sends the transaction after it left the mempool.
+
+A node with `lane_publication = "all"` refuses the method,
 so that a client does not get a public transaction for a private one. The method is not a
 method of zcashd or Zakura: such a node answers "method not found", and does not publish
 the transaction.
@@ -397,7 +433,7 @@ Limits:
 
 ## JSON-RPC server
 
-`[rpc] listen_addr` starts the server in full mode. The server speaks JSON-RPC 1.0 and
+`[rpc] listen_addr` starts the server in full mode. The server uses JSON-RPC 1.0 and
 2.0 over HTTP `POST`.
 
 ### Protection of the port
@@ -412,8 +448,8 @@ The server has the cookie authentication of Zakura and zcashd. It is on by defau
   run left. A clean stop removes the file. A node that cannot write the file does not
   start.
 - Each request must have the header `Authorization: Basic <base64 of the file content>`.
-  The node compares the password with the secret in constant time. As Zakura, the node
-  does not read the user name.
+  The node compares the password with the secret in constant time. As in Zakura, the
+  node does not read the user name.
 - A request without the correct credentials gets the HTTP status 401 with
   `WWW-Authenticate: Basic realm="jsonrpc"` and an empty body, as in zcashd. No method
   runs, and the node closes the connection.
@@ -425,11 +461,16 @@ curl -s -u "$(cat hayaid-data/.cookie)" -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18345/
 ```
 
-The same rules in Zakura: file name and content (`zakura-rpc/src/server/cookie.rs:18`,
-`:38-45`, `:66`), mode 0600 (`cookie.rs:119-127`), write at the start
-(`server.rs:211-215`), removal at the stop (`server.rs:341-348`), header rule
-(`server/http_request_compatibility.rs:73-84`), keys `enable_cookie_auth` and `cookie_dir`
-(`config/rpc.rs:116-129`). Differences:
+Zakura has the same rules:
+
+- file name and content (`zakura-rpc/src/server/cookie.rs:18`, `:38-45`, `:66`);
+- mode 0600 (`cookie.rs:119-127`);
+- write at the start (`server.rs:211-215`);
+- removal at the stop (`server.rs:341-348`);
+- header rule (`server/http_request_compatibility.rs:73-84`);
+- keys `enable_cookie_auth` and `cookie_dir` (`config/rpc.rs:116-129`).
+
+Differences:
 
 | Subject | Zakura | hayaid |
 |---|---|---|
@@ -442,7 +483,7 @@ The same rules in Zakura: file name and content (`zakura-rpc/src/server/cookie.r
 What the cookie does not protect:
 
 - The server has no TLS. The credentials and each request cross the network as plain
-  text, and a host that reads them can use them until the node stops. Keep
+  text. A host that reads them can use them until the node stops. Keep
   `listen_addr` on 127.0.0.1, or put the port behind an SSH tunnel or a reverse proxy
   with TLS.
 - Each user that can read the cookie file can call each method.
@@ -451,12 +492,12 @@ What the cookie does not protect:
   `sendprivatetransaction`, `generate`, `ping`, `getpeerinfo`, and on Regtest `stop` and
   `addnode`. The node has no smaller method set for this case. When `listen_addr` is not
   a loopback address, the node writes one warning to its log at the start.
-- The `/metrics` server has no authentication, as the metrics endpoint of Zakura
+- The `/metrics` server has no authentication, as in the metrics endpoint of Zakura
   (`zakurad/src/components/metrics.rs:20-22`).
 
-`stop` and `addnode` are in the class `Test` of Zakura, and their bodies refuse each
-network that is not Regtest, with or without the cookie (`methods.rs:2858-2882`,
-`methods.rs:3918-3945`). hayaid has the same rule: the two methods work on Regtest only.
+`stop` and `addnode` are in the class `Test` of Zakura. Their bodies refuse each network
+that is not Regtest, with or without the cookie (`methods.rs:2858-2882`,
+`methods.rs:3918-3945`). hayaid has the same rule: the 2 methods work on Regtest only.
 
 ### Methods
 
@@ -514,18 +555,18 @@ Rules of the methods:
   `networks` (IPv4 and IPv6 reachable, no onion transport, no proxy), `localaddresses`
   (the node states no address of its own), `warnings`, `ismine`.
 
-The methods of the wallet index read the transparent addresses P2PKH and P2SH, as Zakura.
+The methods of the wallet index read the transparent addresses P2PKH and P2SH, as in Zakura.
 A TEX address names its P2PKH hash. No method of the index reads the mempool, as in
 Zakura. Only `getrawtransaction` and `gettxout` read it.
 
-`getblocktemplate`: `mintime` is the median-time-past plus 1 s, `maxtime` is the
-median-time-past plus 90 min, and `curtime` is the clock of the node inside these limits.
+In `getblocktemplate`, `mintime` is the median-time-past plus 1 s, and `maxtime` is the
+median-time-past plus 90 min. `curtime` is the clock of the node inside these limits.
 
 ## Wallet index
 
 `[state] wallet_index = true` keeps an index of the committed chain in
 `cache_dir/wallet-index` (crate `hayai-index`, `docs/architecture.md`). Zakura writes the
-same kind of index for each block in its default `storage_mode = "archive"`, and has no
+same kind of index for each block in its default `storage_mode = "archive"`. Zakura has no
 setting to turn it off (`zakura-state/src/service/finalized_state.rs:164-228`).
 
 | Column family | Key (bytes) | Value (bytes) | Zakura column family |
@@ -544,12 +585,12 @@ from the block files.
 
 Write path:
 
-- The driver sends each committed block, with the coins that its inputs spent, to the
-  writer thread of the index, in the same step as the append to the block store. The coins
-  come from the validation of the block: the index reads no coin.
+- The driver sends each committed block to the writer thread of the index, with the coins
+  that its inputs spent. It does this in the same step as the append to the block store.
+  The coins come from the validation of the block: the index reads no coin.
 - The queue holds 64 blocks at most (`hayai_index::QUEUE_BLOCKS`). A full queue makes the
   driver wait.
-- The writer builds the entries of the waiting blocks in parallel and writes them in one
+- The writer builds the entries of the blocks that wait in parallel. It writes them in one
   RocksDB write batch, in block order, with the undo record of each block and the tip.
   The balances are merge operands, so no write reads a value first.
 - A reorg queues an undo of each disconnected block, in the order of the disconnection.
@@ -563,14 +604,14 @@ Consistency rule:
    time.
 2. Each coins flush starts with a persist (`IndexWriter::persist`). The persist takes the
    sync that the flush before started, at the tip of that time. That sync holds the base
-   block when two conditions are true:
+   block when 2 conditions are true:
    - The synced tip is at or above the base. With a flush interval
      (`flush_interval_blocks`, 100 by default) below the finality depth (1,000 blocks),
      the old tip is above the new base.
    - No undo after the request went to or below the base. A reorg in that time undoes
      blocks above its fork point only.
    Then the persist waits for that sync, which usually ended during the blocks between
-   the two flushes. Else, and at the first flush after a start, it requests a new sync
+   the 2 flushes. Else, and at the first flush after a start, it requests a new sync
    and waits for it. The persist then
    requests the next sync, which runs in the background during the writes of the flush
    (the state record, the header log, the block files and the coins) and during the next
@@ -586,19 +627,27 @@ Consistency rule:
    store at the request: no restart and no reorg goes below that base.
 
 Disk cost for each element of the chain, before the compression and the overhead of
-RocksDB: 76 bytes for each transaction (`tx_loc` and `tx_id`), 69 bytes for each unspent
-output to a P2PKH or a P2SH address (`addr_utxo`), 27 bytes for each pair of an address and
-a transaction (`addr_tx`), 37 bytes for each address (`addr_balance`), and 35 or 71 bytes in
-the undo record for each address output and each address spend of the blocks above the
-base. The results of the Testnet sync are in
-`target/testnet-sync/results-zakura-vs-hayai.md`.
+RocksDB:
+
+| Element | Column family | Disk cost |
+|---|---|---|
+| Each transaction | `tx_loc` and `tx_id` | 76 bytes |
+| Each unspent output to a P2PKH or a P2SH address | `addr_utxo` | 69 bytes |
+| Each pair of an address and a transaction | `addr_tx` | 27 bytes |
+| Each address | `addr_balance` | 37 bytes |
+| Each address output and each address spend of the blocks above the base | the undo record | 35 or 71 bytes |
+
+The results of the Testnet sync are in `target/testnet-sync/results-zakura-vs-hayai.md`.
 
 The metrics `hayai_wallet_index_blocks`, `_batch_bytes`, `_build_seconds`, `_write_seconds`,
 `_queue_wait_seconds` and `_persist_wait_seconds` give the totals of the writer since the
-start. A clean stop writes them to the log (`wallet index writer closed`), with
-`sync_ms`, the time of the syncs in the writer thread, and `persist_stalls`, the number of
-persists that waited for a new sync. `persist_wait_ms` is the time that the driver waited
-for the persists.
+start. A clean stop writes them to the log (`wallet index writer closed`), with these
+fields:
+
+- `sync_ms`: the time of the syncs in the writer thread;
+- `persist_stalls`: the number of persists that waited for a new sync.
+
+`persist_wait_ms` is the time that the driver waited for the persists.
 
 ## Regtest
 
@@ -624,24 +673,26 @@ Regtest uses Equihash (48, 5): a solution is 36 bytes and a header is 177 bytes.
 parses these headers, and hayai-net, hayai-relay and hayai-template use the parameters of
 the network (`NetParams::pow`).
 
-Zakura's Regtest sets `disable_pow`. Under this waiver Zakura checks two things only:
+Zakura's Regtest sets `disable_pow`. Under this waiver Zakura checks 2 things only:
 
 - the solution has the Regtest shape (36 bytes, Equihash (48, 5));
 - the bits encode a target that is not easier than the limit.
 
-Zakura runs neither the hash-to-target filter nor Equihash on Regtest, and its internal
-miner sends a null solution. hayaid applies the same waiver in its header check: it
-rejects a solution of another length, and it checks the bits. Its producer is trivial: it
-takes the current template, sets a counter as the nonce and a 36-byte all-zero solution,
-and gives the block to the relay. hayaid needs no Equihash solver, and a Zakura node
-accepts its blocks.
+Zakura runs neither the hash-to-target filter nor Equihash on Regtest. Its internal miner
+sends a null solution.
+
+hayaid applies the same waiver in its header check: it rejects a solution of another
+length, and it checks the bits. Its producer is simple. It takes the current template,
+sets a counter as the nonce and a 36-byte all-zero solution, and gives the block to the
+relay. hayaid needs no Equihash solver, and a Zakura node accepts its blocks.
 
 zcashd Regtest is different: it verifies Equihash (48, 5) and the hash filter. A pair with
 zcashd needs a (48, 5) solver. hayai-wire verifies (48, 5) solutions
-(`check_equihash(header, PowParams::REGTEST)`, tested on the zcashd Regtest genesis block).
+(`check_equihash(header, PowParams::REGTEST)`, with a test on the zcashd Regtest genesis
+block).
 
-`docs/regtest-pair.md` has the pair of one hayaid and one zakurad: the configuration that
-both nodes share, the scenarios and their results.
+`docs/regtest-pair.md` describes the pair of one hayaid and one zakurad. It has the
+configuration that both nodes share, the scenarios and their results.
 
 ## Mainnet
 
@@ -659,8 +710,8 @@ Both modes compute the subsidy and the coinbase terms of each block. The templat
 coinbase outputs from the same terms. Full mode on Mainnet starts at the genesis block and
 synchronizes from its peers (Full mode: synchronization).
 
-The rules below are not enforced yet (`docs/consensus-rules.md` has the full list). The
-operator decides whether the gaps are acceptable:
+hayai does not enforce the rules below yet (`docs/consensus-rules.md` has the full list).
+The operator decides whether the gaps are acceptable:
 
 - The NU7 rules on the default (`upstream`) backend: the node stops with an error when
   its next block is the first block of NU7 (Testnet 4,465,026). A build with
@@ -679,25 +730,24 @@ The node reads its start state from the Zakura node, then follows it:
   block that hayai holds (`getblock <hash> 0`) and the tree state of each new block
   (`z_gettreestate <hash>`). It gives the driver the fork point and the new blocks.
 - The P2P connection to the Zakura node fills the prepared store and gives the receive time
-  of each block. A block from P2P that extends the tip is validated at once.
+  of each block. The driver validates a block from P2P that extends the tip at once.
 - The driver validates each upstream block that it does not hold yet, then compares its
   Sapling, Orchard and Ironwood roots with the roots of upstream (`z_gettreestate`, fields
   `sapling`, `orchard` and `ironwood`). From NU6.3 an answer without the Ironwood tree is
-  an error of the follower. For each block it writes an
-  `upstream_verdict` row.
+  an error of the follower. For each block the driver writes an `upstream_verdict` row.
 - An upstream reorg disconnects hayai's layers back to the fork point (at most 1,000 blocks,
   the finality depth).
 
 ### Trust limits
 
-hayai has no state before the start height. These items come from upstream and are not
-checked by hayai:
+hayai has no state before the start height. These items come from upstream, and hayai does
+not check them:
 
 | Item | Source | Counted in |
 |---|---|---|
 | Hash of the start block; time and `bits` of the start block and of the 27 blocks before it (the context of the header rules). The seed fails when upstream does not give all of them | `getblock <hash> 1` | — |
 | Sapling, Orchard and Ironwood frontiers at the start height | `z_gettreestate` | — |
-| The six chain value pools at the start height | `getblock <hash> 1` `valuePools` (ids `transparent`, `sprout`, `sapling`, `orchard`, `ironwood`, `lockbox`). The seed fails without `transparent`, `sprout`, `sapling` or `orchard`, without `ironwood` from NU6.3, and without a `lockbox` value above zero from NU6 | — |
+| The 6 chain value pools at the start height | `getblock <hash> 1` `valuePools` (ids `transparent`, `sprout`, `sapling`, `orchard`, `ironwood`, `lockbox`). The seed fails without `transparent`, `sprout`, `sapling` or `orchard`, without `ironwood` from NU6.3, and without a `lockbox` value above 0 from NU6 | — |
 | Coins created at or below the start height (value, script, height, coinbase flag) | `getrawtransaction <txid> 1` | `hayai_shadow_trusted_coins_total`, trace `trusted_coins` |
 | Unspentness of those coins before the start height | none | as above |
 | Uniqueness of a nullifier against the history before the start height | none | `hayai_shadow_trusted_nullifiers_total`, trace `trusted_nullifiers` |
@@ -719,13 +769,14 @@ Notes:
   every root from the start height on, and an anchor that hayai does not hold is older than
   the start height.
 - `gettxout` is in Zakura's restricted method set. It answers for the upstream tip, which
-  runs ahead of hayai: a coin that the block under validation spends already reads as
+  is ahead of hayai: a coin that the block under validation spends already reads as
   spent. It also gives the value as a float and no height. The backing therefore uses
   `getrawtransaction`. A coin that hayai spent after the start never goes upstream again.
-- An upstream call fails three times: the node stops (a missing coin would fail a valid
-  block).
-- The shadow template uses a zero history root when the history tree is unknown, and is
-  never served. Its coinbase pays the terms of its height. It exists for the `template_empty` and `template_full` times.
+- When an upstream call fails 3 times, the node stops. A missing coin would fail a valid
+  block.
+- The shadow template uses a zero history root when the history tree is unknown. The node
+  never serves the shadow template. Its coinbase pays the terms of its height. Its only use
+  is the `template_empty` and `template_full` times.
 
 ### Sprout state
 
@@ -744,21 +795,21 @@ A shadow node has no Sprout treestate. The RPC of the upstream node cannot give 
 
 A JoinSplit needs the frontier of its anchor, so the seed cannot replace the state. At the
 first block with a JoinSplit the node writes an `upstream_verdict` row with
-`"hayai": "not_validated"`, `"agree": null` and the reason, and stops with an error that
-names the block and this limit. The row is not a disagreement: hayai has no verdict. A
+`"hayai": "not_validated"`, `"agree": null` and the reason. Then it stops with an error
+that names the block and this limit. The row is not a disagreement: hayai has no verdict. A
 full node holds the Sprout state from the genesis block.
 
 ### Disagreement
 
 A block that upstream accepted and hayai rejects, or a difference of tree roots, is a
 disagreement. The node writes an `upstream_verdict` row with `"level": "error"` and
-`"agree": false`, logs an error, and stops: it cannot build on a block that it does not
-hold.
+`"agree": false`, writes an error to the log, and stops. It cannot build on a block that it
+does not hold.
 
 ### Restrictions
 
-- Set `peers` to the Zakura node only. The relay forwards every block to the other peers;
-  the Zakura node is the source of each block and receives no forward.
+- Set `peers` to the Zakura node only. The relay forwards every block to the other peers.
+  The Zakura node is the source of each block and receives no forward.
 - Transactions of blocks that an upstream reorg disconnects do not go back to the prepared
   store.
 
@@ -766,9 +817,9 @@ hold.
 
 The rows have the envelope of Zakura's `zakura-jsonl-trace`: `ts` (µs since the tracer
 opened), `node`, `process_trace_id`, `event`. hayai adds `unix_us` (µs since the Unix
-epoch) to every row. The writer has a bounded queue of 16,384 rows, drops and counts rows
-when the queue is full (`hayai_trace_dropped_rows_total`), and flushes and fsyncs every
-1 s.
+epoch) to every row. The writer has a bounded queue of 16,384 rows. When the queue is full,
+the writer drops and counts rows (`hayai_trace_dropped_rows_total`). It flushes and fsyncs
+every 1 s.
 
 | File | Event | Fields |
 |---|---|---|
@@ -782,18 +833,18 @@ when the queue is full (`hayai_trace_dropped_rows_total`), and flushes and fsync
 | | `upstream_verdict` | shadow mode: `height`, `hash`, `hayai` (`valid`, `invalid`, `not_validated`), `upstream`, `agree` (`null` when hayai has no verdict), `level`, `reason` |
 | `template.jsonl` | `template_empty`, `template_full` | `height`, `parent`, `template_id`, `txs`, `fees`, `since_tip_us`, `since_received_us` (the first empty and the first full template on a block only, else `null`) |
 
-`commit_start` and `commit_finish` have Zakura's names and fields. The relay emits
+`commit_start` and `commit_finish` have Zakura's names and fields. The relay writes
 `block_received` when the complete body reaches the driver's queue: after the header
-check and the forward. `source` is the protocol of the sending peer.
+check and the forward. `source` is the protocol of the peer that sent the block.
 
-The relay of hayai-net has no observer interface, so hayaid emits no
+The relay of hayai-net has no observer interface, so hayaid writes no
 `block_reconstructed` and no `block_forwarded` rows. The counters of
 `Relay::metrics()` are in `/metrics`.
 
 ### Block clock
 
 Each committed block has these points on the monotonic clock of the node. A trace row
-and a gauge of the same quantity have the value of one clock reading.
+and a gauge of the same quantity have the value of one read of the clock.
 
 | Point | Definition |
 |---|---|
@@ -819,11 +870,11 @@ and a gauge of the same quantity have the value of one clock reading.
 - At the tip the template moves to a block before the verification of its proofs
   (speculative tip). "received to template ready" can then be smaller than "received
   to validated". The node replaces the template when the block is not valid.
-- The stages of the validation split: `prepare_unknown` (the transactions that the
+- The stages of the validation are: `prepare_unknown` (the transactions that the
   prepared store did not have), `scripts` and `shielded` (signatures and proofs),
   `lookup`, `context`, `trees`, `history` (the checks against the state).
 - A scrape reads the gauges one after the other. A scrape during a commit can mix the
-  values of two blocks. The trace rows are the reference for a table of blocks.
+  values of 2 blocks. The trace rows are the reference for a table of blocks.
 
 ## Metrics
 
