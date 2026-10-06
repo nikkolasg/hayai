@@ -1095,7 +1095,7 @@ def features(bench, relay_bytes):
         "Most miners now run one implementation. One bug in it can stop or split most of the hash power at the same time.",
         "A second implementation helps only if miners use it, and miners use it only if it is faster and if it does not isolate them from the rest of the network.",
         [
-            "hayai implements the consensus rules of Zcash and changes none of them. The list of rules and their status is in <code>docs/consensus-rules.md</code>.",
+            "hayai implements the consensus rules of Zcash and changes none of them. The list of rules and their status is in <code>docs/consensus.md</code>.",
             "On every connection, hayai speaks the legacy protocol. A peer that sets a service bit and sends a version message for the extension gets the compact relay; every other peer gets the legacy messages.",
             "The extension has a version range and feature bits, so it can change without a coordinated upgrade.",
         ],
@@ -1257,7 +1257,7 @@ def status_section():
     n = {k: sum(1 for r in rows if r[0] == k) for k in label}
     return f"""<section id="status">
 <h2>Status</h2>
-<p>{n['done']} items are done, {n['progress']} are in progress and {n['todo']} are to do. The consensus coverage is listed rule by rule in <code>docs/consensus-rules.md</code>. A rule that is not implemented returns an error. It never passes silently.</p>
+<p>{n['done']} items are done, {n['progress']} are in progress and {n['todo']} are to do. The consensus coverage is listed rule by rule in <code>docs/consensus.md</code>. A rule that is not implemented returns an error. It never passes silently.</p>
 <div class="scroll"><table class="status"><thead><tr><th>State</th><th>Item</th><th>Detail</th></tr></thead><tbody>{trs}</tbody></table></div>
 </section>"""
 

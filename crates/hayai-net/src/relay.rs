@@ -792,10 +792,15 @@ impl Relay {
     }
 
     /// Sets the oldest peer protocol version accepted and disconnects the established peers
-    /// below it. The node calls this when a network upgrade activates
-    /// (`crate::protocol::min_peer_version`).
+    /// below it. The node calls this at each tip change with the version of the upgrade of
+    /// the tip (`crate::protocol::min_peer_version`). A call with the current value does
+    /// nothing: no peer below it can complete its handshake.
+    ///
+    /// ZIP 204, ZIP 201: at an upgrade activation, disconnect the peers below its version.
     pub fn set_min_peer_version(&self, version: u32) {
-        self.min_peer_version.store(version, Ordering::Release);
+        if self.min_peer_version.swap(version, Ordering::AcqRel) == version {
+            return;
+        }
         let peers: Vec<Arc<Peer>> = lock(&self.peers).values().cloned().collect();
         for peer in peers {
             let old = matches!(peer.session().peer_version(), Some(v) if v.version < version);
@@ -1266,6 +1271,8 @@ impl Relay {
                     SessionError::DuplicateVersion | SessionError::BeforeHandshake(_) => {
                         self.penalize(peer, Misbehaviour::Malformed, &detail);
                     }
+                    // ZIP 204: the node sends no reject REJECT_OBSOLETE before it closes the
+                    // connection (it differs from the SHOULD; Zakura sends none either).
                     SessionError::SelfConnection
                     | SessionError::VersionTooOld { .. }
                     | SessionError::HandshakeTimeout(_)
@@ -1295,6 +1302,7 @@ impl Relay {
                         .peer_version()
                         .map_or((0, 0, 0), |v| (v.version, v.services, v.start_height));
                     // The minimum can rise between the start of a session and its handshake.
+                    // ZIP 204: refuse a peer below the version of the current upgrade.
                     if version < self.min_peer_version.load(Ordering::Acquire) {
                         self.remove_peer(peer.id, "protocol version below the new minimum");
                         return;
@@ -1308,7 +1316,8 @@ impl Relay {
                             start_height,
                         });
                     }
-                    // zcashd asks each new outbound peer for addresses.
+                    // zcashd asks each new outbound peer for addresses. ZIP 204: one getaddr
+                    // for each connection.
                     if peer.direction == Direction::Outbound {
                         peer.getaddr_sent.store(true, Ordering::Release);
                         lock(&peer.addr_budget).grant_getaddr();
@@ -1385,6 +1394,7 @@ impl Relay {
             LegacyMessage::GetHeaders(g) => {
                 let legacy = matches!(peer.protocol(), PeerProtocol::Legacy);
                 let mut headers = self.chain.headers_after(&g.locator, &g.stop, legacy);
+                // ZIP 204: at most 160 headers in the answer.
                 headers.truncate(MAX_HEADERS);
                 self.send(peer, &LegacyMessage::Headers(headers));
             }
@@ -1398,6 +1408,7 @@ impl Relay {
             // the peer after 3 (`peer_set/stall_tracker.rs`).
             LegacyMessage::GetBlocks(g) => {
                 let mut headers = self.chain.headers_after(&g.locator, &g.stop, true);
+                // ZIP 204: at most 500 hashes in the answer (here 160).
                 headers.truncate(MAX_HEADERS);
                 let mut hashes: Vec<InvItem> =
                     headers.iter().map(|h| InvItem::Block(h.hash())).collect();
@@ -1435,7 +1446,9 @@ impl Relay {
                     });
                 }
             }
-            // Filter commands are decode-only.
+            // Filter commands are decode-only. ZIP 204: the node gives no penalty for a
+            // Bloom filter command (it differs from the SHOULD of 100 points), and it never
+            // sends one.
             LegacyMessage::FilterLoad(_)
             | LegacyMessage::FilterAdd(_)
             | LegacyMessage::FilterClear => {}
@@ -1463,6 +1476,7 @@ impl Relay {
             peer.getaddr_sent.store(false, Ordering::Release);
         }
         let message_len = addrs.len();
+        // ZIP 204: a rate limit for the addresses of each peer.
         let allowed = lock(&peer.addr_budget).take(message_len, now);
         addrs.truncate(allowed);
         let news = self.peer_manager.on_addrs(peer.addr.ip(), &addrs);
@@ -1487,6 +1501,8 @@ impl Relay {
 
     /// Answers `getaddr` as zcashd does: only to an inbound peer (an outbound peer could
     /// use the answer to recognise this node), and once per connection.
+    ///
+    /// ZIP 204: process `getaddr` only from an inbound peer.
     fn on_getaddr(&self, peer: &Arc<Peer>) {
         if peer.direction != Direction::Inbound {
             return;
@@ -1501,13 +1517,28 @@ impl Relay {
     }
 
     fn on_inv(&self, peer: &Arc<Peer>, items: Vec<InvItem>) {
+        // ZIP 239: before NU5 the node does not fetch a transaction by its wtxid. The
+        // branch is read only for a message with such an entry.
+        let before_nu5 = items.iter().any(|item| matches!(item, InvItem::Wtx(_)))
+            && matches!(
+                self.chain.tx_branch(),
+                Some(
+                    BranchId::Sprout
+                        | BranchId::Overwinter
+                        | BranchId::Sapling
+                        | BranchId::Blossom
+                        | BranchId::Heartwood
+                        | BranchId::Canopy
+                )
+            );
         let mut wanted = Vec::new();
         let mut announced = Vec::new();
         for item in items {
             let unknown = match &item {
                 InvItem::Block(h) => !lock(&self.blocks).seen(h),
-                InvItem::Wtx(id) => !self.has_tx(id),
+                InvItem::Wtx(id) => !before_nu5 && !self.has_tx(id),
                 InvItem::Tx(txid) => !self.has_txid(txid),
+                // ZIP 239: ignore a MSG_FILTERED_BLOCK entry of an inv.
                 InvItem::Error(_) | InvItem::FilteredBlock(_) => false,
             };
             match (item, unknown, &self.sync) {
@@ -1581,14 +1612,20 @@ impl Relay {
                 None => not_found.push(item),
             }
         }
+        // ZIP 204: notfound for each object that the node does not give.
         if !not_found.is_empty() {
             self.send(peer, &LegacyMessage::NotFound(not_found));
         }
     }
 
+    /// ZIP 204: the answer has every public id, also of a transaction that expires within
+    /// 3 blocks. It differs from the SHOULD NOT relay such a transaction.
     fn on_mempool(&self, peer: &Arc<Peer>) {
         let mut ids = Vec::with_capacity(self.txs.len());
-        self.txs.for_each_id(&mut |id| ids.push(tx_inv_item(id)));
+        // ZIP 204: no transaction that expires within 3 blocks of the next block.
+        let next_height = self.chain.tip_height() + 1;
+        self.txs
+            .for_each_relay_id(next_height, &mut |id| ids.push(tx_inv_item(id)));
         for chunk in ids.chunks(MAX_INV_ENTRIES) {
             self.send(peer, &LegacyMessage::Inv(chunk.to_vec()));
         }
@@ -2117,6 +2154,8 @@ impl Relay {
         }
     }
 
+    /// ZIP 204, ZIP 239: `MSG_WTX` for v5 and later, `MSG_TX` for v4 and earlier. The node
+    /// announces at once: it differs from the SHOULD of ZIP 204 to trickle the inventory.
     fn broadcast_tx(&self, id: &WtxId, exclude: Option<PeerId>) {
         let inv = LegacyMessage::Inv(vec![tx_inv_item(id)]);
         let now = Instant::now();

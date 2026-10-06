@@ -15,15 +15,13 @@ the files. `docs/hayaid.md` describes the binary, its modes and its configuratio
 ## Mainnet
 
 The mainnet profile runs hayaid in shadow mode on Mainnet. No code refuses Mainnet. These
-consensus rules are not enforced (`docs/hayaid.md`, Mainnet, and `docs/consensus-rules.md`):
+consensus rules are not enforced (`docs/hayaid.md`, Mainnet, and `docs/consensus.md`):
 
-- Difficulty adjustment: the node trusts the `bits` of the first 17 headers after its
-  start, because the rule reads 28 blocks of context. It checks every later header.
-- Funding streams: the amounts and scripts of the funding outputs of the coinbase are not
-  checked.
-- ZIP 213: the shielded outputs of the coinbase are not decrypted.
-- Sprout JoinSplits and ZIP 234 issuance: the validator returns
-  `Unsupported`. A shadow node stops when upstream accepts such a block.
+- ZIP 221 and ZIP 244 header commitment: the start state of a shadow node has no history
+  tree, so the node does not check `hashBlockCommitments` (`docs/consensus.md`, finding
+  F-P5-1).
+- Sprout JoinSplits: the start state has no Sprout treestates. The validator returns
+  `SproutStateUnknown`, and a shadow node stops when upstream accepts such a block.
 
 The operator decides whether the gaps are acceptable.
 

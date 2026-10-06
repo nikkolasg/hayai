@@ -32,12 +32,15 @@ use crate::difficulty::{expected_bits, median_time_past, ContextTooShort, Diffic
 use crate::{ConsensusError, Network, ParentChain, MEDIAN_TIME_SPAN};
 
 /// Lowest block version (zcashd `MIN_BLOCK_VERSION`).
+/// Spec §7.6: the block version is at least 4.
 pub const MIN_BLOCK_VERSION: u32 = 4;
 /// A block's time is at most this number of seconds after its median-time-past (zcashd
 /// `MAX_FUTURE_BLOCK_TIME_MTP`).
+/// Spec §7.6: `nTime` is at most the median-time-past plus 90 · 60 s.
 pub const MAX_FUTURE_BLOCK_TIME_MTP: u32 = 90 * 60;
 /// A node accepts a block whose time is at most this number of seconds after its clock
 /// (zcashd `MAX_FUTURE_BLOCK_TIME_LOCAL`).
+/// Spec §7.6: a full validator refuses `nTime` more than 2 h after its clock.
 pub const MAX_FUTURE_BLOCK_TIME_LOCAL: u32 = 2 * 60 * 60;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -127,18 +130,24 @@ pub fn check_contextual(
     }
     let net = network.params();
     check_version(header)?;
+    // Spec §7.7.2: the target of `nBits` is at most `PoWLimit`.
     check_target(header.bits, &net.pow_limit)?;
 
+    // Spec §7.6: the median-time-past reads the 11 blocks before the header, or all of
+    // them when fewer exist.
     let needed_times = MEDIAN_TIME_SPAN.min(usize::try_from(height).unwrap_or(usize::MAX));
     let median = median_time_past(chain.times).filter(|_| chain.times.len() >= needed_times);
     let time_unchecked = match median {
         Some(median_time_past) => {
+            // Spec §7.6: `nTime` is strictly greater than the median-time-past.
             if header.time <= median_time_past {
                 return Err(HeaderRuleError::TimeTooEarly {
                     time: header.time,
                     median_time_past,
                 });
             }
+            // Spec §7.6: `nTime` is at most the median-time-past plus 90 min, from height 2
+            // on Mainnet and from height 653,606 on Testnet.
             let limit = median_time_past.saturating_add(MAX_FUTURE_BLOCK_TIME_MTP);
             if height >= net.max_time_start_height && header.time > limit {
                 return Err(HeaderRuleError::TimeTooLate {
@@ -162,6 +171,7 @@ pub fn check_contextual(
     };
 
     if !net.disable_pow {
+        // Spec §7.6: `nBits` equals `ThresholdBits(height)`.
         match expected_bits(network, header.time, chain) {
             Ok(expected) if expected == header.bits => {}
             Ok(expected) => {
@@ -192,6 +202,9 @@ pub fn check_contextual(
 /// integer. A version with the high bit set is negative for zcashd (`int32_t nVersion`,
 /// `CheckBlockHeader`: `version-too-low`). Zakura rejects it by name
 /// (`zakura-chain/src/block/serialize.rs:36-62`, `validate_header_version`).
+///
+/// Spec §7.6: the block version is at least 4, and a version above 4 has the rules of
+/// version 4.
 pub fn check_version(header: &BlockHeader) -> Result<(), HeaderRuleError> {
     if header.version >> 31 != 0 || header.version < MIN_BLOCK_VERSION {
         return Err(HeaderRuleError::Version(header.version));
@@ -201,6 +214,8 @@ pub fn check_version(header: &BlockHeader) -> Result<(), HeaderRuleError> {
 
 /// The solution has the length of the network's Equihash parameters. A header of another
 /// network fails here before any hash work.
+///
+/// Spec §7.6: the solution of a Mainnet or Testnet header has 1344 bytes.
 pub fn check_solution_length(
     network: Network,
     header: &BlockHeader,
@@ -223,12 +238,16 @@ pub fn check_proof_of_work(network: Network, header: &BlockHeader) -> Result<(),
         check_target(header.bits, &net.pow_limit)?;
         return Ok(());
     }
+    // Spec §7.6: the block passes the difficulty filter of §7.7.2.
     check_pow(header, &net.pow_limit)?;
+    // Spec §7.6: `solution` is a valid Equihash solution (§7.7.1).
     check_equihash(header, net.pow).map_err(|e| HeaderRuleError::Equihash(e.to_string()))
 }
 
 /// The local rule: the time of `header` is at most 2 h after `now`, the clock of the node
 /// in seconds. It is not a consensus rule. A header that fails can pass later.
+///
+/// Spec §7.6: a full validator refuses a block with `nTime` more than 2 h after its clock.
 pub fn check_local_time(header: &BlockHeader, now: u32) -> Result<(), HeaderRuleError> {
     let limit = now.saturating_add(MAX_FUTURE_BLOCK_TIME_LOCAL);
     if header.time > limit {

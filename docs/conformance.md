@@ -2,7 +2,7 @@
 
 Scope: the published test vectors on this machine, the block and transaction harness of
 `hayai-bench`, and the outcomes on 2026-10-04. Rule numbers (H1, B1, T1) are those of
-`docs/plan-consensus-and-sync.md`, section 1. Rule rows are those of `docs/consensus-rules.md`.
+`docs/plan-consensus-and-sync.md`, section 1. Rule rows are those of `docs/consensus.md`.
 
 Owner decision Q7 applies: the repository holds no block that a node or the network supplied.
 Every vector below is a copy of a published vector set.
@@ -310,7 +310,7 @@ outcome and not a defect. `tests/vectors/expected-txs.json` holds the outcomes.
 | ZIP 244 (v5) | 2 | 0 | 8 | 0 |
 
 The 4 unsupported transactions are v3: full validation has no verification for a version
-before Sapling (`docs/consensus-rules.md`, Checkpoints). The 9 rejections are correct: 5
+before Sapling (`docs/consensus.md`, Checkpoints). The 9 rejections are correct: 5
 transactions spend more than `MAX_MONEY`, 1 v4 transaction with two JoinSplits has
 transparent outputs of more than `MAX_MONEY`, 2 transactions have no output and no shielded
 component, and 1 coinbase has Sapling outputs that do not decrypt with the zero outgoing

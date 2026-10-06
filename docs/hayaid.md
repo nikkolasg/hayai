@@ -659,13 +659,13 @@ Both modes compute the subsidy and the coinbase terms of each block. The templat
 coinbase outputs from the same terms. Full mode on Mainnet starts at the genesis block and
 synchronizes from its peers (Full mode: synchronization).
 
-The rules below are not enforced yet (`docs/consensus-rules.md` has the full list). The
+The rules below are not enforced yet (`docs/consensus.md` has the full list). The
 operator decides whether the gaps are acceptable:
 
 - The NU7 rules on the default (`upstream`) backend: the node stops with an error when
   its next block is the first block of NU7 (Testnet 4,465,026). A build with
   `--no-default-features --features zakura` has the NU7 rule set and continues
-  (`docs/consensus-rules.md`, NU7).
+  (`docs/consensus.md`, NU7 and the crypto backends).
 - Sprout JoinSplits in shadow mode: the seed has no Sprout treestate, and a shadow node
   stops at the first block with a JoinSplit (Shadow mode, Sprout state).
 - `hashBlockCommitments` in shadow mode before the history tree is known, and the start

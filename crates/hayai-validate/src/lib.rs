@@ -113,6 +113,9 @@ pub enum HeaderPolicy {
 /// The contextual header rules of `raw` on `view` for `network`, as `policy` selects them.
 /// The parent rule runs first, because the context of another tip is not the context of
 /// the block.
+///
+/// Spec §7.6: the version, `nBits` equal to `ThresholdBits`, and the two time rules on
+/// the median-time-past. The difficulty filter and Equihash ran at the header check.
 pub fn check_block_header(
     raw: &RawBlock,
     view: &ChainView,

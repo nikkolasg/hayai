@@ -36,6 +36,7 @@ use zcash_transparent::bundle::{self as transparent, MapAuth};
 use zcash_transparent::coinbase::{MAX_COINBASE_SCRIPT_LEN, MIN_COINBASE_SCRIPT_LEN};
 use zcash_transparent::sighash::{
     SighashType, SignableInput as TransparentInput, TransparentAuthorizingContext,
+    SIGHASH_ANYONECANPAY, SIGHASH_SINGLE,
 };
 
 use hayai_consensus::{RuleSet, ShieldedPools, TX_EXPIRY_HEIGHT_THRESHOLD};
@@ -126,7 +127,7 @@ impl SighashContext {
 
     /// The sighash the interpreter asks for while evaluating input `index`. `None` is a
     /// signature failure: an input index out of range or, for v5 and later, a hash type ZIP
-    /// 244 does not define.
+    /// 244 does not define, or `SIGHASH_SINGLE` without the output of the input's index.
     fn transparent(
         &self,
         index: usize,
@@ -136,7 +137,17 @@ impl SighashContext {
         let bundle = self.tx.transparent_bundle()?;
         let bits = hash_type.raw_bits() as u8;
         let hash_type = match self.tx.version() {
-            TxVersion::V5 | TxVersion::V6 => SighashType::parse(bits)?,
+            // ZIP 244 S.2a: only the six defined hash types, and SIGHASH_SINGLE needs an
+            // output at the index of the input (Zakura `zakura-script/src/lib.rs:214-221`).
+            // Upstream `sighash_v5.rs` hashes an empty output list in that case instead.
+            TxVersion::V5 | TxVersion::V6 => {
+                let parsed = SighashType::parse(bits)?;
+                if bits & !SIGHASH_ANYONECANPAY == SIGHASH_SINGLE && index >= bundle.vout.len() {
+                    return None;
+                }
+                parsed
+            }
+            // ZIP 143, ZIP 243: v3 and v4 hash the raw hash type byte.
             TxVersion::Sprout(_) | TxVersion::V3 | TxVersion::V4 => SighashType::from_raw(bits),
         };
         let script_code = script_from_bytes(&script_code.0);
@@ -170,6 +181,9 @@ pub struct Draft {
 /// because every block that holds one is at or below the mandatory checkpoint. hayai has
 /// no sighash for v1 and v2 and no verifier for the BCTV14 proofs of v2 and v3. The
 /// checkpoint path applies such a block without this function.
+///
+/// Spec §7.1.2: the versions of the epoch (ZIP 202, ZIP 225, ZIP 229; ZIP 2003: no v4 from
+/// NU7). The parser applies the version group rule (`TxVersion::read`).
 fn check_version(tx: &Transaction, epoch: RuleEpoch, rules: &RuleSet) -> Result<(), PrepareError> {
     // The parser gives `Sprout(n)` to every transaction without the Overwinter flag. Only
     // the numbers 1 and 2 are versions of that format.
@@ -187,6 +201,7 @@ fn check_version(tx: &Transaction, epoch: RuleEpoch, rules: &RuleSet) -> Result<
             epoch.branch_id,
         ));
     };
+    // Spec §7.1.2, §4.10, ZIP 200: the transaction has the branch id of the epoch.
     if tx.consensus_branch_id() != epoch.branch_id {
         return Err(PrepareError::BranchId {
             tx: tx.consensus_branch_id(),
@@ -238,6 +253,8 @@ fn check_pools(
 /// (Sapling, Orchard, Ironwood) and the value of its JoinSplits (`vpub_new` enters the
 /// transparent value pool of the transaction, `vpub_old` leaves it),
 /// checked against `MAX_MONEY` at every step as zcashd's `CheckTransaction` does.
+///
+/// Spec §3.4: the remaining value of the transparent transaction value pool is not negative.
 fn fee(tx: &Transaction, spent: &[Coin]) -> Result<u64, PrepareError> {
     let sum = |values: &mut dyn Iterator<Item = u64>| -> Result<u64, PrepareError> {
         let mut total = 0u64;
@@ -364,7 +381,7 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
     let ironwood_spends = matches!(ironwood, Some(b) if b.flags().spends_enabled());
     let ironwood_outputs = matches!(ironwood, Some(b) if b.flags().outputs_enabled());
 
-    // §7.1.2: `tx_in_count > 0 or nSpendsSapling > 0 or (nActionsOrchard > 0 and
+    // Spec §7.1.2: `tx_in_count > 0 or nSpendsSapling > 0 or (nActionsOrchard > 0 and
     // enableSpendsOrchard = 1) or (nActionsIronwood > 0 and enableSpendsIronwood = 1)`,
     // and the same rule for the outputs (Zakura `has_inputs_and_outputs`,
     // `zakura-consensus/src/transaction/check.rs:131`). A JoinSplit is a source and a sink
@@ -381,14 +398,14 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
     {
         return Err(PrepareError::NoSink);
     }
-    // §7.1.2: a v4 transaction with no Sapling spends or outputs has valueBalanceSapling 0
+    // Spec §7.1.2: a v4 transaction with no Sapling spends or outputs has valueBalanceSapling 0
     // (zcashd `bad-txns-valuebalance-nonzero`). The parsed form has lost the field.
     if let Some(balance) = raw.v4_value_balance_without_components() {
         if balance != 0 {
             return Err(PrepareError::V4ValueBalance(balance));
         }
     }
-    // §7.1.2 [NU5 onward]: Orchard actions require enableSpends or enableOutputs (Zebra
+    // Spec §7.1.2 [NU5 onward]: Orchard actions require enableSpends or enableOutputs (Zebra
     // `has_enough_orchard_flags`). [NU6.3 onward]: the same rule for Ironwood actions
     // (Zakura `has_enough_ironwood_flags`, `check.rs:165`).
     if orchard_actions > 0 && !orchard_spends && !orchard_outputs {
@@ -397,7 +414,7 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
     if ironwood_actions > 0 && !ironwood_spends && !ironwood_outputs {
         return Err(PrepareError::IronwoodFlags);
     }
-    // The rules of the Orchard pool from the activation of the Ironwood pool (NU6.3).
+    // ZIP 258: the rules of the Orchard pool from the activation of the Ironwood pool (NU6.3).
     if let (true, Some(b)) = (pools.ironwood, orchard) {
         // `enableCrossAddress` is 0 (Zakura `orchard_cross_address_disabled`,
         // `check.rs:179`). The parser applies the same rule to the flag byte.
@@ -412,19 +429,23 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
         }
     }
     if is_coinbase {
-        // Zakura `coinbase_tx_no_prevout_joinsplit_spend`, `check.rs:251`.
+        // Spec §7.1.2: a coinbase has no JoinSplit (Zakura
+        // `coinbase_tx_no_prevout_joinsplit_spend`, `check.rs:251`).
         if joinsplits > 0 {
             return Err(PrepareError::CoinbaseJoinSplit);
         }
+        // Spec §7.1.2, ZIP 225, ZIP 229: a coinbase has no Sapling spend, and
+        // `enableSpendsOrchard` and `enableSpendsIronwood` are 0.
         if sapling_spends > 0 || orchard_spends || ironwood_spends {
             return Err(PrepareError::CoinbaseShieldedSpend);
         }
-        // From NU6.3 a shielded coinbase output is an Ironwood output (Zakura
+        // ZIP 258, Spec §7.1.2: from NU6.3 a shielded coinbase output is an Ironwood output (Zakura
         // `coinbase_has_no_orchard_shielded_data`, `check.rs:367`).
         if let (false, Some(_)) = (rules.coinbase.orchard_bundle, orchard) {
             return Err(PrepareError::CoinbaseOrchardBundle);
         }
         crate::coinbase::check_shielded_outputs(tx, epoch.branch_id)?;
+        // Spec §7.1.2: the coinbase script has 2 to 100 bytes.
         let script_len = transparent
             .and_then(|b| b.vin.first())
             .map_or(0, |txin| txin.script_sig().0 .0.len());
@@ -445,6 +466,7 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
             });
         }
         let mut seen: HashSet<&OutPoint, ahash::RandomState> = HashSet::default();
+        // Spec §7.1.2: no null prevout outside a coinbase, and no prevout twice.
         for (i, txin) in transparent.into_iter().flat_map(|b| &b.vin).enumerate() {
             if *txin.prevout() == OutPoint::NULL {
                 return Err(PrepareError::NullPrevout(i));
@@ -455,7 +477,9 @@ pub fn draft(raw: RawTx, epoch: RuleEpoch, spent: Vec<Coin>) -> Result<Draft, Pr
         }
     }
     let expiry_height = u32::from(tx.expiry_height());
-    // zcashd `CheckTransactionWithoutProofVerification`, "tx-expiry-height-too-high".
+    // ZIP 203, Spec §7.1.2: the expiry height is at most 499,999,999 (zcashd
+    // `CheckTransactionWithoutProofVerification`, "tx-expiry-height-too-high"). hayai applies
+    // the bound to a coinbase too: from NU5 its expiry is its height, which is below it.
     if expiry_height >= TX_EXPIRY_HEIGHT_THRESHOLD {
         return Err(PrepareError::ExpiryTooHigh(expiry_height));
     }
@@ -800,6 +824,57 @@ mod tests {
                 coins: 1
             })
         );
+    }
+
+    /// ZIP 244 S.2a: a v5 or later input signed with `SIGHASH_SINGLE` needs the output of
+    /// its index. Without it the transaction has no sighash, so every signature check of the
+    /// input fails (Zakura `zakura-script/src/lib.rs:214-221`). A v4 input keeps the ZIP 243
+    /// digest.
+    #[test]
+    fn sighash_single_needs_the_output_of_its_index_from_v5() {
+        let epoch = RuleEpoch::consensus(BranchId::Nu6_2);
+        let (t, coins) = tx(&[(vec![], 10), (vec![], 10)], &[(vec![], 1)]);
+        let d = draft(raw(&t), epoch, coins).expect("drafts");
+        let code = Code(vec![OP_CHECKSIG]);
+        let sighash = |index: usize, bits: i32| {
+            let hash_type = HashType::from_bits(bits, false).expect("a defined hash type");
+            d.sighash.transparent(index, &code, &hash_type)
+        };
+        let Some(_) = sighash(0, 0x03) else {
+            panic!("input 0 has output 0");
+        };
+        let Some(_) = sighash(1, 0x01) else {
+            panic!("SIGHASH_ALL needs no output");
+        };
+        assert_eq!(sighash(1, 0x03), None, "input 1 has no output 1");
+        assert_eq!(sighash(1, 0x83), None, "the same with ANYONECANPAY");
+
+        let (t, coins) = with_expiry(TxVersion::V4, BranchId::Nu6_2, 0);
+        let mut vin = t.transparent_bundle().expect("a bundle").vin.clone();
+        vin.push(txin(OutPoint::new([9; 32], 0), &[]));
+        let mut spent = coins.clone();
+        spent.push(coins[0].clone());
+        let v4 = TransactionData::<Authorized>::from_parts(
+            TxVersion::V4,
+            BranchId::Nu6_2,
+            0,
+            BlockHeight::from_u32(0),
+            Some(Bundle {
+                vin,
+                vout: t.transparent_bundle().expect("a bundle").vout.clone(),
+                authorization: TAuthorized,
+            }),
+            None,
+            None,
+            None,
+        )
+        .freeze()
+        .expect("v4 freezes");
+        let d = draft(raw(&v4), epoch, spent).expect("drafts");
+        let hash_type = HashType::from_bits(0x03, false).expect("a defined hash type");
+        let Some(_) = d.sighash.transparent(1, &code, &hash_type) else {
+            panic!("a v4 input keeps the ZIP 243 digest");
+        };
     }
 
     /// A transaction of `version` and `branch` with one input, one output and the expiry

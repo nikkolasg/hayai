@@ -23,10 +23,14 @@ use crate::codec::Network;
 
 /// Legacy protocol version of a build without the NU7 rule set: the NU6.3 version of
 /// Mainnet and Testnet (Zakura `zakura-network/src/protocol/external/types.rs:123-126`).
+/// ZIP 258: a node of NU6.3 advertises at least 170,160.
+/// ZIP 205, 206, 250-253, 255, 257, 258: the version is at least
+/// MIN_NETWORK_PROTOCOL_VERSION of each upgrade.
 pub const PROTOCOL_VERSION: u32 = 170_160;
 /// Legacy protocol version of a build with the NU7 rule set: the version of Zakura
 /// (`zakura-network/src/constants.rs`, `CURRENT_NETWORK_PROTOCOL_VERSION`), which is the
-/// NU7 version of Mainnet.
+/// NU7 version of Mainnet. ZIP 259: a node of NU7 advertises at least 170,190 on Mainnet
+/// and 170,180 on Testnet.
 pub const PROTOCOL_VERSION_NU7: u32 = 170_190;
 
 /// The legacy protocol version that this node states. From the NU7 activation a Zakura
@@ -42,7 +46,8 @@ pub fn protocol_version() -> u32 {
 }
 /// Oldest peer protocol version accepted while the node does not know its height: the
 /// NU6.2 version (Zakura `INITIAL_MIN_NETWORK_PROTOCOL_VERSION`,
-/// `zakura-network/src/constants.rs:432-437`).
+/// `zakura-network/src/constants.rs:432-437`). ZIP 204: it is above `MIN_PEER_PROTO_VERSION`
+/// (170,002) and `MIN_TESTNET_PEER_PROTO_VERSION` (170,040).
 pub const INITIAL_MIN_PEER_VERSION: u32 = 170_150;
 
 /// Oldest peer protocol version accepted when `upgrade` is the active network upgrade.
@@ -52,6 +57,8 @@ pub const INITIAL_MIN_PEER_VERSION: u32 = 170_150;
 /// [`INITIAL_MIN_PEER_VERSION`], as in `Version::min_remote_for_height` (same file, lines
 /// 33-50). Regtest uses the Testnet values. The versions of the upgrades before NU6.2 are
 /// below the initial minimum on every network, so they have no row.
+///
+/// ZIP 204, ZIP 258, ZIP 259: the protocol version of each upgrade.
 pub fn min_peer_version(network: Network, upgrade: Upgrade) -> u32 {
     let specified = match (network, upgrade) {
         (_, Upgrade::Nu6_3) => 170_160,
@@ -74,10 +81,10 @@ pub fn min_peer_version(network: Network, upgrade: Upgrade) -> u32 {
     specified.max(INITIAL_MIN_PEER_VERSION)
 }
 
-/// Service bit of a full node (`NODE_NETWORK`).
+/// Service bit of a full node (`NODE_NETWORK`). ZIP 204: bit 0.
 pub const NODE_NETWORK: u64 = 1;
 /// Service bit advertising the compact-relay extension. Zakura's P2P v2 uses `1 << 24`;
-/// this stays clear of it.
+/// this stays clear of it. ZIP 204: bits 24 to 31 are for temporary experiments.
 pub const NODE_COMPACT_RELAY: u64 = 1 << 26;
 
 /// User agent sent in `version`: `/hayai:<crate version>/` (BIP 14 form).

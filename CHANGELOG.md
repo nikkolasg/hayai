@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `hayai-prepared`: a v5 or v6 transparent input signed with `SIGHASH_SINGLE` (or `SIGHASH_SINGLE | ANYONECANPAY`) and no output at its index fails its signature check (ZIP 244 S.2a, as Zakura). Before, hayai hashed an empty output list and accepted such a signature.
+- `hayaid`: a peer whose protocol version is below the version of the upgrade of the tip is refused at the handshake and disconnected when the upgrade activates (ZIP 201, ZIP 204, as Zakura). Before, the minimum stayed at 170,150.
+- `hayai-net`: a `ping` before the end of the handshake gets no `pong` (ZIP 204). Before NU5 the relay does not fetch a `MSG_WTX` announcement (ZIP 239).
+- `hayai-wire`: new method `TxLookup::for_each_relay_id`. The answer to `mempool` leaves out a transaction that expires within 3 blocks of the next block (ZIP 204). `PreparedStore::relay_ids` is removed.
+- Docs: `docs/consensus.md` traces each consensus rule of the ZIPs and of the protocol specification to the code, the tests and Zakura, with a status and the findings. It replaces `docs/consensus-rules.md`. The code marks each rule with `// ZIP <n>: ...` or `// Spec §<section>: ...`.
+
 - `hayaid`, `hayai-index`: optional wallet index, `[state] wallet_index = true` (off by default; turn it on with an empty `cache_dir`): transactions by id, transparent addresses and note commitment subtrees in `cache_dir/wallet-index`, written for each committed block, undone on a reorg, and consistent after a crash. Metrics `hayai_wallet_index_*`. `docs/hayaid.md`, Wallet index.
 - `hayaid`, `hayai-rpc`: methods `getrawtransaction`, `gettxout`, `getaddressbalance`, `getaddresstxids`, `getaddressutxos` and `z_getsubtreesbyindex` with the request and answer shapes of Zakura. Without the index they answer error -1. `gettxout`, and `getrawtransaction` for the mempool or a named block, need no index. `NodeQuery` has the methods of the index; new types `IndexError`, `TransparentAddress`, `AddressUtxo`, `TxOutInfo`, `SubtreePool`, `SubtreeRow`.
 - `hayai-state`: `Layer::spent_coins` holds the coins that the inputs of the block spent; `contextual_check_with_outputs` takes the inputs by value. `hayai-wire`: `RawBlock::tx_bytes`, `ParseError::NoTransaction`.

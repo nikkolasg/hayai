@@ -444,6 +444,8 @@ impl Dag {
     /// The checks that read only the header: the version and the proof of work of
     /// hayai-consensus (solution length, target at or below the limit, and on Mainnet and
     /// Testnet the hash against the target and the Equihash solution).
+    ///
+    /// Spec §7.6: the version, the difficulty filter and the Equihash solution.
     fn check_context_free(&self, header: &BlockHeader) -> Result<(), HeaderRuleError> {
         check_version(header)?;
         check_proof_of_work(self.network, header)
@@ -457,6 +459,7 @@ impl Dag {
         hash: &BlockHash,
     ) -> Result<Connection, RejectReason> {
         let Some(parent) = self.lookup(prev_hash) else {
+            // ZIP 204: the headers of a message form a chain.
             return Err(RejectReason::Unconnected(*prev_hash));
         };
         let parent_entry = self.entry(parent);
@@ -479,6 +482,7 @@ impl Dag {
                 finalized_height,
             });
         }
+        // Spec §7.7.5: the work of the block, for the chain with the most work.
         let Some(work) = block_work(bits) else {
             return Err(HeaderRuleError::Pow(PowError::InvalidBits(bits)).into());
         };

@@ -27,6 +27,10 @@ impl BlockLimits {
         shielded_cost: u32::MAX,
     };
     /// Zakura `zakura-chain/src/parameters/network_upgrade.rs:301-327`.
+    ///
+    /// ZIP 218: `OrchardProtocolBlockActionLimit` 330 for Orchard and for Ironwood,
+    /// `SaplingBlockIOLimit` 300, `GlobalShieldedBudget` 330. `SproutBlockJoinSplitLimit`
+    /// 0 is the Sprout pool that the NU7 rule set turns off.
     pub const NU7: Self = Self {
         sigops: 20_000,
         orchard_actions: 330,

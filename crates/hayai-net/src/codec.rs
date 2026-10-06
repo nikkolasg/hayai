@@ -29,33 +29,36 @@ use crate::protocol::CompactVer;
 /// Length of the frame header.
 pub const FRAME_HEADER_LEN: usize = 24;
 /// Largest payload of a legacy command (`MAX_PROTOCOL_MESSAGE_LEN` in zcashd and Zebra:
-/// a 2,000,000-byte block fits with its framing).
+/// a 2,000,000-byte block fits with its framing). ZIP 204: at most 2,097,152 bytes.
 pub const MAX_BODY_LEN: usize = 2 * 1024 * 1024;
 /// Largest payload accepted before the handshake completes (Zebra uses the same bound).
 pub const MAX_HANDSHAKE_BODY_LEN: usize = 1024;
 /// Largest payload of a `zcmpct` command: one relay frame.
 pub const MAX_COMPACT_BODY_LEN: usize = hayai_relay::MAX_PAYLOAD + 4;
-/// Inventory entries per `inv`/`getdata`/`notfound` (zcashd `MAX_INV_SZ`).
+/// Inventory entries per `inv`/`getdata`/`notfound` (zcashd `MAX_INV_SZ`). ZIP 204: at
+/// most 50,000.
 pub const MAX_INV_ENTRIES: usize = 50_000;
-/// Entries per `addr` or `addrv2` message (zcashd `MAX_ADDR_TO_SEND`, ZIP 155).
+/// Entries per `addr` or `addrv2` message (zcashd `MAX_ADDR_TO_SEND`). ZIP 204, ZIP 155:
+/// at most 1,000.
 pub const MAX_ADDR_ENTRIES: usize = 1000;
-/// Largest address field of an `addrv2` entry (ZIP 155).
+/// Largest address field of an `addrv2` entry. ZIP 155: at most 512 bytes.
 pub const MAX_ADDRV2_ADDR_LEN: usize = 512;
 /// `addrv2` network id of an IPv4 address, 4 bytes (ZIP 155).
 pub const ADDRV2_IPV4: u8 = 1;
 /// `addrv2` network id of an IPv6 address, 16 bytes (ZIP 155).
 pub const ADDRV2_IPV6: u8 = 2;
-/// Headers per `headers` message (zcashd `MAX_HEADERS_RESULTS`).
+/// Headers per `headers` message (zcashd `MAX_HEADERS_RESULTS`). ZIP 204: at most 160.
 pub const MAX_HEADERS: usize = 160;
 /// Locator hashes per `getheaders` (zcashd `MAX_LOCATOR_SZ`).
 pub const MAX_LOCATOR_HASHES: usize = 101;
-/// User agent length (zcashd `MAX_SUBVERSION_LENGTH`).
+/// User agent length (zcashd `MAX_SUBVERSION_LENGTH`). ZIP 204: at most 256 bytes.
 pub const MAX_USER_AGENT_LEN: usize = 256;
 /// `reject` field limits (zcashd `MAX_REJECT_MESSAGE_LENGTH`).
 pub const MAX_REJECT_MESSAGE_LEN: usize = 12;
 pub const MAX_REJECT_REASON_LEN: usize = 111;
 /// `filterload` filter bytes (BIP 37 `MAX_BLOOM_FILTER_SIZE`) and `filteradd` data.
 pub const MAX_FILTER_LEN: usize = 36_000;
+/// ZIP 204: `filteradd` data has at most 520 bytes.
 pub const MAX_FILTER_ADD_LEN: usize = 520;
 
 /// Which Zcash network a stream belongs to; selects the frame magic.
@@ -76,6 +79,7 @@ impl Network {
         }
     }
 
+    /// ZIP 204: the magic bytes of the network.
     pub fn magic(self) -> [u8; 4] {
         match self {
             Network::Mainnet => [0x24, 0xe9, 0x27, 0x64],
@@ -100,6 +104,7 @@ pub const MSG_ERROR: u32 = 0;
 pub const MSG_TX: u32 = 1;
 pub const MSG_BLOCK: u32 = 2;
 pub const MSG_FILTERED_BLOCK: u32 = 3;
+/// ZIP 239: the inventory type of a transaction by wtxid.
 pub const MSG_WTX: u32 = 5;
 
 /// A network address as carried in `version` (without timestamp) and `addr` messages.
@@ -391,12 +396,14 @@ impl FrameHeader {
         max_body: usize,
     ) -> Result<Self, DecodeError> {
         let magic: [u8; 4] = bytes[..4].try_into().expect("4 bytes");
+        // ZIP 204: refuse a frame with the magic of another network.
         if magic != network.magic() {
             return Err(DecodeError::Magic(magic));
         }
         let command: [u8; 12] = bytes[4..16].try_into().expect("12 bytes");
         let length = u32::from_le_bytes(bytes[16..20].try_into().expect("4 bytes")) as usize;
         let max = max_body.min(max_body_len(network, &command));
+        // ZIP 204: refuse a length above the limit, before the payload is read.
         if length > max {
             return Err(DecodeError::Oversize {
                 command: command_name(&command),
@@ -447,6 +454,7 @@ pub fn encode_body(message: &LegacyMessage, out: &mut Vec<u8>) {
             w.u64(v.nonce);
             w.var_str(&v.user_agent);
             w.u32(v.start_height);
+            // ZIP 204: the version message has the relay field.
             w.u8(u8::from(v.relay));
         }
         LegacyMessage::Verack
@@ -568,6 +576,7 @@ pub fn decode(network: Network, frame: &[u8]) -> Result<LegacyMessage, DecodeErr
     if body.len() > header.length {
         return Err(DecodeError::Trailing("frame", body.len() - header.length));
     }
+    // ZIP 204: refuse a payload whose checksum does not match.
     if checksum(body) != header.checksum {
         return Err(DecodeError::Checksum(command_name(&header.command)));
     }
@@ -597,6 +606,8 @@ pub fn decode_body(
             nonce: r.u64("nonce")?,
             user_agent: r.var_str("user_agent", MAX_USER_AGENT_LEN)?,
             start_height: r.u32("start_height")?,
+            // ZIP 204: an absent relay field is true. The node takes each byte other than
+            // 0 as true, as zcashd, and differs from the SHOULD to refuse a value above 1.
             relay: if r.remaining() == 0 {
                 true
             } else {
@@ -640,6 +651,7 @@ pub fn decode_body(
             let mut headers = Vec::with_capacity(count);
             for i in 0..count {
                 let header = r.header(pow)?;
+                // ZIP 204: the transaction count after each header is 0.
                 if r.compact_size("header tx count")? != 0 {
                     return Err(DecodeError::HeadersWithTxs(i));
                 }
@@ -717,6 +729,8 @@ pub fn decode_body(
             features: r.u64("features")?,
         }),
         CMD_ZCMPCT => LegacyMessage::Compact(hayai_relay::decode(body)?),
+        // ZIP 204: a command that is not one of the known commands (also one with bytes
+        // that are not printable, or not NUL after the first NUL) is ignored.
         other => LegacyMessage::Unknown {
             command: *other,
             payload: Bytes::copy_from_slice(body),
@@ -737,6 +751,7 @@ pub fn read_message(
     let header = FrameHeader::parse(network, &head, max_body)?;
     let mut body = vec![0u8; header.length];
     reader.read_exact(&mut body)?;
+    // ZIP 204: refuse a payload whose checksum does not match.
     if checksum(&body) != header.checksum {
         return Err(DecodeError::Checksum(command_name(&header.command)).into());
     }
@@ -845,6 +860,7 @@ impl Reader<'_> {
     fn u64(&mut self, field: &'static str) -> Result<u64, DecodeError> {
         Ok(u64::from_le_bytes(self.array(field)?))
     }
+    /// ZIP 204: refuse a CompactSize that is not canonical (upstream `CompactSize::read`).
     fn compact_size(&mut self, field: &'static str) -> Result<u64, DecodeError> {
         CompactSize::read(&mut self.0).map_err(|_| DecodeError::CompactSize(field))
     }
@@ -857,6 +873,7 @@ impl Reader<'_> {
             0xff => (self.u64(field)?, 0x1_0000_0000),
             small => (u64::from(small), 0),
         };
+        // ZIP 204: refuse a CompactSize that is not canonical.
         if value < min {
             return Err(DecodeError::CompactSize(field));
         }
@@ -869,6 +886,7 @@ impl Reader<'_> {
         let services = self.compact_u64("addrv2 services")?;
         let network_id = self.u8("addrv2 network id")?;
         let len = self.compact_u64("addrv2 address length")?;
+        // ZIP 155: refuse an addr field of more than 512 bytes, whatever the network id.
         if len > MAX_ADDRV2_ADDR_LEN as u64 {
             return Err(DecodeError::LengthLimit {
                 field: "addrv2 address",
@@ -888,9 +906,13 @@ impl Reader<'_> {
                     None => IpAddr::V6(v6),
                 }
             }
+            // ZIP 155: refuse a known network id with another address length. The node
+            // checks IPv4 and IPv6 only; a TORV3, I2P or CJDNS entry of another length is
+            // dropped, not refused, as in Zakura.
             (ADDRV2_IPV4 | ADDRV2_IPV6, _) => {
                 return Err(DecodeError::AddrV2Length { network_id, len });
             }
+            // ZIP 155: an entry of another network is not gossiped (also id 0x03, Tor v2).
             _ => return Ok(None),
         };
         Ok(Some(TimedNetAddr {
@@ -971,6 +993,8 @@ impl Reader<'_> {
                     txid: TxId::from_bytes(self.array("inv txid")?),
                     auth_digest: self.array("inv auth digest")?,
                 }),
+                // ZIP 204, ZIP 239: refuse an unknown inventory type. Type 0 (MSG_ERROR) is
+                // not in the ZIP 204 table; the node takes it, as Zakura.
                 other => return Err(DecodeError::InvType(other)),
             });
         }

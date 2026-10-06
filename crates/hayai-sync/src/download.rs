@@ -153,11 +153,19 @@ pub struct DownloadConfig {
 
 impl Default for DownloadConfig {
     /// The defaults are for blocks of 2 MB. `docs/architecture.md` gives the reasons.
+    ///
+    /// ZIP 218: a node should multiply `BLOCK_DOWNLOAD_WINDOW` and
+    /// `MAX_BLOCKS_IN_TRANSIT_PER_PEER` by 3 from NU7. hayai keeps the same values at
+    /// every height. The window and the requests also have bounds in bytes
+    /// (`memory_budget_bytes`, `peer_in_flight_bytes`), which do not depend on the spacing.
     fn default() -> Self {
         Self {
+            // ZIP 204: request no block more than 1,024 blocks above the tip.
             window_blocks: 1_024,
             memory_budget_bytes: 1 << 30,
             max_block_bytes: MAX_BLOCK_BYTES as u32,
+            // ZIP 204: up to 64 blocks in transit from one peer; it differs from the SHOULD NOT
+            // of 16.
             peer_in_flight_blocks: 64,
             peer_in_flight_bytes: 8_000_000,
             validation_lookahead: 16,

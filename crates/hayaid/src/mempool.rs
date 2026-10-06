@@ -308,6 +308,7 @@ impl Mempool {
         };
         let outpoints: Vec<OutPoint> = prepared.spent_outpoints().cloned().collect();
         let coins = view.get_coins(&outpoints);
+        // ZIP 200: a transaction of another branch leaves the pool at an activation.
         prepared.epoch == epoch
             && coins.len() == prepared.spent.len()
             && coins
@@ -416,6 +417,15 @@ impl TxLookup for PublicTxs {
     fn for_each_id(&self, f: &mut dyn FnMut(&WtxId)) {
         let private = self.mempool.private.read();
         self.store.for_each_id(&mut |id| {
+            if !private.contains(id) {
+                f(id)
+            }
+        });
+    }
+
+    fn for_each_relay_id(&self, next_height: u32, f: &mut dyn FnMut(&WtxId)) {
+        let private = self.mempool.private.read();
+        self.store.for_each_relay_id(next_height, &mut |id| {
             if !private.contains(id) {
                 f(id)
             }

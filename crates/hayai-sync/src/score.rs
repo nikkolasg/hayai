@@ -66,6 +66,8 @@ impl Misbehaviour {
             Misbehaviour::InvalidHeader
             | Misbehaviour::InvalidBlock
             | Misbehaviour::InvalidProof => 100,
+            // ZIP 204: the table gives 1 to 20 points for these faults; hayai gives 50 and
+            // disconnects.
             Misbehaviour::Malformed => 50,
             Misbehaviour::UnconnectedHeaders | Misbehaviour::Unsolicited => 20,
             Misbehaviour::InvalidTransaction => 10,

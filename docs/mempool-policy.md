@@ -193,6 +193,6 @@ Differences from ZIP 317:
 | Behaviour | Source | Local source |
 |---|---|---|
 | Announce a new transaction once, when the store accepts it | zcashd, Zebra | yes: `ZB/zebrad/src/components/mempool/gossip.rs` |
-| Answer a `mempool` message with the ids of the store, without the transactions that expire soon (`PreparedStore::relay_ids`) | zcashd | answer: yes (`ZB/zebrad/src/components/inbound.rs:560`). Filter on expiry: no |
+| Answer a `mempool` message with the ids of the store, without the transactions that expire soon (`TxLookup::for_each_relay_id`, ZIP 204) | zcashd | answer: yes (`ZB/zebrad/src/components/inbound.rs:560`). Filter on expiry: no |
 | v5 and later transactions are announced by wtxid (`MSG_WTX`), earlier ones by txid | ZIP 239 | hayai-net `tx_inv_item` |
 | No rebroadcast from the mempool | zcashd rebroadcasts only the transactions of its wallet; Zebra has no rebroadcast | Zebra: yes. zcashd: no |

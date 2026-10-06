@@ -31,11 +31,18 @@ pub struct FoundersReward {
 }
 
 /// `FoundersFraction` is 1 / 5.
+///
+/// Spec §7.8: `FoundersReward(height) = BlockSubsidy(height) * FoundersFraction` while
+/// `Halving(height) < 1`.
 const FOUNDERS_FRACTION_DIVISOR: u64 = 5;
 
 /// The founders' reward that the coinbase at `height` must pay. `None` when the rule does
 /// not apply: the genesis block, a height at or after Canopy, a height at or after the
 /// first halving, and every Regtest height (Canopy activates at height 1).
+///
+/// Spec §7.9: [Pre-Canopy] a coinbase at a height from 1 to
+/// `FoundersRewardLastBlockHeight` pays `FoundersReward(height)` to the P2SH script of
+/// `FounderRedeemScriptHash(height)`. ZIP 207: the rule ends at Canopy, also on Testnet.
 pub fn founders_reward(network: Network, height: u32) -> Option<FoundersReward> {
     let addresses: &[&str; 48] = match network {
         Network::Mainnet => &MAINNET_ADDRESSES,
@@ -49,12 +56,12 @@ pub fn founders_reward(network: Network, height: u32) -> Option<FoundersReward> 
         return None;
     }
     let params = network.params();
-    // `FounderAddressChangeInterval = ceiling((SlowStartShift + PreBlossomHalvingInterval)
-    // / NumFounderAddresses)`.
+    // Spec §7.9: FounderAddressChangeInterval = ceiling((SlowStartShift +
+    // PreBlossomHalvingInterval) / NumFounderAddresses).
     let change_interval = (params.slow_start_interval / 2 + params.pre_blossom_halving_interval)
         .div_ceil(addresses.len() as u32);
-    // `FounderAddressAdjustedHeight`: a block from Blossom counts as the part of a
-    // pre-Blossom block that its target spacing is.
+    // Spec §7.9: FounderAddressAdjustedHeight. A block from Blossom counts as the part of
+    // a pre-Blossom block that its target spacing is.
     let adjusted_height = match network.activation_height(Upgrade::Blossom) {
         Some(blossom) if height >= blossom => {
             blossom
@@ -64,12 +71,15 @@ pub fn founders_reward(network: Network, height: u32) -> Option<FoundersReward> 
     };
     Some(FoundersReward {
         value: subsidy::total_subsidy(network, height) / FOUNDERS_FRACTION_DIVISOR,
-        // The index is below 48 at every height before the first halving.
+        // Spec §7.9: FounderAddressIndex, from 0 here. The index is below 48 at every
+        // height before the first halving.
         address: addresses[(adjusted_height / change_interval) as usize],
     })
 }
 
 /// Zakura `mainnet::FOUNDER_ADDRESS_LIST` (`constants/mainnet.rs:113-162`).
+///
+/// Spec §7.9: `FounderAddressList` of Mainnet.
 static MAINNET_ADDRESSES: [&str; 48] = [
     "t3Vz22vK5z2LcKEdg16Yv4FFneEL1zg9ojd",
     "t3cL9AucCajm3HXDhb5jBnJK2vapVoXsop3",
@@ -122,6 +132,9 @@ static MAINNET_ADDRESSES: [&str; 48] = [
 ];
 
 /// Zakura `testnet::FOUNDER_ADDRESS_LIST` (`constants/testnet.rs:115-164`).
+///
+/// Spec §7.9: `FounderAddressList` of Testnet, after the change of the addresses from
+/// index 4 at height 53,127.
 static TESTNET_ADDRESSES: [&str; 48] = [
     "t2UNzUUx8mWBCRYPRezvA363EYXyEpHokyi",
     "t2N9PH9Wk9xjqYg9iin1Ua3aekJqfAtE543",

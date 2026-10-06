@@ -55,9 +55,14 @@ pub use rules::{
 use hayai_crypto::zcash_protocol;
 
 /// Blocks a coinbase output must age before a transaction can spend it.
+/// Spec §7.1.2: no spend of a coinbase output less than 100 blocks old.
+/// ZIP 218: the value stays 100 blocks from NU7.
 pub const COINBASE_MATURITY: u32 = zcash_protocol::consensus::COINBASE_MATURITY_BLOCKS;
 /// Depth below the tip at which a block is final: the node does not reorganize deeper.
 /// The value of Zebra and Zakura (`MAX_BLOCK_REORG_HEIGHT`).
+///
+/// ZIP 218: a node should set `MAX_REORG_LENGTH` to 600 blocks from NU7. hayai keeps
+/// 1,000 blocks at every height, as Zakura (`zakura-chain/src/parameters/constants.rs:30`).
 pub const FINALITY_DEPTH: u32 = 1_000;
 /// Expiry heights at or above this value are not valid (zcashd
 /// `TX_EXPIRY_HEIGHT_THRESHOLD`).
@@ -65,12 +70,16 @@ pub const TX_EXPIRY_HEIGHT_THRESHOLD: u32 = 500_000_000;
 /// Lock times below this value are block heights. Lock times at or above it are Unix times.
 pub const LOCKTIME_THRESHOLD: u32 = 500_000_000;
 /// Target block spacing before Blossom, in seconds.
+/// ZIP 208: `PreBlossomPoWTargetSpacing` is 150 s.
 pub const PRE_BLOSSOM_TARGET_SPACING: u32 = 150;
 /// Target block spacing from Blossom until NU7, in seconds.
+/// ZIP 208: `PostBlossomPoWTargetSpacing` is 75 s.
 pub const POST_BLOSSOM_TARGET_SPACING: u32 = 75;
-/// Target block spacing from NU7, in seconds (ZIP 218, `PostNU7PoWTargetSpacing`).
+/// Target block spacing from NU7, in seconds.
+/// ZIP 218: `PostNU7PoWTargetSpacing` is 25 s.
 pub const POST_NU7_TARGET_SPACING: u32 = 25;
 /// Blocks whose times form the median-time-past.
+/// Spec §7.6: `PoWMedianBlockSpan` is 11 blocks.
 pub const MEDIAN_TIME_SPAN: usize = 11;
 /// Newest blocks whose time and `bits` the difficulty rule of the next block reads: the
 /// largest averaging window of the rule sets plus [`MEDIAN_TIME_SPAN`].

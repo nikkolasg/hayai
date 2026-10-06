@@ -387,6 +387,7 @@ impl ChainSource for ChainServe {
         stop: &BlockHash,
         validated_only: bool,
     ) -> Vec<hayai_wire::header::BlockHeader> {
+        // ZIP 204: at most 160 headers in the answer to `getheaders`.
         let limit = hayai_net::codec::MAX_HEADERS;
         let Some(headers) = &self.headers else {
             return self.index.headers_after(locator, stop, limit);
@@ -1249,6 +1250,8 @@ impl Driver {
         mempool.forget_private(&layer.wtxids);
         mempool.forget_private(&changes.dropped);
         drop(tip_change);
+        self.relay
+            .set_min_peer_version(min_peer_version_at(self.params, height));
         self.tip.set(height, hash);
         self.note_received(hash, ctx.received);
 
@@ -1558,6 +1561,8 @@ impl Driver {
                 || json!({ "height": height, "hash": hash.to_string() }),
             );
             let (h, tip) = self.index.tip();
+            self.relay
+                .set_min_peer_version(min_peer_version_at(self.params, h));
             self.tip.set(h, tip);
         }
         returned.append(&mut self.disconnected);
@@ -1842,6 +1847,13 @@ fn template_time(network: NetworkKind, height: u32, mtp: u32, now: u32) -> u32 {
 /// The first height at or above `height` whose block has full validation: a full node
 /// applies the blocks at or below the last checkpoint of the network with the checkpoint
 /// path.
+/// ZIP 204, ZIP 201: the oldest peer protocol version that the node accepts when its tip
+/// is at `height`: the version of the upgrade of the tip, as Zakura
+/// (`Version::min_remote_for_height`, `zakura-network/src/protocol/external/types.rs:32-48`).
+fn min_peer_version_at(params: NetParams, height: u32) -> u32 {
+    hayai_net::min_peer_version(params.wire(), params.kind.upgrade_at(height))
+}
+
 fn first_validated(params: NetParams, mode: Mode, height: u32) -> u32 {
     match (mode, params.kind.checkpoints().last_height()) {
         (Mode::Full, Some(last)) => height.max(last + 1),
@@ -2511,6 +2523,7 @@ impl Node {
             trust_short_context: mode == Mode::Shadow,
         });
         let mut relay_config = RelayConfig::new(params.wire());
+        relay_config.min_peer_version = min_peer_version_at(params, tip_height);
         relay_config.compact_relay = match config.network.compact_relay {
             true => Some(CompactVer::CURRENT),
             false => None,
@@ -3185,6 +3198,83 @@ mod tests {
                 wallet: None,
             },
         )
+    }
+
+    /// ZIP 204: when an upgrade activates, the node disconnects the peers below the protocol
+    /// version of the upgrade. A Regtest chain has NU6.3 at height 3. A peer with the NU6.2
+    /// version 170,150 stays connected at the tip 2 and leaves at the tip 3.
+    #[test]
+    fn a_peer_below_the_version_of_the_upgrade_of_the_tip_is_disconnected() {
+        use std::io::Write;
+        use std::net::TcpStream;
+
+        use hayai_net::codec::{encode, read_message, LegacyMessage, NetAddr, VersionMessage};
+
+        use crate::sync_tests::{config_with, generate, scratch, wait_for, wait_tip};
+
+        let dir = scratch();
+        let config = config_with(
+            dir.path(),
+            "a",
+            true,
+            false,
+            "[regtest]\nactivation_heights = { nu6_3 = 3 }\n",
+        );
+        let node = Node::start(&config).expect("the node starts");
+        let net = hayai_net::Network::Regtest;
+        let mut stream =
+            TcpStream::connect(node.p2p_addr.expect("the node listens")).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .expect("a read timeout");
+        let version = LegacyMessage::Version(VersionMessage {
+            version: 170_150,
+            services: 1,
+            timestamp: 0,
+            addr_recv: NetAddr {
+                services: 0,
+                addr: ([127, 0, 0, 1], 0).into(),
+            },
+            addr_from: NetAddr {
+                services: 1,
+                addr: ([0, 0, 0, 0], 0).into(),
+            },
+            nonce: 0x5eed,
+            user_agent: "/nu6.2-peer:1/".into(),
+            start_height: 0,
+            relay: true,
+        });
+        stream.write_all(&encode(net, &version)).expect("version");
+        let mut handshake = 0;
+        while handshake < 2 {
+            match read_message(&mut stream, net, usize::MAX).expect("a message") {
+                LegacyMessage::Version(_) => {
+                    stream
+                        .write_all(&encode(net, &LegacyMessage::Verack))
+                        .expect("verack");
+                    handshake += 1;
+                }
+                LegacyMessage::Verack => handshake += 1,
+                _ => {}
+            }
+        }
+        let connected = |node: &Node| {
+            node.relay
+                .peers()
+                .iter()
+                .any(|p| p.established && p.version == Some(170_150))
+        };
+        wait_for("the handshake of the peer", || connected(&node));
+
+        let hashes = generate(&node, 2);
+        wait_tip(&node, (2, hashes[1]));
+        assert!(connected(&node), "the NU6.2 version passes before NU6.3");
+
+        let hashes = generate(&node, 1);
+        wait_tip(&node, (3, hashes[0]));
+        // The driver raises the minimum before it publishes the tip.
+        assert!(!connected(&node), "the NU6.2 version fails from NU6.3");
+        node.shutdown().expect("clean shutdown");
     }
 
     /// A replay checks the proof of work of each stored block. The store holds Mainnet

@@ -75,6 +75,8 @@ pub const BACKEND: &str = "zakura";
 /// 0.10 has the variant only behind `cfg(zcash_unstable = "nu7")`, so this build does not
 /// see it. This function and [`nu7_activation`] are the only code of the workspace that
 /// depends on the backend for NU7.
+///
+/// ZIP 259: `CONSENSUS_BRANCH_ID` of NU7 is `0x77190AD9`.
 pub fn nu7_branch() -> Option<zcash_protocol::consensus::BranchId> {
     #[cfg(feature = "upstream")]
     {

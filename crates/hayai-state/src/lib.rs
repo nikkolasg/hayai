@@ -1,6 +1,6 @@
 //! Layered chain state and contextual validation.
 //!
-//! Contract: `docs/architecture.md`, section hayai-state, and `docs/consensus-rules.md`.
+//! Contract: `docs/architecture.md`, section hayai-state, and `docs/consensus.md`.
 //!
 //! - A [`Layer`] is the state delta of one block. A [`Chain`] is a [`Base`] (the finalized
 //!   state: coins cache, nullifier sets, tip trees) plus a window of layers. Commit is an Arc
@@ -173,7 +173,7 @@ pub struct Layer {
     pub value_pools: ValuePools,
     /// The ZIP 221 history tree after the block. `None` when the node does not know the
     /// history state of the parent and the block is at or after Heartwood: the header
-    /// commitment of such a block is not checked (`docs/consensus-rules.md`).
+    /// commitment of such a block is not checked (`docs/consensus.md`).
     pub history: Option<Arc<HistoryState>>,
 }
 

@@ -4,7 +4,8 @@
 //! Trust model (`docs/hayaid.md`, Shadow mode limits):
 //!
 //! - Start state: the hash of the start block, the time and the `nBits` of the start block
-//!   and of the 27 blocks before it, the Sapling, Orchard and Ironwood frontiers
+//!   and of the blocks before it, `DIFFICULTY_CONTEXT_BLOCKS` (113) blocks in all, the Sapling,
+//!   Orchard and Ironwood frontiers
 //!   (`z_gettreestate`) and the chain value pools (`getblock <hash> 1`: transparent,
 //!   Sprout, Sapling, Orchard, Ironwood and deferred) come from upstream.
 //! - After every block, hayai's frontiers are compared with upstream's `z_gettreestate` of
