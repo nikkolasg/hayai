@@ -1,6 +1,6 @@
 # Regtest pair: one hayaid and one zakurad
 
-Date: 2026-10-05. Scope: how to build the Zakura node, the configuration that the two nodes
+Date: 2026-10-05. Scope: how to build the Zakura node, the configuration that both nodes
 share, how to run each scenario, and the result that each scenario must give.
 `docs/regtest-pair-findings.md` has the differences that the first runs found.
 
@@ -20,7 +20,7 @@ Zakura source.
 
 ## Network of the pair
 
-Both processes run on this machine, bound to 127.0.0.1. Each data directory is below
+Both processes run on this machine and bind to 127.0.0.1. Each data directory is below
 `target/regtest-pair/`.
 
 | Parameter | hayaid | zakurad |
@@ -31,7 +31,7 @@ Both processes run on this machine, bound to 127.0.0.1. Each data directory is b
 | NU5 | height 1 | `NU5 = 1` |
 | NU6, NU6.1, NU6.2, NU6.3 | `[regtest] activation_heights = { nu6 = 50, nu6_1 = 100, nu6_2 = 150, nu6_3 = 200 }` | `[network.testnet_parameters.activation_heights]` with the same heights |
 | NU7 | not set | not set |
-| Proof of work | the Regtest waiver: a solution of 36 bytes, and `bits` that encode a target at or below the limit `0x200f0f0f` | `disable_pow` (set by `new_regtest`): the same two checks |
+| Proof of work | the Regtest waiver: a solution of 36 bytes, and `bits` that encode a target at or below the limit `0x200f0f0f` | `disable_pow` (`new_regtest` sets it): the same 2 checks |
 | Expected `bits` | no rule | no rule |
 | Subsidy | 6.25 ZEC, no slow start, halving intervals of 144 blocks before Blossom and 288 blocks after it | the same values (`new_regtest`) |
 | Funding streams | none; scenarios e and nu61: `[[regtest.funding_streams]]` (the next section) | none; scenarios e and nu61: `[[network.testnet_parameters.funding_streams]]` with the same values |
@@ -40,7 +40,7 @@ Both processes run on this machine, bound to 127.0.0.1. Each data directory is b
 | Time rule | median-time-past + 90 min from height 2 | the same rule |
 | Miner address | `t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh` | the same address |
 | Seeders | `initial_testnet_peers = []` | `initial_mainnet_peers = []`, `initial_testnet_peers = []`, `cache_dir = false`, `p2p_stack = "legacy"`, `[network.zakura] bootstrap_peers = []` |
-| Peer | `peers = ["127.0.0.1:<zakurad port>"]` | none: hayaid dials |
+| Peer | `peers = ["127.0.0.1:<zakurad port>"]` | none: hayaid connects to zakurad |
 
 The miner address is the pay-to-script-hash address of the redeem script `OP_TRUE`. The
 harness spends each coinbase with the scriptSig `0x01 0x51`, without a key.
@@ -62,12 +62,12 @@ address = "t2SRyAR26tXTnZHfpa3jPqeyYmxCbAZxUnh"
 amount = 0
 ```
 
-The block 100 of each node has one more coinbase output of 0 zatoshis, and the other node
-accepts it.
+Block 100 of each node has one more coinbase output of 0 zatoshis. The other node accepts this
+block.
 
 Scenarios e and nu61 have funding streams on both nodes, from height 50 to height 199:
 12 % of the block subsidy to the deferred pool and 8 % to an address. The heights 50 to
-199 are 26 address periods of 6 blocks, and the configuration has two addresses in turn.
+199 are 26 address periods of 6 blocks. The configuration uses 2 addresses in turn.
 The table name is `regtest.funding_streams` for hayaid and
 `network.testnet_parameters.funding_streams` for zakurad, with the same keys:
 
@@ -89,18 +89,18 @@ addresses = ["t2HifwjUj9uyxr9bknR8LFuQbc98c3vkXtu", "t27eWDgjFYJGVXmzrXeVjnb5J3u
   bootstrap peer. With `p2p_stack = "legacy"` it starts no Zakura (iroh) endpoint. On
   Regtest Zakura keeps only the loopback addresses of its initial peers.
 - The configuration of hayaid has `initial_testnet_peers = []` and one peer on 127.0.0.1.
-- Each scenario reads the sockets of the two processes with `ss -H -tunap` before it stops
-  them, and fails when one address is not a loopback address. The row
+- Each scenario reads the sockets of both processes with `ss -H -tunap` before it stops
+  them. The scenario fails when one address is not a loopback address. The row
   `sockets on loopback only` of the report has the count.
 
 ### Credentials of the RPC servers
 
-- Both nodes have the cookie authentication. hayaid writes the file `.cookie` to
+- Both nodes use cookie authentication. hayaid writes the file `.cookie` to
   `hayai-data`, and zakurad writes it to `zakura-cookie`.
 - The harness reads the file for each request and sends its content as HTTP Basic
   credentials. One client code serves both nodes.
 
-## How to run
+## Run of the harness
 
 ```
 cargo build --release -p hayaid
@@ -132,38 +132,51 @@ CARGO_TARGET_DIR=target/review cargo test --release -p hayaid --no-default-featu
 ```
 
 The report is `report-<scenarios>.md` in the work directory: one row for each check. The
-exit status is 1 when a check failed.
+exit status is 1 when a check fails.
 
 ## Scenarios
 
-Each transaction of the harness pays 20,000 zatoshis, which is above the conventional fee
-of each one.
+Each transaction of the harness pays a fee of 20,000 zatoshis. This fee is above the
+conventional fee of each transaction.
 
 | Scenario | Steps | Expected result |
 |---|---|---|
-| a | zakurad mines 320 blocks in steps of 20. From height 101 each step has one transparent transaction and one shielding transaction (Orchard to height 199, Ironwood from height 200), sent to zakurad. hayaid follows from the genesis block | After each step: the same tip, the same six value pools, the same Sapling, Orchard and Ironwood roots, the same chain history root in the two templates |
-| f (part of a) | hayaid stops with SIGINT before block 101 and with SIGKILL before block 161, and starts again after zakurad mined 20 blocks. zakurad stops and starts at height 240 | hayaid resumes and follows. zakurad resumes, reads the blocks that it lost from hayaid, and has the same state |
+| a | zakurad mines 320 blocks in steps of 20. From height 101 each step has one transparent transaction and one shielding transaction (Orchard to height 199, Ironwood from height 200). The harness sends them to zakurad. hayaid follows from the genesis block | After each step: the same tip, the same 6 value pools, the same Sapling, Orchard and Ironwood roots, the same chain history root in both templates |
+| f (part of a) | hayaid stops with SIGINT before block 101 and with SIGKILL before block 161. hayaid starts again after zakurad has mined 20 blocks. zakurad stops and starts at height 240 | hayaid resumes and follows. zakurad resumes, reads the blocks that it lost from hayaid, and has the same state |
 | b | hayaid mines blocks 1 to 99, zakurad mines block 100, hayaid mines up to 320. Each step has one transparent and one shielding transaction, sent to hayaid. The last block is a block that the harness builds on `getblocktemplate` of hayaid and submits through `submitblock` of hayaid | zakurad accepts each block. The state is the same after each step |
-| c | A transaction that one node takes: it must reach the mempool of the other node, which mines it. Four cases: transparent and Orchard, in the two directions. Then 9 fee policy cases, sent to both nodes | Each transaction is in the mempool of the other node and then in a block that both nodes accept. Both nodes give the same verdict for each policy case (`docs/mempool-policy.md`) |
+| c | A transaction that one node accepts: it must reach the mempool of the other node, which mines it. 4 cases: transparent and Orchard, in both directions. Then 9 cases of the fee policy, sent to both nodes | Each transaction is in the mempool of the other node and then in a block that both nodes accept. Both nodes give the same verdict for each policy case (`docs/mempool-policy.md`) |
 | d | hayaid stops. zakurad mines its blocks. hayaid starts without a peer, mines its blocks, stops, and starts with zakurad as its peer. Depths 1, 3 and 10, with each node as the one with more blocks | Both nodes end on the chain with the most work, with the same state |
-| e | Both nodes have the funding streams. 21 blocks on the template of hayaid at height 113 that break one rule each, through `submitblock` of zakurad and then of hayaid. Then two valid blocks | Both nodes refuse each invalid block and keep their tip. The nodes stay connected. Both accept the valid blocks, and the next block of each node reaches the other one |
-| g | From height 210 the nodes mine in turn for `--minutes`, one block each 1.5 s, with one transaction for each block (one in five is an Ironwood shielding). `scripts/sample_procs.py` samples both processes | No failed round, the same state at each 50th round, and a resident memory of hayaid that does not grow |
+| e | Both nodes have the funding streams. 21 blocks on the template of hayaid at height 113 that break one rule each, through `submitblock` of zakurad and then of hayaid. Then 2 valid blocks | Both nodes refuse each invalid block and keep their tip. The nodes stay connected. Both accept the valid blocks, and the next block of each node reaches the other one |
+| g | From height 210 the nodes mine in turn for `--minutes`, one block each 1.5 s, with one transaction for each block (1 in 5 is an Ironwood shielding). `scripts/sample_procs.py` samples both processes | No failed round, the same state at each 50th round, and a resident memory of hayaid that does not grow |
 | nu61 | Part 1, no lockbox disbursement: zakurad mines blocks 1 to 99 and tries block 100; hayaid starts on the same network. Part 2, both nodes have the funding streams and a disbursement of 10 ZEC: hayaid mines blocks 1 to 99, the harness submits a block 100 whose disbursement output has 1 zatoshi too little, hayaid mines block 100, then each node mines 5 blocks | Part 1: zakurad has no block 100, and hayaid refuses the configuration at its start. Part 2: both nodes refuse the invalid block, zakurad accepts block 100 of hayaid, the deferred pool has 51 x 0.75 ZEC minus 10 ZEC, and the state is the same at the heights 99, 100 and 110 |
-| nu7 | NU7 at height 250 on both nodes. zakurad mines to 260 with two transactions in the blocks 241 and 249 to 252. Then hayaid mines 261 to 270 and 272 to 280, zakurad mines 271; the blocks 261 to 263, 271 and 272 have two transactions | Each node accepts each block of the other one. The same state at each compared height |
-| rpc | Both nodes have the funding streams. zakurad mines 205 blocks, with a transparent and a shielding transaction in the blocks 120 and 204. hayaid mines block 206. One transaction is in both mempools. The harness then calls each method of the table below on both nodes, and `stop` last | Each answer is the same, field by field, but for the fields of the list below. Each process ends with the exit status 0 after `stop` |
+| nu7 | NU7 at height 250 on both nodes. zakurad mines to 260 with 2 transactions in the blocks 241 and 249 to 252. Then hayaid mines 261 to 270 and 272 to 280, zakurad mines 271; the blocks 261 to 263, 271 and 272 have 2 transactions | Each node accepts each block of the other one. The same state at each compared height |
+| rpc | Both nodes have the funding streams. zakurad mines 205 blocks, with a transparent and a shielding transaction in the blocks 120 and 204. hayaid mines block 206. One transaction is in both mempools. The harness then calls each method of the table below on both nodes, and `stop` last | Each answer is the same, field by field, except for the fields of the list below. Each process ends with the exit status 0 after `stop` |
 
-Invalid blocks of scenario e: coinbase with 1 zatoshi too much and too little; funding
-stream output with 1 zatoshi too little; wrong merkle
-root; wrong header commitment; time at the median-time-past; time above the median-time-past
-plus 90 min; `bits` above the limit, zero and negative; header version 3; unknown parent;
-two spends of one coin; one transaction twice; spend of a missing coin; a script that fails;
-outputs above inputs; spend of a coinbase after 8 blocks; an expired transaction; an Orchard
-binding signature and an Orchard proof with one bit changed.
+Invalid blocks of scenario e:
+
+- a coinbase with 1 zatoshi too much, and a coinbase with 1 zatoshi too little;
+- a funding stream output with 1 zatoshi too little;
+- a wrong merkle root;
+- a wrong header commitment;
+- a time at the median-time-past;
+- a time above the median-time-past plus 90 min;
+- `bits` above the limit, zero `bits` and negative `bits`;
+- the header version 3;
+- an unknown parent;
+- 2 spends of one coin;
+- one transaction 2 times;
+- a spend of a missing coin;
+- a script that fails;
+- outputs above inputs;
+- a spend of a coinbase after 8 blocks;
+- an expired transaction;
+- an Orchard binding signature with one bit changed, and an Orchard proof with one bit
+  changed.
 
 ## Methods of scenario rpc
 
-The harness compares the result of a call, or the code of its error. The messages of the
-errors are not compared.
+The harness compares the result of a call, or the code of its error. The harness does not
+compare the messages of the errors.
 
 | Method | Parameters |
 |---|---|
@@ -173,7 +186,7 @@ errors are not compared.
 | `getblockheader` (default, verbose, hex), `getblock` (default, 0, 1) | the heights 0, 1, 50, 100, 120, 204, 206 and 207, the hash of the tip, and a hash of no block |
 | `getblock` | verbosity 2 and 3 |
 | `validateaddress`, `z_validateaddress` | 4 transparent addresses, Sapling and Unified addresses of Mainnet, Testnet and Regtest, a Sapling address with a changed character, text that is no address, the empty text, no parameter |
-| `addnode` | an address two times, the command `remove`, a host name, one parameter |
+| `addnode` | an address 2 times, the command `remove`, a host name, one parameter |
 | an unknown method | none |
 | `generate` without the credentials | `[1]`. hayaid answers with the HTTP status 401, zakurad closes the connection without an answer, and no node has a new block |
 | `stop` | none |
@@ -186,22 +199,26 @@ A difference in another field fails the check:
 | `getinfo`, `getnetworkinfo` | `version`, `build`, `subversion` | The version and the user agent of each program |
 | `getinfo`, `getnetworkinfo` | `protocolversion` | 170,160 in a hayaid without the NU7 rule set, 170,190 in zakurad |
 | `getinfo` | `errors`, `errorstimestamp` | hayaid keeps no record of its log messages |
-| `getnetworkinfo` | `localservices` | zakurad prints `NODE_NETWORK` only. hayaid prints the service bits of its `version` message. The pair runs hayaid without the compact relay, so the two values are equal in the run |
+| `getnetworkinfo` | `localservices` | zakurad prints `NODE_NETWORK` only. hayaid prints the service bits of its `version` message. The pair runs hayaid without the compact relay, so both values are equal in the run |
 | `getpeerinfo` | `addr`, `inbound`, `subver`, `version`, `pingtime`, `pingwait` | Each node lists the other one, and each node measures its own times |
 | `getblockheader`, `getblock` | each field, for the height 0 | hayaid has the hash of the genesis block and does not store the block: error -5, and error -8 for verbosity 0 |
 | `getblock` | each field, for verbosity 2 | hayaid has no verbosity 2: error -8 |
 | `stop` | the result | `hayaid server stopping` and `Zakura server stopping` |
 
 Result of the run of 2026-10-05 (hayaid of the default backend, zakurad `1.6.0+g13779158253c`):
-143 checks, no difference outside the list. In the list, these fields differed: `version`,
-`build`, `subversion`, `protocolversion`, `errors` and `errorstimestamp` of `getinfo`;
-`version`, `subversion` and `protocolversion` of `getnetworkinfo`; `addr`, `inbound`,
-`subver` and `version` of `getpeerinfo`; the genesis block; verbosity 2; the result of
-`stop`.
+143 checks, no difference outside the list. In the list, these fields differed:
+
+- `version`, `build`, `subversion`, `protocolversion`, `errors` and `errorstimestamp` of
+  `getinfo`;
+- `version`, `subversion` and `protocolversion` of `getnetworkinfo`;
+- `addr`, `inbound`, `subver` and `version` of `getpeerinfo`;
+- the genesis block;
+- verbosity 2;
+- the result of `stop`.
 
 ## Measurements of scenario g
 
-The harness measures both nodes from outside with one method, on RPC polls of 1 to 2 ms:
+The harness measures both nodes from outside with one method, on RPC polls of 1 ms to 2 ms:
 
 - block of node A, node B has it as its tip: from the answer of `generate` on A to the first
   `getbestblockhash` of B with the new hash;
@@ -211,8 +228,8 @@ The harness measures both nodes from outside with one method, on RPC polls of 1 
   first `getrawmempool` of B with the transaction.
 
 `scripts/join_traces.py` joins the trace rows of hayaid. A Zakura node with the legacy stack
-writes `legacy_sync.jsonl` and `legacy_peer_request.jsonl` only: it has no `commit_start`
-and no `commit_finish` row, so the join has no Zakura column for this pair.
+writes `legacy_sync.jsonl` and `legacy_peer_request.jsonl` only. Thus it has no
+`commit_start` and no `commit_finish` row. The join has no Zakura column for this pair.
 
 The values are a Regtest loopback measurement with blocks of 1 to 3 transactions. They are
 not a benchmark result.

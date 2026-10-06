@@ -9,21 +9,19 @@ the files. `docs/hayaid.md` describes the binary, its modes and its configuratio
 | Limit | Effect on a deployment | Issue |
 |---|---|---|
 | Networks: Testnet and Mainnet (shadow mode), Regtest (full mode) | The testnet and mainnet profiles run zakurad beside hayaid | — |
-| Mainnet: some consensus rules are not enforced (Mainnet) | The operator decides whether the gaps are acceptable | — |
+| Mainnet: hayai does not enforce some consensus rules (Mainnet) | The operator decides whether the gaps are acceptable | — |
 | No synchronization of old blocks | A Regtest node must run before the first block | — |
 
 ## Mainnet
 
-The mainnet profile runs hayaid in shadow mode on Mainnet. No code refuses Mainnet. These
-consensus rules are not enforced (`docs/hayaid.md`, Mainnet, and `docs/consensus.md`):
+The mainnet profile runs hayaid in shadow mode on Mainnet. No code refuses Mainnet. hayai
+does not enforce these consensus rules (`docs/hayaid.md`, Mainnet, and `docs/consensus.md`):
 
 - ZIP 221 and ZIP 244 header commitment: the start state of a shadow node has no history
   tree, so the node does not check `hashBlockCommitments` (`docs/consensus.md`, finding
   F-P5-1).
 - Sprout JoinSplits: the start state has no Sprout treestates. The validator returns
   `SproutStateUnknown`, and a shadow node stops when upstream accepts such a block.
-
-The operator decides whether the gaps are acceptable.
 
 ## Prerequisites
 
@@ -38,7 +36,7 @@ The operator decides whether the gaps are acceptable.
 | Resource | Size | Reason |
 |---|---|---|
 | Memory | 16 GiB | The memory backend holds the coin set and the nullifier sets. At Mainnet size, they use 3.84 GB after a load (`docs/architecture.md`, Mainnet sizing of `MemBacking`). The Testnet set is smaller. zakurad runs on the same host in the testnet profile. |
-| CPU | 4 vCPU or more | Validation uses one rayon thread per logical CPU. Halo2 batch verification scales with the thread count (`CHANGES.md`, CPU and memory review). |
+| CPU | 4 vCPU or more | Validation uses one rayon thread for each logical CPU. Halo2 batch verification scales with the thread count (`CHANGES.md`, CPU and memory review). |
 | Disk | 300 GB SSD (gp3: 3000 IOPS, 125 MiB/s) | Block files, the coins snapshot (3.67 GB at Mainnet size) and log, the Zakura state, Prometheus (30 days). |
 | Network | One public TCP port | Testnet: 18233 (zakurad). Mainnet: 8233 (zakurad). Regtest: 18344 (hayaid). |
 
@@ -68,8 +66,8 @@ the profile (`COMPOSE_PROFILES=testnet`) and binds the admin ports to 127.0.0.1.
    (umask 022 && openssl rand -base64 24 > secrets/grafana_admin_password)
    ```
 
-4. Start zakurad and wait until its state is `healthy` (`/ready`: at most 2 blocks
-   behind the Testnet tip). A new volume takes hours.
+4. Start zakurad. Wait until its state is `healthy` (`/ready`: at most 2 blocks behind
+   the Testnet tip). The synchronization of a new volume takes hours.
 
    ```
    docker compose up -d zakurad
@@ -88,7 +86,11 @@ the profile (`COMPOSE_PROFILES=testnet`) and binds the admin ports to 127.0.0.1.
 ### Mainnet
 
 The steps are the steps of Testnet with the profile `mainnet`. The services are
-`zakurad-mainnet` and `hayaid-mainnet`.
+`zakurad-mainnet` and `hayaid-mainnet`. A new `zakurad-mainnet` volume needs days to
+synchronize.
+
+Build the `zakurad:local` image first (Testnet, step 1). Create the Grafana password first
+(Testnet, step 3).
 
 ```
 export COMPOSE_PROFILES=mainnet
@@ -97,9 +99,6 @@ docker compose up -d zakurad-mainnet
 docker compose ps zakurad-mainnet
 docker compose -f compose.yml -f compose.observability.yml up -d
 ```
-
-Create the Grafana password first (Testnet, step 3). Build the `zakurad:local` image first
-(Testnet, step 1). A new `zakurad-mainnet` volume needs days to synchronize.
 
 ### Regtest
 
@@ -113,21 +112,20 @@ curl -s -u "$(docker compose exec -T hayaid-regtest cat /var/lib/hayai/.cookie)"
   --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[10]}' http://127.0.0.1:18345/
 ```
 
-The RPC server has cookie authentication. The node writes the credentials to
+The RPC server uses cookie authentication. The node writes the credentials to
 `/var/lib/hayai/.cookie` at each start (`docs/hayaid.md`, Protection of the port). On
 bare metal, read the file as root: `sudo cat /var/lib/hayai/.cookie`. The server has no
-TLS: use the port through 127.0.0.1 or through an SSH tunnel.
-
-To make Regtest the default, set `COMPOSE_PROFILES=regtest` in `docker/.env`.
+TLS. Use the port through 127.0.0.1 or through an SSH tunnel.
 
 ### Options
 
+- Regtest as the default profile: set `COMPOSE_PROFILES=regtest` in `docker/.env`.
 - Zakura crypto backend: set `HAYAI_CRYPTO_BACKEND=zakura` and
-  `HAYAI_IMAGE=hayaid:zakura` in `docker/.env`, then run `docker compose build`.
+  `HAYAI_IMAGE=hayaid:zakura` in `docker/.env`. Then run `docker compose build`.
 - Configuration: edit `docker/config/hayaid.testnet.toml`, `docker/config/hayaid.mainnet.toml`
   or `docker/config/hayaid.regtest.toml`. The containers mount them read-only.
-- Remote access to the admin ports: keep `HAYAI_ADMIN_BIND=127.0.0.1` and use an SSH
-  port forward, for example `ssh -L 3000:127.0.0.1:3000 node.example.com`.
+- Remote access to the admin ports: keep `HAYAI_ADMIN_BIND=127.0.0.1`. Use an SSH port
+  forward, for example `ssh -L 3000:127.0.0.1:3000 node.example.com`.
 
 ## Bare metal with systemd
 
@@ -158,7 +156,7 @@ The script is idempotent. It keeps an existing `/etc/hayai/hayaid.toml`. To remo
 service and the binary, run `sudo scripts/install.sh --uninstall`. To also remove the
 configuration, `/var/lib/hayai` and the user, add `--purge`.
 
-Prometheus outside the compose stack: add a scrape job for the metrics address and copy
+Prometheus outside the compose stack: add a scrape job for the metrics address. Copy
 `docker/observability/prometheus/rules/hayaid.yml`. Set the label `network` on the
 target, because the rules use it.
 
@@ -178,14 +176,15 @@ target, because the rules use it.
    terraform apply
    ```
 
-3. Follow the first boot (package install, clone, image builds, compose start):
+3. Read the log of the first boot (package install, clone, image builds, compose start):
 
    ```
    $(terraform output -raw ssm_shell_command)
    sudo journalctl -u hayai-bootstrap -u hayai-stack -f
    ```
 
-   On Testnet and Mainnet, `hayai-stack` waits until zakurad is healthy, which takes hours.
+   On Testnet and Mainnet, `hayai-stack` waits until zakurad is healthy. This wait takes
+   hours.
 
 4. Open Grafana through Session Manager:
 
@@ -198,8 +197,8 @@ target, because the rules use it.
 
 The instance has no SSH key and no open port 22 by default. With `admin_cidr`, the
 security group opens the admin ports to that CIDR, and compose binds them on all
-addresses. Without `admin_cidr`, the admin ports are reachable through Session Manager
-port forwards only. `terraform destroy` removes the instance and the data volume.
+addresses. Without `admin_cidr`, the admin ports are reachable only through port forwards
+of Session Manager. `terraform destroy` removes the instance and the data volume.
 
 ## First-start checks
 
@@ -214,18 +213,18 @@ port forwards only. `terraform destroy` removes the instance and the data volume
 | Shadow agreement | `hayai_shadow_agreements_total` increases with each block; `hayai_shadow_disagreements_total` stays 0 | same |
 | Prometheus targets | `http://127.0.0.1:9090/targets`: jobs `hayaid`, `node` and (Testnet) `zakurad` are up | — |
 | Grafana | `http://127.0.0.1:3000`, user `admin`, password from `docker/secrets/grafana_admin_password`; dashboard `hayai / hayaid` | — |
-| Alerts | `http://127.0.0.1:9093`: no alert after 30 minutes | — |
+| Alerts | `http://127.0.0.1:9093`: no alert after 30 min | — |
 
 ## Restart and upgrade
 
 hayaid resumes from `cache_dir` (`docs/hayaid.md`, Restart). A restart and an upgrade need no
-reset. The node replays the blocks above its last flush from the block files, so a start
+reset. The node replays from the block files the blocks above its last flush. Thus a start
 takes longer after a crash than after a clean stop. The node refuses a `cache_dir` of another
 network or mode.
 
 Docker Compose (Testnet; for Mainnet, use `hayaid-mainnet`; for Regtest, use `hayaid-regtest`):
 
-1. Update the checkout and build the image:
+1. Update the checkout. Build the image:
 
    ```
    git pull
@@ -253,17 +252,17 @@ scripts/install.sh --network testnet          # builds, installs, keeps the conf
 sudo systemctl start hayaid
 ```
 
-To start a node from a new start state, stop it and remove the content of `cache_dir`
-(`/var/lib/hayai`) except the traces. In Docker Compose:
+To start a node from a new start state, stop the node. Then remove the content of
+`cache_dir` (`/var/lib/hayai`), except the traces. In Docker Compose:
 
 ```
 docker run --rm -v hayai_hayaid-testnet-data:/var/lib/hayai --entrypoint sh hayaid:local \
   -c 'rm -rf /var/lib/hayai/coins /var/lib/hayai/blocks /var/lib/hayai/state.log /var/lib/hayai/spent.log'
 ```
 
-AWS: open a shell with `ssm_shell_command`, then run the Docker Compose procedure in
-`/opt/hayai/src/docker` as root, with `git -C /opt/hayai/src checkout <ref>` in place of
-`git pull`. The `hayai-stack` unit sets `COMPOSE_PROFILES` and `HAYAI_ADMIN_BIND`; export
+AWS: open a shell with `ssm_shell_command`. Then run the Docker Compose procedure in
+`/opt/hayai/src/docker` as root. Use `git -C /opt/hayai/src checkout <ref>` in place of
+`git pull`. The `hayai-stack` unit sets `COMPOSE_PROFILES` and `HAYAI_ADMIN_BIND`. Export
 the same values in the shell (`systemctl cat hayai-stack`).
 
 ## Backup and restore
@@ -290,20 +289,20 @@ docker compose up -d zakurad
 ```
 
 Restore a volume with the same container and `tar -C /data -xzf`, before the service
-starts. Bare metal: stop the service and copy `/var/lib/hayai` with `tar`.
+starts. Bare metal: stop the service. Then copy `/var/lib/hayai` with `tar`.
 
-## Troubleshooting
+## Problems and actions
 
 | Symptom | Cause | Action |
 |---|---|---|
 | `hayaid: /var/lib/hayai/coins is not empty and cache_dir has no state.log ...` | The directory holds files of another program, or an incomplete copy | Remove the cause, or use an empty `cache_dir` |
 | `hayaid: state log: ... belongs to a regtest/full node` | The configuration names another network or mode than the first start | Correct the configuration, or use an empty `cache_dir` |
-| `hayaid: shadow seed: upstream connection: Connection refused` | zakurad does not answer on its RPC address | Check zakurad (`docker compose logs zakurad`). The failed start left `cache_dir` as it was; start again |
-| `docker compose up` waits and `hayaid-testnet` does not start | zakurad is not healthy: it is not at the Testnet tip yet | Wait. Follow `docker compose logs -f zakurad` |
-| systemd: `Start request repeated too quickly` | Five failed starts in 10 minutes | Read `journalctl -u hayaid`, fix the cause, then `sudo systemctl reset-failed hayaid` |
+| `hayaid: shadow seed: upstream connection: Connection refused` | zakurad does not answer on its RPC address | Check zakurad (`docker compose logs zakurad`). The failed start did not change `cache_dir`. Start again |
+| `docker compose up` waits and `hayaid-testnet` does not start | zakurad is not healthy: it is not at the Testnet tip yet | Wait. Read the output of `docker compose logs -f zakurad` |
+| systemd: `Start request repeated too quickly` | 5 failed starts in 10 min | Read `journalctl -u hayaid`. Fix the cause. Then run `sudo systemctl reset-failed hayaid` |
 | ``unknown field `sapling_params_dir` `` | The configuration is from a version that read the Sapling parameter files | Remove the line. The Sapling verifying keys are in the binary |
 | `secret "grafana_admin_password" ... no such file` | The password file is missing | Create it (Docker Compose, step 3) |
 | The Grafana password does not work | Grafana sets the admin password once, when it creates its database | `docker compose exec grafana grafana cli admin reset-admin-password "$(cat secrets/grafana_admin_password)"` |
 | `bind: address already in use` | Another process uses a published port | Stop that process, or change the host port in `docker/compose.yml` |
-| Alert `HayaidShadowDisagreement` and the node stops | hayai rejected a block that upstream accepted, or the tree roots differ | Keep the volume. Read the `upstream_verdict` rows in `traces/commit_state.jsonl` and the log, then report the block |
-| Alert `HayaidAbsent` | No hayaid target: the container is stopped | `docker compose ps`, then the log of the node |
+| Alert `HayaidShadowDisagreement` and the node stops | hayai refused a block that upstream accepted, or the tree roots differ | Keep the volume. Read the `upstream_verdict` rows in `traces/commit_state.jsonl` and the log. Then report the block |
+| Alert `HayaidAbsent` | No hayaid target: the container is stopped | Run `docker compose ps`. Then read the log of the node |

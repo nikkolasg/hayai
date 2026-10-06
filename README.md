@@ -5,7 +5,7 @@ upstream Zcash crates. With the `zakura` feature, it comes from the `zakura-*` f
 Everything above `hayai-crypto` builds on either backend.
 
 - `docs/architecture.md` — crates, data flow, principles.
-- `docs/protocol-compact-relay.md` — block and transaction dissemination (short ids, batch lanes).
+- `docs/protocol-compact-relay.md` — block and transaction relay (short ids, batch lanes).
 - `docs/protocol-template-push.md` — template delivery to pools.
 - `docs/consensus.md` — consensus rules implemented and their status.
 - `docs/report.html` — benchmarks against Zakura. `scripts/report.py` renders it from `bench-results/`.
@@ -17,8 +17,8 @@ Everything above `hayai-crypto` builds on either backend.
 
 ## Quick start
 
-Docker Compose, Regtest node with Prometheus, Grafana and Alertmanager (`docs/install.md`
-gives the Testnet and Mainnet procedures, systemd and AWS):
+Start a Regtest node with Prometheus, Grafana and Alertmanager in Docker Compose.
+`docs/install.md` gives the Testnet and Mainnet procedures, systemd and AWS.
 
 ```
 cd docker
@@ -29,8 +29,8 @@ COMPOSE_PROFILES=regtest docker compose -f compose.yml -f compose.observability.
 curl -s http://127.0.0.1:19101/metrics | grep '^state_memory_best_committed_block_height'
 ```
 
-Grafana is at `http://127.0.0.1:3000` (user `admin`, password in
-`docker/secrets/grafana_admin_password`).
+Grafana is at `http://127.0.0.1:3000`. The user is `admin`, and the password is in
+`docker/secrets/grafana_admin_password`.
 
 ## Build and test
 
@@ -60,7 +60,7 @@ zakura backend. Both backends can therefore appear in one report.
 
 `hayaid` runs a full node on Regtest or Mainnet (`mode = "full"`) or follows a local Zakura
 node on Testnet or Mainnet (`mode = "shadow"`). The workspace needs Rust 1.91 for the node
-crates and 1.97 for `hayai-bench`. It writes JSONL traces in Zakura's format and serves
+crates and 1.97 for `hayai-bench`. `hayaid` writes JSONL traces in Zakura's format and serves
 Prometheus metrics. `docs/hayaid.md` gives the details and the limits.
 
 ```

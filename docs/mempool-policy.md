@@ -1,22 +1,24 @@
 # Mempool policy
 
 The node stores and relays the transactions that the public network relays. `prepare`
-(`hayai-prepared`) rejects a transaction that breaks a context-free consensus rule.
-`MempoolPolicy::admit` rejects a valid transaction that the next block cannot contain or that
-is not standard. `PreparedStore` applies ZIP 401.
+(`hayai-prepared`) refuses a transaction that breaks a context-free consensus rule.
+`MempoolPolicy::admit` refuses a valid transaction that the next block cannot contain or that
+is not standard. `PreparedStore` applies ZIP 401. The node applies these checks in
+`crates/hayaid/src/mempool.rs` to each transaction of a peer, of this node, and of a block that
+a reorg disconnected.
 
-The node applies them in `crates/hayaid/src/mempool.rs` to each transaction of a peer, of
-this node, and of a block that a reorg disconnected.
+Code:
 
-Code: `crates/hayaid/src/mempool.rs`, `crates/hayai-prepared/src/policy.rs`,
-`crates/hayai-prepared/src/store.rs`,
-`crates/hayai-template/src/zip317.rs` (shared fee constants),
-`crates/hayai-template/src/live.rs` (template selection).
+- `crates/hayaid/src/mempool.rs`
+- `crates/hayai-prepared/src/policy.rs`
+- `crates/hayai-prepared/src/store.rs`
+- `crates/hayai-template/src/zip317.rs` (shared fee constants)
+- `crates/hayai-template/src/live.rs` (template selection)
 
 Local sources: `ZB` = `../zebra` (commit 02f9648), `ZK` =
-`../zakura-src/zakura/crates`. No zcashd source is on this machine. A
-zcashd name or reject string with "no" in the last column comes from memory of the zcashd
-source and needs a check against zcashd.
+`../zakura-src/zakura/crates`. No zcashd source is on this machine. The author took each
+zcashd name or reject string with "no" in the last column from memory of the zcashd source.
+Such a name or string needs a check against zcashd.
 
 ## Admission order (`Mempool::admit`)
 
@@ -32,18 +34,19 @@ source and needs a check against zcashd.
 | 8 | Proofs and signatures of the shielded bundles | `Proof` | 100 points |
 | 9 | Insert, with the ZIP 401 eviction and the conflict rules | `Store` | none |
 
-The proofs run after the cheap rules. At each new tip the node removes the mined
-transactions, the transactions that conflict with the block, and the expired ones
-(`remove_expired` with the next height). After a reorg the node empties the store and
-admits the transactions of the disconnected blocks, then the transactions that the store
-held, through the same steps on the new tip. A transaction whose parent is later in the list
-passes in a later round.
+The node runs the proofs after the cheap rules.
+
+At each new tip the node removes the mined transactions, the transactions that conflict with
+the block, and the expired transactions (`remove_expired` with the next height). After a reorg
+the node empties the store. Then it admits the transactions of the disconnected blocks, and
+then the transactions that the store held. Each transaction goes through the same steps on the
+new tip. A transaction whose parent is later in the list passes in a later round.
 
 ## Admission rules (`MempoolPolicy::admit`)
 
 The order is the order of zcashd `AcceptToMemoryPool`.
 
-| Rule | Reject (`PolicyReject`) | Source | Constant | Local source |
+| Rule | Refusal (`PolicyReject`) | Source | Constant | Local source |
 |---|---|---|---|---|
 | No coinbase | `Coinbase` | zcashd `coinbase` | — | yes: `ZB/zebra-consensus/src/transaction.rs:448` |
 | The epoch is the epoch of the next block | `Epoch` | ZIP 244 branch id; hayai store rule | — | hayai rule |
@@ -58,24 +61,25 @@ The order is the order of zcashd `AcceptToMemoryPool`.
 | At most 1 `OP_RETURN` output | `MultiOpReturn` | zcashd `multi-op-return` | 1 | yes: `ZB .../mempool/storage.rs` |
 | Lock time is final at the next height and at the median-time-past of the tip | `NonFinal` | zcashd `CheckFinalTx` with `LOCKTIME_MEDIAN_TIME_PAST`, `non-final` | threshold 500,000,000 | yes: `ZB/zebra-consensus/src/transaction.rs:480-493` |
 | A spent coinbase output has 100 confirmations at the next height | `ImmatureCoinbase` | protocol §7.1.2; zcashd `bad-txns-premature-spend-of-coinbase` | 100 blocks | yes: `ZB/zebra-state/src/service/check/utxo.rs:200` |
-| A spend of a coinbase output has no transparent output | `UnshieldedCoinbaseSpend` | protocol §7.1.2 | — | yes: same file. Regtest does not have the rule, as Zakura (`MempoolPolicy::coinbase_must_be_shielded`, from `NetworkParams`) |
+| A spend of a coinbase output has no transparent output | `UnshieldedCoinbaseSpend` | protocol §7.1.2 | — | yes: same file. Regtest does not have the rule, as in Zakura (`MempoolPolicy::coinbase_must_be_shielded`, from `NetworkParams`) |
 | Inputs are standard spends | `NonStandardInput` | zcashd `AreInputsStandard`, `bad-txns-nonstandard-inputs` | redeem script that is not standard: at most 15 sigops | yes: `ZB .../mempool/storage/policy.rs` (`are_inputs_standard`) |
 | Sigops (legacy plus P2SH) | `TooManySigops` | zcashd `MAX_STANDARD_TX_SIGOPS`, `bad-txns-too-many-sigops` | 4,000 | yes: same file |
-| ZIP 317 unpaid actions | `UnpaidActions` | ZIP 317 `block_unpaid_action_limit`; zcashd `-txunpaidactionlimit`, `tx-unpaid-action-limit-exceeded` | 0: a transaction pays the marginal fee of 400 zatoshis for each logical action, and for 2 actions at least. The unpaid action count is max(0, max(2, logical actions) - floor(fee / 400)) | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:81-98` (`unpaid_actions`) and `:166-175` (`mempool_checks` refuses a transaction with an unpaid action) |
+| ZIP 317 unpaid actions | `UnpaidActions` | ZIP 317 `block_unpaid_action_limit`; zcashd `-txunpaidactionlimit`, `tx-unpaid-action-limit-exceeded` | 0: a transaction must pay the marginal fee of 400 zatoshis for each logical action, and for 2 actions at least. The unpaid action count is max(0, max(2, logical actions) - floor(fee / 400)) | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:81-98` (`unpaid_actions`) and `:166-175` (`mempool_checks` refuses a transaction with an unpaid action) |
 | Minimum relay fee | `FeeBelowMinimumRelay` | zcashd `CFeeRate::GetFeeForRelay` | clamp(100 x size / 1000, 100, 800) zatoshis. With the unpaid action limit of 0 the lowest fee is 800 zatoshis, so the rule above decides first | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs:177-200` (`mempool_checks`) |
-| Shielded counts fit in a block of the next rule set | `AboveBlockLimit` | ZIP 218 (NU7 block limits) | Orchard 330, Ironwood 330, Sapling 300, the three together 330; none before NU7 | yes: `ZK/zakura-consensus/src/block/check.rs:450` |
+| Shielded counts fit in a block of the next rule set | `AboveBlockLimit` | ZIP 218 (NU7 block limits) | Orchard 330, Ironwood 330, Sapling 300, the 3 together 330; none before NU7 | yes: `ZK/zakura-consensus/src/block/check.rs:450` |
 
-`MempoolPolicy::of(Network)` differs by network in one value: Regtest does not require
-standard transactions (zcashd `fRequireStandard`; not confirmed by a local source). The
-script, dust and standard input rules then do not apply.
+`MempoolPolicy::of(Network)` differs by network in 1 value: Regtest does not require
+standard transactions (zcashd `fRequireStandard`; not confirmed by a local source). On Regtest
+the script, dust and standard input rules do not apply.
 
 ## Fee and relay constants
 
-The node has the values of Zakura. Reason: equal relay behaviour with the other nodes. A
-transaction that a Zakura node relays and mines is a transaction that this node relays and
-mines, and the node relays no transaction that a Zakura node refuses for its fee. The
-policy, the store and the template use the same `Zip317Params::ZAKURA` and the same
-`logical_actions`. `ZKF` = `ZK/zakura-chain/src/transaction/unmined/zip317.rs`, `ZKU` =
+The node has the values of Zakura. The reason is equal relay behaviour with the other nodes.
+This node relays and mines each transaction that a Zakura node relays and mines. The node
+relays no transaction that a Zakura node refuses for its fee. The policy, the store and the
+template use the same `Zip317Params::ZAKURA` and the same `logical_actions`.
+
+Abbreviations: `ZKF` = `ZK/zakura-chain/src/transaction/unmined/zip317.rs`, `ZKU` =
 `ZK/zakura-chain/src/transaction/unmined.rs`.
 
 | Constant | ZIP 317 value | Zakura value | hayai value |
@@ -101,14 +105,13 @@ The rules with these constants are the rules of Zakura:
 - Unpaid actions: max(0, max(2, logical actions) - floor(fee / 400)) (`ZKF:81-98`,
   `Zip317Params::unpaid_actions`).
 - Admission: first the unpaid action rule, then the minimum relay fee (`ZKF:166-200`,
-  `MempoolPolicy::check_fee`).
+  `MempoolPolicy::check_fee`). A transaction with 1 or 2 logical actions needs a fee of 800
+  zatoshis.
 - Eviction weight: the cost plus the low fee penalty when the fee is below the
   conventional fee (`ZKU:484-529`, `PreparedStore::insert`).
 
-A transaction with 1 or 2 logical actions needs a fee of 800 zatoshis.
-
-The Regtest pair measured these cases against zakurad, for one input and outputs of 32
-bytes each. Each node gives the same verdict (`the_policy_cases_of_the_regtest_pair_have_
+The Regtest pair measured the cases of the next table against zakurad, for 1 input and outputs
+of 32 bytes each. Each node gives the same verdict (`the_policy_cases_of_the_regtest_pair_have_
 the_verdict_of_zakura` in `policy.rs`, scenario c of the pair):
 
 | Outputs | Logical actions | Fee (zatoshis) | Conventional fee | Verdict |
@@ -132,13 +135,13 @@ Rules without a Zcash value:
 - Replace-by-fee. Zcash has none. A second spend of an outpoint or a second reveal of a
   nullifier is a conflict (`InsertError::Conflict`, `InsertError::NullifierConflict`).
 - Orphans. `prepare` fails with `MissingInput` when the coins view does not hold an input.
-  The node keeps no orphan pool, as Zebra and Zakura.
+  The node keeps no orphan pool, as Zebra and Zakura do.
 
 Differences from zcashd:
 
 - `AreInputsStandard` in zcashd stops at the first P2SH input whose redeem script is not
-  standard and accepts the transaction when that script has at most 15 sigops. The node
-  checks every input, as Zebra.
+  standard. zcashd accepts the transaction when that script has at most 15 sigops. The node
+  checks every input, as Zebra does.
 - The transaction version rule of `IsStandardTx` is not in the policy: `prepare` checks
   the version against the rule set.
 
@@ -150,7 +153,7 @@ Differences from zcashd:
 | Cost of a transaction: max(serialized size, threshold) | ZIP 401 | 10,000 | yes: `ZB/zebra-chain/src/transaction/unmined.rs:67` |
 | Eviction weight: cost + penalty when fee < conventional fee (400 zatoshis for each action) | ZIP 401, ZIP 317 | 40,000 | yes: `ZK/zakura-chain/src/transaction/unmined.rs:484-529` |
 | Eviction: weighted random selection, the new transaction is a candidate | ZIP 401 `EvictTransaction` | — | yes: `ZB .../mempool/storage/verified_set.rs` (`evict_one`) |
-| Recently evicted txids are refused | ZIP 401 `RecentlyEvicted` | 60 min, 40,000 entries | yes: `ZB .../mempool/storage.rs:51`, `eviction_list.rs` |
+| The store refuses recently evicted txids | ZIP 401 `RecentlyEvicted` | 60 min, 40,000 entries | yes: `ZB .../mempool/storage.rs:51`, `eviction_list.rs` |
 | The list holds the txid, not the wtxid | ZIP 401 | — | yes: `ZB .../mempool/storage.rs` (`RandomlyEvicted`) |
 | Expiry at each new tip: remove when next height > expiry height | ZIP 203 | — | yes: `storage.rs:885` |
 
@@ -158,19 +161,19 @@ Differences from ZIP 401:
 
 - An ancestor of the new transaction is not a candidate of the selection. Its eviction
   removes the new transaction too.
-- The descendants of a victim leave with it. Only the selected victim goes on the
-  recently-evicted list, as in Zakura.
+- The store removes the descendants of a victim with the victim. Only the selected victim goes
+  on the recently-evicted list, as in Zakura.
 
 ## Template selection (`LiveTemplate`, ZIP 317 block production)
 
 | Step of ZIP 317 | Template | Local source |
 |---|---|---|
 | `weight_ratio` = min(max(1, fee) / conventional fee, `weight_ratio_cap`) | `Zip317Params::weight_ratio` with the cap 13 of Zakura, fixed point with 32 fractional bits (Zakura: `f32`) | yes: `ZK/zakura-chain/src/transaction/unmined/zip317.rs` (`conventional_fee_weight_ratio`) |
-| Pass 1: each candidate that pays the conventional fee, one time. Add it when the block stays in the size limit and the sigop limit | The candidates with a weight ratio of 1 or more come first in the order | yes: `ZK/zakura-rpc/src/methods/types/get_block_template/zip317.rs` |
-| Pass 2: each other candidate, one time. Add it when the block stays in the two limits and holds at most `block_unpaid_action_limit` unpaid actions | The candidates with a weight ratio below 1 follow. The budget is 0 unpaid actions (`BLOCK_UNPAID_ACTION_LIMIT`), so the pass adds no candidate with an unpaid action; the mempool admits none | yes: same file (`BlockTemplateLimits::try_add`), with the value 0 of Zakura and Zebra. ZIP 317 gives 50 as the default |
+| Pass 1: each candidate that pays the conventional fee, 1 time. Add it when the block stays in the size limit and the sigop limit | The candidates with a weight ratio of 1 or more come first in the order | yes: `ZK/zakura-rpc/src/methods/types/get_block_template/zip317.rs` |
+| Pass 2: each other candidate, 1 time. Add it when the block stays in the 2 limits and holds at most `block_unpaid_action_limit` unpaid actions | The candidates with a weight ratio below 1 follow. The budget is 0 unpaid actions (`BLOCK_UNPAID_ACTION_LIMIT`), so the pass adds no candidate with an unpaid action. The mempool admits none | yes: same file (`BlockTemplateLimits::try_add`), with the value 0 of Zakura and Zebra. ZIP 317 gives 50 as the default |
 | Size limit | 2,000,000 bytes minus the header, the transaction count and the coinbase with the largest scriptSig | yes: same file (`block_template_overhead_bytes`) |
 | Sigop limit | 20,000 (`BlockLimits::sigops` of the rule set of the height) minus the sigops of the coinbase | yes: same file (`BlockTemplateLimits::initial`) |
-| A candidate that does not fit | It leaves the candidates. The pass continues with the next one | yes: same file |
+| A candidate that does not fit | The template removes it from the candidates. The pass continues with the next candidate | yes: same file |
 
 Differences from ZIP 317:
 
@@ -185,14 +188,14 @@ Differences from ZIP 317:
   limits. Zakura adds such a child only when it pays the conventional fee.
 - Limits of the rule set. ZIP 317 names the size limit and the sigop limit. The template
   also applies the shielded limits of the rule set of the height (`BlockLimits`; ZIP 218
-  from NU7: Orchard 330, Ironwood 330, Sapling 300, the three together 330). A rule set
+  from NU7: Orchard 330, Ironwood 330, Sapling 300, the 3 together 330). A rule set
   before NU7 has none.
 
 ## Relay
 
 | Behaviour | Source | Local source |
 |---|---|---|
-| Announce a new transaction once, when the store accepts it | zcashd, Zebra | yes: `ZB/zebrad/src/components/mempool/gossip.rs` |
+| Announce a new transaction 1 time, when the store admits it | zcashd, Zebra | yes: `ZB/zebrad/src/components/mempool/gossip.rs` |
 | Answer a `mempool` message with the ids of the store, without the transactions that expire soon (`TxLookup::for_each_relay_id`, ZIP 204) | zcashd | answer: yes (`ZB/zebrad/src/components/inbound.rs:560`). Filter on expiry: no |
-| v5 and later transactions are announced by wtxid (`MSG_WTX`), earlier ones by txid | ZIP 239 | hayai-net `tx_inv_item` |
-| No rebroadcast from the mempool | zcashd rebroadcasts only the transactions of its wallet; Zebra has no rebroadcast | Zebra: yes. zcashd: no |
+| The node announces a v5 or later transaction by wtxid (`MSG_WTX`), and an earlier transaction by txid | ZIP 239 | hayai-net `tx_inv_item` |
+| No rebroadcast from the mempool | zcashd rebroadcasts only the transactions of its wallet. Zebra has no rebroadcast | Zebra: yes. zcashd: no |
