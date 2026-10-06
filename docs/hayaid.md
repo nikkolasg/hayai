@@ -716,7 +716,7 @@ The operator decides whether the gaps are acceptable:
 - The NU7 rules on the default (`upstream`) backend: the node stops with an error when
   its next block is the first block of NU7 (Testnet 4,465,026). A build with
   `--no-default-features --features zakura` has the NU7 rule set and continues
-  (`docs/consensus.md`, NU7 and the crypto backends).
+  (`docs/architecture.md`, section hayai-consensus).
 - Sprout JoinSplits in shadow mode: the seed has no Sprout treestate, and a shadow node
   stops at the first block with a JoinSplit (Shadow mode, Sprout state).
 - `hashBlockCommitments` in shadow mode before the history tree is known, and the start

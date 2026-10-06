@@ -1550,8 +1550,13 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
 ## Consensus trace (2026-10-06)
 
 - `docs/consensus.md` is the one place for the consensus coverage: each normative rule of a
-  ZIP or of the specification is a row with its code, its test, the Zakura code and a status
-  from a closed list. A missing or untested rule shows as such; nothing is summarized away.
+  ZIP or of the specification is a row with 3 columns, `Rule | Code | Test`. A missing or
+  untested rule shows as such; nothing is summarized away.
+- Lesson (owner feedback on the first version): a trace with rule ids, group codes, a status
+  legend, a Zakura column and code given as file names is hard to read. The Code column links
+  to the line of the check at a fixed commit, and a script checks that each link lands on its
+  identifier. A rule without code says "Not implemented" and why the node is correct without
+  it. Narrative about validation paths belongs in `docs/architecture.md`.
 - Code marks: `// ZIP <n>: ...` and `// Spec §<section>: ...` at each check and constant.
   Search for them to find the code of a rule.
 - Lesson: an upstream function that computes a digest is not a consensus check. The upstream

@@ -1618,8 +1618,8 @@ impl Relay {
         }
     }
 
-    /// ZIP 204: the answer has every public id, also of a transaction that expires within
-    /// 3 blocks. It differs from the SHOULD NOT relay such a transaction.
+    /// ZIP 204: the answer has the public ids of the store, without a transaction that
+    /// expires within 3 blocks of the next block.
     fn on_mempool(&self, peer: &Arc<Peer>) {
         let mut ids = Vec::with_capacity(self.txs.len());
         // ZIP 204: no transaction that expires within 3 blocks of the next block.
