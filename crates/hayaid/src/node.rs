@@ -41,10 +41,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{select, unbounded, Receiver, Sender};
 use hayai_blockstore::BlockStore;
-use hayai_coins::{BestBlock, CoinsBacking, MemBacking, MemConfig, OutPoint, Pool, RocksBacking};
+use hayai_coins::{
+    BestBlock, Coin, CoinsBacking, MemBacking, MemConfig, OutPoint, Pool, RocksBacking,
+};
 use hayai_consensus::difficulty::expected_bits;
 use hayai_consensus::{ParentChain, DIFFICULTY_CONTEXT_BLOCKS};
 use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_index::{BlockJob, IndexWriter, TreesBefore, WalletIndex};
 use hayai_net::{
     AddrBook, BlockSink, ChainSource, CompactVer, Direction, HistoryRootSource, IncomingBlock,
     PeerConfig, PeerEnv, PeerManager, PeerProtocol, Relay, RelayConfig, RelayDeps, Source,
@@ -58,7 +61,7 @@ use hayai_rpc::{
 };
 use hayai_state::history::HistoryState;
 use hayai_state::PrebuiltBody;
-use hayai_state::{Anchors, Base, Chain, ChainView, Layer, LAYER_WINDOW};
+use hayai_state::{Anchors, Base, Chain, ChainView, Frontiers, Layer, LAYER_WINDOW};
 use hayai_sync::download::DownloadConfig;
 use hayai_sync::headers::{HeaderChain, Status};
 use hayai_template::{
@@ -114,6 +117,8 @@ const INDEX_BLOCKS: usize = LAYER_WINDOW + 2 * DIFFICULTY_CONTEXT_BLOCKS;
 const HEADER_LOG: &str = "headers.log";
 /// Full mode: the address book of the peer manager, in `data_dir`.
 const PEERS_FILE: &str = "peers.dat";
+/// Full mode with `[state] wallet_index`: the wallet index, in `data_dir`.
+const WALLET_INDEX_DIR: &str = "wallet-index";
 /// Full mode: blocks before the end of the checkpoint range at which the node starts the
 /// build of the Orchard keys. The checkpoint path reads no key, and a build takes about
 /// 2 s, so the keys are ready before the first block with full validation.
@@ -549,6 +554,44 @@ struct Driver {
     /// The reception of the newest block that the driver validated, for the time from
     /// the reception to the first template on that block.
     tip_received: Option<TipReceived>,
+    /// The writer of the wallet index (`[state] wallet_index`).
+    wallet: Option<IndexWriter>,
+    /// The base of the last coins flush: the restart never goes below it, so the wallet
+    /// index needs no undo record at or below it.
+    durable_base: u32,
+}
+
+/// What the wallet index takes of a committed block besides the block: the coins that its
+/// inputs spent, which the validation read, and the note commitment trees before it.
+pub(crate) struct IndexInput {
+    spent_coins: Vec<Vec<Coin>>,
+    before: Frontiers,
+}
+
+impl IndexInput {
+    /// Takes the spent coins out of `layer`, whose parent is the tip of `view`. The chain
+    /// does not keep them.
+    pub(crate) fn take(layer: &mut Layer, view: &ChainView) -> Self {
+        Self {
+            spent_coins: std::mem::take(&mut layer.spent_coins),
+            before: view.frontiers(),
+        }
+    }
+
+    fn job(self, height: u32, raw: &Arc<RawBlock>) -> BlockJob {
+        BlockJob {
+            height,
+            hash: raw.hash().0,
+            parent: raw.header.prev_hash.0,
+            raw: raw.clone(),
+            spent_coins: self.spent_coins,
+            trees_before: TreesBefore {
+                sapling: self.before.sapling,
+                orchard: self.before.orchard,
+                ironwood: self.before.ironwood,
+            },
+        }
+    }
 }
 
 /// The reception time of a block, until the first template on that block has it.
@@ -578,6 +621,8 @@ struct CommitCtx {
     trusted_anchors: u64,
     coins_before: u64,
     nullifiers_before: u64,
+    /// What the wallet index takes of the block. The commit path sets it before the push.
+    index: Option<IndexInput>,
 }
 
 /// The transactions that left the prepared store with the new blocks of the tip.
@@ -682,6 +727,9 @@ impl Driver {
     fn run(mut self, events: Receiver<Event>) -> Result<(), NodeError> {
         let result = self.event_loop(&events);
         if let Ok(Exit::Abandon) = result {
+            if let Some(wallet) = self.wallet.take() {
+                wallet.abandon();
+            }
             return Ok(());
         }
         let closed = self.close();
@@ -832,6 +880,12 @@ impl Driver {
         self.blocks
             .sync()
             .map_err(|e| fatal("final block store sync", e))?;
+        if let Some(wallet) = self.wallet.take() {
+            let stats = wallet.stats.clone();
+            wallet.close().map_err(|e| fatal("wallet index", e))?;
+            self.metrics.record_wallet_index(&stats);
+            log_wallet_index(&stats);
+        }
         Ok(())
     }
 
@@ -840,6 +894,19 @@ impl Driver {
     /// leaves a record that the restart drops, never a best block without a record.
     fn flush_coins(&mut self, context: &str) -> Result<(), NodeError> {
         let height = self.chain.base().read().height;
+        // The wallet index is durable with the base block before the coins store names the
+        // base: a restart then only undoes index blocks above the base, from their undo
+        // records. `persist` returns when a sync holds the base. That is usually the sync
+        // that the flush before started, with the tip of that time: with a flush interval
+        // below the finality depth (1,000 blocks), that tip is above this base. Else
+        // `persist` waits for a new sync. The next sync runs in the background during the writes below, and during the blocks
+        // up to the next flush. It removes only the undo records at or below the durable
+        // base, which no restart goes below.
+        if let Some(wallet) = &mut self.wallet {
+            wallet
+                .persist(height, self.durable_base)
+                .map_err(|e| fatal("wallet index", e))?;
+        }
         let ancestors = self
             .index
             .ancestors_at(height, DIFFICULTY_CONTEXT_BLOCKS)
@@ -864,6 +931,7 @@ impl Driver {
             .sync()
             .map_err(|e| fatal("block store sync", e))?;
         self.chain.flush().map_err(|e| fatal(context, e))?;
+        self.durable_base = height;
         self.metrics.finalized_height.set(f64::from(height));
         Ok(())
     }
@@ -1028,6 +1096,7 @@ impl Driver {
             trusted_anchors,
             coins_before: self.metrics.trusted_coins.get(),
             nullifiers_before: self.metrics.trusted_nullifiers.get(),
+            index: None,
         }
     }
 
@@ -1083,7 +1152,7 @@ impl Driver {
     /// store.
     fn finish_commit(
         &mut self,
-        ctx: &CommitCtx,
+        ctx: &mut CommitCtx,
         raw: &Arc<RawBlock>,
         layer: &Layer,
         timings: &Timings,
@@ -1134,6 +1203,11 @@ impl Driver {
         self.blocks
             .append(height, raw)
             .map_err(|e| fatal("block store append", e))?;
+        if let (Some(wallet), Some(input)) = (&self.wallet, ctx.index.take()) {
+            wallet
+                .apply(input.job(height, raw))
+                .map_err(|e| fatal("wallet index", e))?;
+        }
         if let Some(root) = layer.history_root() {
             self.history_roots.insert(hash, root);
         }
@@ -1288,18 +1362,19 @@ impl Driver {
                 self.validate_or_swap(raw, &view, &cfg)
             }
         };
-        let (layer, timings) = match verdict {
+        let (mut layer, timings) = match verdict {
             Ok(done) => done,
             Err(e) => {
                 self.reject_commit(&ctx, &e.to_string(), apply_class, fault_of(&e));
                 return Ok(Err(e));
             }
         };
+        ctx.index = Some(IndexInput::take(&mut layer, &view));
         let pushing = Instant::now();
         let layer = self.chain.push(layer).map_err(|e| fatal("chain push", e))?;
         ctx.push = pushing.elapsed();
         let mut changes = TipChange::default();
-        self.finish_commit(&ctx, raw, &layer, &timings, apply_class, &mut changes)?;
+        self.finish_commit(&mut ctx, raw, &layer, &timings, apply_class, &mut changes)?;
         Ok(Ok(changes))
     }
 
@@ -1462,6 +1537,11 @@ impl Driver {
                     "fork point {fork} is below hayai's {LAYER_WINDOW}-block window"
                 )));
             };
+            if let Some(wallet) = &mut self.wallet {
+                wallet
+                    .undo(height, hash.0)
+                    .map_err(|e| fatal("wallet index", e))?;
+            }
             let Some(_) = self.index.pop() else {
                 return Err(NodeError(format!("header index cannot pop {hash}")));
             };
@@ -1926,7 +2006,7 @@ impl Drop for FreshDir {
         if !self.armed {
             return;
         }
-        for dir in ["coins", "blocks"] {
+        for dir in ["coins", "blocks", WALLET_INDEX_DIR] {
             let path = self.data_dir.join(dir);
             if let Err(e) = fs::remove_dir_all(&path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
@@ -1991,6 +2071,8 @@ struct Replay<'a> {
     history_roots: &'a HistoryRoots,
     /// Height of the start record: the blocks above it are in the block store.
     start_height: u32,
+    /// The writer of the wallet index, whose tip is the base of the chain.
+    wallet: Option<&'a IndexWriter>,
 }
 
 /// Height of the last block that [`replay`] reads for a base at `base_height`: the end of
@@ -2106,7 +2188,7 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
         // does in the synchronization: the node validated it before it stored it.
         let checkpoints = r.params.kind.checkpoints();
         let checkpointed = matches!(checkpoints.last_height(), Some(last) if height <= last);
-        let (layer, _) = match (checkpointed, r.mode) {
+        let (mut layer, _) = match (checkpointed, r.mode) {
             // The header chain is not open during the replay, so the expected hash is the
             // hash of the stored block: the node compared the block with the header chain
             // before it stored it. The checkpoint list and the parent are checked again.
@@ -2122,10 +2204,16 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
         if let Some(root) = layer.history_root() {
             r.history_roots.insert(raw.hash(), root);
         }
+        let input = IndexInput::take(&mut layer, &chain.view());
         chain
             .push(layer)
             .map_err(|e| fatal("replay chain push", e))?;
         r.index.push(raw.header.clone());
+        if let Some(wallet) = r.wallet {
+            wallet
+                .apply(input.job(height, &Arc::new(raw)))
+                .map_err(|e| fatal("wallet index", e))?;
+        }
         finalized += chain
             .finalize_excess(LAYER_WINDOW)
             .map_err(|e| fatal("replay finalize", e))?;
@@ -2154,9 +2242,11 @@ impl Node {
         let coins_dir = data_dir.join("coins");
         let blocks_dir = data_dir.join("blocks");
         let resuming = StateLog::exists(data_dir);
+        let wallet_dir = data_dir.join(WALLET_INDEX_DIR);
         if !resuming {
             require_empty(&coins_dir)?;
             require_empty(&blocks_dir)?;
+            require_empty(&wallet_dir)?;
         }
 
         let tracer = match &config.network.zakura.trace_dir {
@@ -2313,6 +2403,44 @@ impl Node {
                 (base, index, state_log, seed.height)
             }
         };
+        // The wallet index: at its first start its tip is the genesis block. At a restart it
+        // undoes its blocks above the base, and the replay below indexes them again.
+        let wallet_index = match (config.state.wallet_index, resuming) {
+            (true, _) => {
+                let wallet =
+                    WalletIndex::open(&wallet_dir).map_err(|e| fatal("wallet index", e))?;
+                if !resuming {
+                    wallet
+                        .start_at_genesis(&params.genesis().0 .0)
+                        .map_err(|e| fatal("wallet index", e))?;
+                }
+                let undone = wallet
+                    .rewind_to(base.height, &base.hash.0)
+                    .map_err(|e| fatal("wallet index", e))?;
+                tracing::info!(
+                    undone,
+                    base = base.height,
+                    "wallet index rewound to the base"
+                );
+                Some(Arc::new(wallet))
+            }
+            (false, true) if wallet_dir.exists() => {
+                tracing::warn!(
+                    dir = %wallet_dir.display(),
+                    "[state] wallet_index is off: the wallet index of cache_dir falls behind, \
+                     and a start with the index on refuses it"
+                );
+                None
+            }
+            (false, _) => None,
+        };
+        let wallet = match &wallet_index {
+            Some(index) => {
+                Some(IndexWriter::spawn(index.clone()).map_err(|e| fatal("wallet index", e))?)
+            }
+            None => None,
+        };
+        let durable_base = base.height;
         if let Some(guard) = &mut fresh_dir {
             guard.disarm();
         }
@@ -2337,6 +2465,7 @@ impl Node {
                 keys: &keys,
                 history_roots: &history_roots,
                 start_height,
+                wallet: wallet.as_ref(),
             },
         )?;
         let (tip_height, tip_hash) = index.tip();
@@ -2470,6 +2599,7 @@ impl Node {
                     headers: headers.clone(),
                     private: config.mining.lane_publication != LanePublication::All,
                     stop: stop_tx.clone(),
+                    wallet: wallet_index.clone(),
                 });
                 let rpc = Rpc::with_parts(
                     RpcConfig {
@@ -2581,6 +2711,8 @@ impl Node {
             template_deferred: false,
             tip_received: None,
             deferred_changes: TipChange::default(),
+            wallet,
+            durable_base,
             lane: match (
                 config.network.mode,
                 config.network.compact_relay,
@@ -2733,6 +2865,23 @@ impl Node {
         let traces = self.tracer.close().map_err(|e| fatal("trace close", e));
         driver_result.and(traces)
     }
+}
+
+/// Logs the totals of the writer of the wallet index.
+fn log_wallet_index(stats: &hayai_index::WriterStats) {
+    use std::sync::atomic::Ordering::Relaxed;
+    tracing::info!(
+        blocks = stats.blocks.load(Relaxed),
+        batches = stats.batches.load(Relaxed),
+        bytes = stats.bytes.load(Relaxed),
+        build_ms = stats.build_us.load(Relaxed) / 1_000,
+        write_ms = stats.write_us.load(Relaxed) / 1_000,
+        queue_wait_ms = stats.queue_wait_us.load(Relaxed) / 1_000,
+        persist_wait_ms = stats.persist_wait_us.load(Relaxed) / 1_000,
+        sync_ms = stats.sync_us.load(Relaxed) / 1_000,
+        persist_stalls = stats.persist_stalls.load(Relaxed),
+        "wallet index writer closed"
+    );
 }
 
 /// What the node ticker reads once per second.
@@ -3033,6 +3182,7 @@ mod tests {
                 keys: &Arc::new(VerifyingKeys::new()),
                 history_roots: &HistoryRoots::default(),
                 start_height: 0,
+                wallet: None,
             },
         )
     }

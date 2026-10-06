@@ -234,6 +234,20 @@ impl RawBlock {
         Ok(Self { bytes, header, txs })
     }
 
+    /// The wire bytes of transaction `index` of the block `bytes`, without a parse: the
+    /// layout scanner walks the transactions before it.
+    pub fn tx_bytes(bytes: &Bytes, index: usize) -> Result<Bytes, ParseError> {
+        let (_, count, mut pos) = Self::parse_prefix(bytes)?;
+        if index >= count {
+            return Err(ParseError::NoTransaction { index, count });
+        }
+        for _ in 0..index {
+            pos += scan::tx_wire_len(&bytes[pos..])?;
+        }
+        let len = scan::tx_wire_len(&bytes[pos..])?;
+        Ok(bytes.slice(pos..pos + len))
+    }
+
     /// Reference implementation of [`RawBlock::parse`]: one sequential pass of
     /// `Transaction::read` over the block. The txid and the authorizing digest come from the
     /// parsed form (`Transaction::auth_commitment`). It gives the same result and the same
@@ -481,6 +495,8 @@ pub enum ParseError {
     TooLarge(usize),
     #[error("trailing bytes after block")]
     Trailing,
+    #[error("block has {count} transactions and no transaction {index}")]
+    NoTransaction { index: usize, count: usize },
 }
 
 #[cfg(test)]

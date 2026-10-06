@@ -95,6 +95,14 @@ fn mainnet_block_transactions() {
             let (_, consumed) = check_tx(&tx.bytes, branch);
             assert_eq!(consumed, tx.bytes.len());
         }
+        for (i, tx) in block.txs.iter().enumerate() {
+            assert_eq!(RawBlock::tx_bytes(&bytes, i).unwrap(), tx.bytes);
+        }
+        let Err(hayai_wire::ParseError::NoTransaction { .. }) =
+            RawBlock::tx_bytes(&bytes, block.txs.len())
+        else {
+            panic!("a transaction after the last one");
+        };
         assert_blocks_equal(&block, &RawBlock::parse_sequential(bytes, branch).unwrap());
     }
 }

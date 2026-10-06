@@ -59,47 +59,73 @@ fn script(bytes: &[u8]) -> Script {
     Script(zcash_script04::script::Code(bytes.to_vec()))
 }
 
-/// The transaction of the epoch `branch` with one transparent input and the bundle
-/// `shielded`: a v5 transaction with an Orchard bundle, or with `ironwood` a v6
-/// transaction with an Ironwood bundle.
+/// The transaction of the epoch of `spend` with the bundle `shielded`: a v5 transaction
+/// with an Orchard bundle, or with `ironwood` a v6 transaction with an Ironwood bundle.
 fn transaction_data<A: Authorization>(
-    branch: BranchId,
-    outpoint: OutPoint,
-    expiry_height: u32,
+    spend: &Spend,
     authorization: A::TransparentAuth,
-    shielded: orchard::Bundle<A::OrchardAuth, ZatBalance>,
+    shielded: Option<orchard::Bundle<A::OrchardAuth, ZatBalance>>,
     ironwood: bool,
 ) -> TransactionData<A>
 where
     A::TransparentAuth: zcash_transparent::bundle::Authorization<ScriptSig = Script>,
 {
-    let expiry_height = BlockHeight::from_u32(expiry_height);
+    let expiry_height = BlockHeight::from_u32(spend.expiry_height);
     let transparent = Some(Bundle {
-        vin: vec![TxIn::from_parts(outpoint, script(&[]), u32::MAX)],
-        vout: Vec::new(),
+        vin: vec![TxIn::from_parts(
+            spend.outpoint.clone(),
+            script(spend.script_sig),
+            u32::MAX,
+        )],
+        vout: spend
+            .outputs
+            .iter()
+            .map(|(value, pubkey)| {
+                TxOut::new(
+                    Zatoshis::from_u64(*value).expect("an amount"),
+                    script(pubkey),
+                )
+            })
+            .collect(),
         authorization,
     });
     match ironwood {
         true => TransactionData::from_parts_v6(
-            branch,
+            spend.branch,
             0,
             expiry_height,
             transparent,
             None,
             None,
-            Some(shielded),
+            shielded,
         ),
         false => TransactionData::from_parts(
             TxVersion::V5,
-            branch,
+            spend.branch,
             0,
             expiry_height,
             transparent,
             None,
             None,
-            Some(shielded),
+            shielded,
         ),
     }
+}
+
+/// A spend of one transparent coin, for [`spend_tx`].
+pub struct Spend<'a> {
+    pub outpoint: OutPoint,
+    /// The value of the coin.
+    pub value: u64,
+    /// The scriptPubKey of the coin and the scriptSig that spends it.
+    pub coin_script: &'a [u8],
+    pub script_sig: &'a [u8],
+    /// The transparent outputs: value and scriptPubKey.
+    pub outputs: &'a [(u64, &'a [u8])],
+    /// The value of one shielded output, or no shielded bundle.
+    pub shielded: Option<u64>,
+    pub expiry_height: u32,
+    pub branch: BranchId,
 }
 
 /// A Regtest transaction of the epoch `branch` that spends one transparent coin with the
@@ -113,6 +139,23 @@ pub fn shielding_tx(
     expiry_height: u32,
     branch: BranchId,
 ) -> Bytes {
+    spend_tx(&Spend {
+        outpoint,
+        value,
+        coin_script: &OP_TRUE,
+        script_sig: &[],
+        outputs: &[],
+        shielded: Some(value - fee),
+        expiry_height,
+        branch,
+    })
+}
+
+/// A Regtest transaction of the epoch of `spend` that spends one transparent coin into the
+/// outputs of `spend`. The shielded output has the bundle of [`shielding_tx`]. The fee is
+/// the value of the coin minus the outputs.
+pub fn spend_tx(spend: &Spend) -> Bytes {
+    let branch = spend.branch;
     static PROVING_KEYS: [OnceLock<ProvingKey>; 3] =
         [OnceLock::new(), OnceLock::new(), OnceLock::new()];
     // The bundle version of the epoch, with its circuit version: `InsecurePreNu6_2` until
@@ -134,53 +177,44 @@ pub fn shielding_tx(
         let sk = SpendingKey::from_bytes([7; 32]).expect("a valid spending key");
         FullViewingKey::from(&sk).address_at(0u32, Scope::External)
     };
-    let mut builder = Builder::new(
-        BundleType::DEFAULT,
-        version,
-        version.default_flags(),
-        Anchor::empty_tree(),
-    )
-    .expect("default flags are representable");
-    builder
-        .add_output(None, recipient, NoteValue::from_raw(value - fee), [0; 512])
-        .expect("outputs enabled");
     let mut rng = os_rng();
-    let (bundle, _meta) = builder
-        .build::<ZatBalance>(&mut rng)
-        .expect("bundle builds")
-        .expect("bundle has an output");
+    let bundle = spend.shielded.map(|shielded| {
+        let mut builder = Builder::new(
+            BundleType::DEFAULT,
+            version,
+            version.default_flags(),
+            Anchor::empty_tree(),
+        )
+        .expect("default flags are representable");
+        builder
+            .add_output(None, recipient, NoteValue::from_raw(shielded), [0; 512])
+            .expect("outputs enabled");
+        let (bundle, _meta) = builder
+            .build::<ZatBalance>(&mut rng)
+            .expect("bundle builds")
+            .expect("bundle has an output");
+        bundle
+    });
 
     let coin = TxOut::new(
-        Zatoshis::from_u64(value).expect("a valid amount"),
-        script(&OP_TRUE),
+        Zatoshis::from_u64(spend.value).expect("a valid amount"),
+        script(spend.coin_script),
     );
-    let unsigned = transaction_data::<Unsigned>(
-        branch,
-        outpoint.clone(),
-        expiry_height,
-        SpentCoin(coin),
-        bundle.clone(),
-        ironwood,
-    );
+    let unsigned = transaction_data::<Unsigned>(spend, SpentCoin(coin), bundle.clone(), ironwood);
     let txid_parts = unsigned.digest(TxIdDigester);
     let sighash = *signature_hash(&unsigned, &SignableInput::Shielded, &txid_parts).as_ref();
 
-    let key = proving_key.get_or_init(|| ProvingKey::build(version.circuit_version()));
-    let bundle = bundle
-        .create_proof(key, &mut rng)
-        .expect("proof")
-        .apply_signatures(rng, sighash, &[])
-        .expect("only dummy spends to sign");
-    let tx = transaction_data::<Authorized>(
-        branch,
-        outpoint,
-        expiry_height,
-        TAuthorized,
-        bundle,
-        ironwood,
-    )
-    .freeze()
-    .expect("the transaction freezes");
+    let bundle = bundle.map(|bundle| {
+        let key = proving_key.get_or_init(|| ProvingKey::build(version.circuit_version()));
+        bundle
+            .create_proof(key, &mut rng)
+            .expect("proof")
+            .apply_signatures(rng, sighash, &[])
+            .expect("only dummy spends to sign")
+    });
+    let tx = transaction_data::<Authorized>(spend, TAuthorized, bundle, ironwood)
+        .freeze()
+        .expect("the transaction freezes");
     let mut bytes = Vec::new();
     tx.write(&mut bytes).expect("vec write");
     Bytes::from(bytes)

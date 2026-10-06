@@ -21,6 +21,7 @@ upstream = [
     "hayai-relay/upstream",
     "hayai-template/upstream",
     "hayai-blockstore/upstream",
+    "hayai-index/upstream",
     "hayai-net/upstream",
     "hayai-sync/upstream",
     "hayai-rpc/upstream",
@@ -37,6 +38,7 @@ zakura = [
     "hayai-relay/zakura",
     "hayai-template/zakura",
     "hayai-blockstore/zakura",
+    "hayai-index/zakura",
     "hayai-net/zakura",
     "hayai-sync/zakura",
     "hayai-rpc/zakura",
@@ -54,6 +56,7 @@ hayai-validate.workspace = true
 hayai-relay.workspace = true
 hayai-template.workspace = true
 hayai-blockstore.workspace = true
+hayai-index.workspace = true
 hayai-net.workspace = true
 hayai-sync.workspace = true
 hayai-rpc.workspace = true

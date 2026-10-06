@@ -154,6 +154,11 @@ pub struct Layer {
     pub created: Map<OutPoint, Coin>,
     /// Every outpoint the block spent, including ones created in the same block.
     pub spent: Set<OutPoint>,
+    /// The coin of each transparent input, by transaction (`spent_coins[i][j]` is input `j`
+    /// of transaction `i`; [`resolve_inputs`]). The validation read these coins, so a
+    /// consumer of the block (the wallet index of hayaid) needs no second read. A holder of
+    /// many layers takes the list out before it keeps the layer: the chain does not read it.
+    pub spent_coins: Vec<Vec<Coin>>,
     /// Nullifiers revealed, indexed by [`Pool::index`].
     pub nullifiers: [Set<[u8; 32]>; 4],
     pub orchard_frontier: Arc<OrchardFrontier>,

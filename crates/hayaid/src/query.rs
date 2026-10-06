@@ -7,9 +7,15 @@ use std::sync::Arc;
 use bytes::Bytes;
 use crossbeam_channel::Sender;
 use hayai_blockstore::BlockStore;
+use hayai_coins::{CoinsView, OutPoint};
+use hayai_crypto::zcash_primitives::transaction::TxId;
+use hayai_index::{AddressKey, WalletIndex};
 use hayai_net::{Direction, Relay};
 use hayai_prepared::{PreparedStore, MIN_RELAY_FEE_RATE};
-use hayai_rpc::{BlockInfo, BlockState, ChainTip, NodeQuery, NodeState, PeerRow, Pools, TipState};
+use hayai_rpc::{
+    AddressUtxo, BlockInfo, BlockState, ChainTip, IndexError, NodeQuery, NodeState, PeerRow, Pools,
+    SubtreePool, SubtreeRow, TipState, TransparentAddress, TxOutInfo,
+};
 use hayai_state::{Base, ChainView, Layer, ValuePools};
 use hayai_sync::headers::{HeaderChain, Status};
 use hayai_wire::header::{BlockHash, BlockHeader};
@@ -34,6 +40,19 @@ pub struct Query {
     pub private: bool,
     /// The `stop` method sends on this channel.
     pub stop: Sender<()>,
+    /// The wallet index (`[state] wallet_index`).
+    pub wallet: Option<Arc<WalletIndex>>,
+}
+
+fn address_key(address: &TransparentAddress) -> AddressKey {
+    match address.p2sh {
+        true => AddressKey::p2sh(address.hash),
+        false => AddressKey::p2pkh(address.hash),
+    }
+}
+
+fn failed(e: hayai_index::Error) -> IndexError {
+    IndexError::Failed(e.to_string())
 }
 
 fn pools(pools: &ValuePools) -> Pools {
@@ -60,6 +79,10 @@ fn layer_state(layer: &Layer, parent_pools: Option<Pools>) -> BlockState {
 }
 
 impl Query {
+    fn wallet(&self) -> Result<&WalletIndex, IndexError> {
+        self.wallet.as_deref().ok_or(IndexError::Off)
+    }
+
     /// The state after the block `hash` of `height`: the state of a layer, or the state of
     /// the base block.
     fn block_state(&self, height: u32, hash: &BlockHash) -> Option<BlockState> {
@@ -291,5 +314,124 @@ impl NodeQuery for Query {
     fn stop(&self) {
         // A full channel holds a request already.
         let _ = self.stop.try_send(());
+    }
+
+    fn mempool_transaction(&self, txid: &[u8; 32]) -> Option<Bytes> {
+        self.store
+            .get_by_txid(&TxId::from_bytes(*txid))
+            .map(|tx| tx.raw.bytes.clone())
+    }
+
+    fn tx_out(&self, txid: &[u8; 32], index: u32, include_mempool: bool) -> Option<TxOutInfo> {
+        let outpoint = OutPoint::new(*txid, index);
+        if include_mempool {
+            let None = self.store.spender(&outpoint) else {
+                return None;
+            };
+            if let Some(tx) = self.store.get_by_txid(&TxId::from_bytes(*txid)) {
+                let out = tx.raw.tx.transparent_bundle()?.vout.get(index as usize)?;
+                return Some(TxOutInfo {
+                    value: out.value().into_u64(),
+                    script: Bytes::copy_from_slice(&out.script_pubkey().0 .0),
+                    height: None,
+                    coinbase: false,
+                });
+            }
+        }
+        let view = self.view.read().clone();
+        let coin = view.get_coins(std::slice::from_ref(&outpoint)).pop()??;
+        Some(TxOutInfo {
+            value: coin.value,
+            script: coin.script_pubkey,
+            height: Some(coin.height),
+            coinbase: coin.is_coinbase,
+        })
+    }
+
+    fn index_tip(&self) -> Result<(u32, BlockHash), IndexError> {
+        match self.wallet()?.tip().map_err(failed)? {
+            Some((height, hash)) => Ok((height, BlockHash(hash))),
+            None => Err(IndexError::Failed("the wallet index has no tip".into())),
+        }
+    }
+
+    fn transaction_location(&self, txid: &[u8; 32]) -> Result<Option<(u32, u16)>, IndexError> {
+        Ok(self
+            .wallet()?
+            .tx_location(txid)
+            .map_err(failed)?
+            .map(|loc| (loc.height, loc.index)))
+    }
+
+    fn address_balance(&self, addresses: &[TransparentAddress]) -> Result<(u64, u64), IndexError> {
+        let keys: Vec<AddressKey> = addresses.iter().map(address_key).collect();
+        let total = self.wallet()?.balance(&keys).map_err(failed)?;
+        match (u64::try_from(total.balance), u64::try_from(total.received)) {
+            (Ok(balance), Ok(received)) => Ok((balance, received)),
+            _ => Err(IndexError::Failed(format!(
+                "a negative balance {} or total {}",
+                total.balance, total.received
+            ))),
+        }
+    }
+
+    fn address_txids(
+        &self,
+        addresses: &[TransparentAddress],
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<[u8; 32]>, IndexError> {
+        let keys: Vec<AddressKey> = addresses.iter().map(address_key).collect();
+        self.wallet()?
+            .address_txids(&keys, start, end)
+            .map_err(failed)
+    }
+
+    fn address_utxos(
+        &self,
+        addresses: &[TransparentAddress],
+    ) -> Result<(Vec<AddressUtxo>, (u32, BlockHash)), IndexError> {
+        let keys: Vec<AddressKey> = addresses.iter().map(address_key).collect();
+        let (utxos, tip) = self.wallet()?.address_utxos(&keys).map_err(failed)?;
+        let Some((height, hash)) = tip else {
+            return Err(IndexError::Failed("the wallet index has no tip".into()));
+        };
+        let utxos = utxos
+            .into_iter()
+            .map(|u| AddressUtxo {
+                address: TransparentAddress {
+                    p2sh: u.address.is_p2sh(),
+                    hash: u.address.hash(),
+                },
+                txid: u.txid,
+                index: u.index,
+                value: u.value,
+                height: u.height,
+            })
+            .collect();
+        Ok((utxos, (height, BlockHash(hash))))
+    }
+
+    fn subtrees(
+        &self,
+        pool: SubtreePool,
+        start: u16,
+        limit: Option<u16>,
+    ) -> Result<Vec<SubtreeRow>, IndexError> {
+        let pool = match pool {
+            SubtreePool::Sapling => hayai_index::SubtreePool::Sapling,
+            SubtreePool::Orchard => hayai_index::SubtreePool::Orchard,
+            SubtreePool::Ironwood => hayai_index::SubtreePool::Ironwood,
+        };
+        Ok(self
+            .wallet()?
+            .subtrees(pool, start, limit)
+            .map_err(failed)?
+            .into_iter()
+            .map(|t| SubtreeRow {
+                root: t.root,
+                end_height: t.end_height,
+            })
+            .collect())
     }
 }

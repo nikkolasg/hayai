@@ -27,6 +27,8 @@ mod shadow_tests;
 mod sync_tests;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod wallet_tests;
 
 pub use config::{default_toml, Config, Mode};
 pub use node::{Node, NodeError, TipWatch, PREBUILD_INTERVAL};

@@ -32,7 +32,7 @@ use hayai_wire::{RawBlock, WtxId};
 use rayon::prelude::*;
 
 use super::fault::{check_body, fault_of, local_fault, Fault};
-use super::{fatal, publish, CommitCtx, Driver, NodeError, TipChange, TipEvent};
+use super::{fatal, publish, CommitCtx, Driver, IndexInput, NodeError, TipChange, TipEvent};
 use crate::sync::{NetEvent, Refusal};
 
 /// Blocks between the committed tip and the best header tip above which the node builds
@@ -338,7 +338,8 @@ impl Driver {
             let layer = checked
                 .and_then(|()| build_layer((*job.raw).clone(), &self.store, &view, &cfgs[k]));
             match layer {
-                Ok((layer, verification, timings)) => {
+                Ok((mut layer, verification, timings)) => {
+                    ctx.index = Some(IndexInput::take(&mut layer, &view));
                     let pushing = Instant::now();
                     let id = self
                         .chain
@@ -421,7 +422,7 @@ impl Driver {
                             layers.len()
                         )));
                     };
-                    self.finish_commit(&ctx, &job.raw, layer, &timings, "full", changes)?;
+                    self.finish_commit(&mut ctx, &job.raw, layer, &timings, "full", changes)?;
                     if at_tip {
                         self.live
                             .on_confirm(job.hash)

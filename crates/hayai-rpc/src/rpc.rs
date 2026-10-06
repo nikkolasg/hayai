@@ -186,6 +186,59 @@ pub struct NodeState {
     pub relay_fee_rate: u64,
 }
 
+/// A transparent address: P2PKH or P2SH, with its 20-byte hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TransparentAddress {
+    pub p2sh: bool,
+    pub hash: [u8; 20],
+}
+
+/// An unspent output of an address, for `getaddressutxos`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AddressUtxo {
+    pub address: TransparentAddress,
+    /// In the byte order of the wire.
+    pub txid: [u8; 32],
+    pub index: u32,
+    pub value: u64,
+    pub height: u32,
+}
+
+/// An unspent output, for `gettxout`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxOutInfo {
+    pub value: u64,
+    pub script: Bytes,
+    /// `None`: an output of a transaction of the mempool.
+    pub height: Option<u32>,
+    pub coinbase: bool,
+}
+
+/// The note commitment trees with subtrees, for `z_getsubtreesbyindex`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtreePool {
+    Sapling,
+    Orchard,
+    Ironwood,
+}
+
+/// A completed note commitment subtree: its root in the byte order of the tree, and the
+/// height of the block that added its last leaf.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubtreeRow {
+    pub root: [u8; 32],
+    pub end_height: u32,
+}
+
+/// Why a method of the wallet index has no answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexError {
+    /// The node runs without the wallet index (`[state] wallet_index`).
+    Off,
+    /// A read of the index failed.
+    Failed(String),
+}
+
 /// The chain and the mempool of the node, for the query methods.
 pub trait NodeQuery: Send + Sync {
     /// The hash of the block at `height` on the committed chain.
@@ -217,6 +270,39 @@ pub trait NodeQuery: Send + Sync {
     fn ping(&self);
     /// Asks the node to stop as for SIGINT.
     fn stop(&self);
+    /// The wire bytes of the mempool transaction `txid` (byte order of the wire).
+    fn mempool_transaction(&self, txid: &[u8; 32]) -> Option<Bytes>;
+    /// The unspent output `index` of `txid`: from the coin set of the committed tip, and
+    /// with `include_mempool`, the outputs of the mempool minus its spends. It needs no
+    /// wallet index.
+    fn tx_out(&self, txid: &[u8; 32], index: u32, include_mempool: bool) -> Option<TxOutInfo>;
+    /// The newest block of the wallet index: its height and hash.
+    fn index_tip(&self) -> Result<(u32, BlockHash), IndexError>;
+    /// The height and the position in its block of the committed transaction `txid`.
+    fn transaction_location(&self, txid: &[u8; 32]) -> Result<Option<(u32, u16)>, IndexError>;
+    /// The balance and the total received of `addresses` together, in zatoshis.
+    fn address_balance(&self, addresses: &[TransparentAddress]) -> Result<(u64, u64), IndexError>;
+    /// The transactions that pay to or spend from `addresses` in the heights
+    /// `start..=end`, in chain order, each one time.
+    fn address_txids(
+        &self,
+        addresses: &[TransparentAddress],
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<[u8; 32]>, IndexError>;
+    /// The unspent outputs of `addresses` in chain order, with the index tip that they
+    /// belong to.
+    fn address_utxos(
+        &self,
+        addresses: &[TransparentAddress],
+    ) -> Result<(Vec<AddressUtxo>, (u32, BlockHash)), IndexError>;
+    /// The completed subtrees of `pool` from `start`, at most `limit`.
+    fn subtrees(
+        &self,
+        pool: SubtreePool,
+        start: u16,
+        limit: Option<u16>,
+    ) -> Result<Vec<SubtreeRow>, IndexError>;
 }
 
 #[derive(Clone)]
@@ -437,6 +523,13 @@ impl Rpc {
             | "getrawmempool"
             | "sendrawtransaction"
             | "sendprivatetransaction" => self.query(method, params),
+            other if crate::index::METHODS.contains(&other) => match &self.query {
+                Some(query) => self.indexed(query.as_ref(), other, params),
+                None => Err(err(
+                    codes::METHOD_NOT_FOUND,
+                    format!("Method not found: {other}"),
+                )),
+            },
             other => match (crate::info::METHODS.contains(&other), &self.query) {
                 (true, Some(query)) => self.info(query.as_ref(), other, params),
                 _ => Err(err(

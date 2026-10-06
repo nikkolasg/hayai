@@ -116,7 +116,8 @@ Differences that give no message:
 `[network]`: `mode`, `peers`, `compact_relay`, `max_peers`, `prebuilt_candidates`,
 `outbound_peers`, `max_inbound`, `ban_secs`. `[sync]`: `memory_budget_bytes`,
 `request_timeout_ms`, `header_timeout_ms`, `header_poll_ms`, `header_poll_max_ms`. `[state]`: `backend`, `flush_interval_blocks`,
-`snapshot_interval_blocks`. `[trace]`: `node`. `[mining]`: `miner_script`,
+`snapshot_interval_blocks`, `wallet_index` (Zakura writes its indexes in each
+`storage_mode`). `[trace]`: `node`. `[mining]`: `miner_script`,
 `regtest_produce`, `prebuild_own`, `lane_publication`. The sections `[shadow]` and
 `[regtest]`. `docs/hayaid.md` (Configuration) has each key.
 

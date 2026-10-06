@@ -34,7 +34,7 @@ use crate::params::{NetParams, NetworkKind};
 const NET: Network = Network::Regtest;
 const WAIT: Duration = Duration::from_secs(60);
 
-fn scratch() -> tempfile::TempDir {
+pub(crate) fn scratch() -> tempfile::TempDir {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-scratch");
     std::fs::create_dir_all(&base).expect("scratch base");
     tempfile::tempdir_in(base).expect("scratch dir")
@@ -42,7 +42,13 @@ fn scratch() -> tempfile::TempDir {
 
 /// The configuration of a Regtest full node. The peer manager dials no peer: each test
 /// makes its connections. `extra` is TOML text with more sections.
-fn config_with(dir: &Path, name: &str, produce: bool, compact: bool, extra: &str) -> Config {
+pub(crate) fn config_with(
+    dir: &Path,
+    name: &str,
+    produce: bool,
+    compact: bool,
+    extra: &str,
+) -> Config {
     let text = format!(
         r#"
 [network]
@@ -86,18 +92,18 @@ fn start_with(dir: &Path, name: &str, produce: bool, compact: bool, extra: &str)
         .unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
-fn addr(node: &Node) -> SocketAddr {
+pub(crate) fn addr(node: &Node) -> SocketAddr {
     node.p2p_addr.expect("the node listens")
 }
 
-fn generate(node: &Node, n: u32) -> Vec<BlockHash> {
+pub(crate) fn generate(node: &Node, n: u32) -> Vec<BlockHash> {
     let Some(producer) = &node.producer else {
         panic!("the node is not a producer");
     };
     producer.generate(n).expect("generate")
 }
 
-fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
+pub(crate) fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;
     while !condition() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
@@ -105,7 +111,7 @@ fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
-fn wait_tip(node: &Node, tip: (u32, BlockHash)) {
+pub(crate) fn wait_tip(node: &Node, tip: (u32, BlockHash)) {
     wait_for(&format!("the tip {tip:?}"), || node.tip.tip() == tip);
 }
 
@@ -117,7 +123,7 @@ fn rows(dir: &Path, name: &str, file: &str) -> Vec<Value> {
         .collect()
 }
 
-fn parse(bytes: &Bytes) -> RawBlock {
+pub(crate) fn parse(bytes: &Bytes) -> RawBlock {
     RawBlock::parse(bytes.clone(), BranchId::Nu5).expect("a block")
 }
 
@@ -165,6 +171,7 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
     let (tip, _) = node.tip.tip();
     let (genesis, _) = NetParams::new(NetworkKind::Regtest).genesis();
     let mut stream = TcpStream::connect(addr(node)).expect("connect");
+    stream.set_read_timeout(Some(WAIT)).expect("a read timeout");
     send(&mut stream, &version(0)).expect("version");
     let mut handshake = 0;
     while handshake < 2 {
@@ -211,12 +218,16 @@ fn fetch_chain(node: &Node) -> Vec<Bytes> {
         let items = chunk.iter().map(|hash| InvItem::Block(*hash)).collect();
         send(&mut stream, &LegacyMessage::GetData(items)).expect("getdata");
         for hash in chunk {
+            // The node can also send a block that the helper did not ask for (an
+            // announcement or a relay) on this connection: the helper skips it.
             let bytes = loop {
                 if let LegacyMessage::Block(bytes) = recv(&mut stream).expect("block") {
-                    break bytes;
+                    if BlockHeader::parse(&bytes).expect("a header").hash() == *hash {
+                        break bytes;
+                    }
+                    assert!(Instant::now() < deadline, "no answer with the block {hash}");
                 }
             };
-            assert_eq!(BlockHeader::parse(&bytes).expect("a header").hash(), *hash);
             blocks.push(bytes);
         }
     }
@@ -1151,7 +1162,7 @@ fn shielding_in(
 }
 
 /// Waits until the template of `node` has `count` transactions after the coinbase.
-fn wait_template(node: &Node, count: usize) {
+pub(crate) fn wait_template(node: &Node, count: usize) {
     let Some(producer) = &node.producer else {
         panic!("the node is not a producer");
     };
@@ -1161,7 +1172,7 @@ fn wait_template(node: &Node, count: usize) {
     );
 }
 
-fn disconnect_all(node: &Node) {
+pub(crate) fn disconnect_all(node: &Node) {
     for peer in node.relay.peers() {
         node.relay.disconnect(peer.id);
     }
@@ -2851,7 +2862,7 @@ fn a_private_transaction_of_a_miner_without_publication_stays_off_the_wire() {
 
 /// One JSON-RPC call over HTTP to `node`, with the credentials of its cookie file. The
 /// read has a bound of 60 s.
-fn rpc_call(node: &Node, method: &str, params: Value) -> Value {
+pub(crate) fn rpc_call(node: &Node, method: &str, params: Value) -> Value {
     use std::io::Read;
 
     let body = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })

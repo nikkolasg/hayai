@@ -229,9 +229,10 @@ fn block_outputs_are_the_layers_created_map() {
     for (tx, coins) in block.txs.iter().zip(&inputs) {
         assert_eq!(&tx.spent, coins, "the view resolves the prepared coins");
     }
-    let given = contextual_check_with_outputs(&view, &block, outputs, &inputs, &cfg)
+    let given = contextual_check_with_outputs(&view, &block, outputs, inputs.clone(), &cfg)
         .unwrap()
         .layer;
+    assert_eq!(given.spent_coins, inputs);
     assert_eq!(given.created, plain.created);
     assert_eq!(given.spent, plain.spent);
     assert_eq!(given.anchors, plain.anchors);

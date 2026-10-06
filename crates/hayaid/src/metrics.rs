@@ -119,6 +119,10 @@ pub struct NodeMetrics {
     /// Height of the base: the newest block whose layer is merged into the finalized state
     /// in memory.
     pub base_height: Arc<Gauge>,
+    /// The counters of the writer of the wallet index (`[state] wallet_index`), as totals
+    /// since the start: blocks, bytes of the write batches, and seconds of the build, the
+    /// writes, the waits of the driver on a full queue and on a persist.
+    pub wallet_index: [Arc<Gauge>; 6],
     /// Blocks that the node committed since its start.
     pub verified_blocks: Arc<Counter>,
     pub verify_success: Arc<Histogram>,
@@ -302,6 +306,15 @@ impl NodeMetrics {
                 "Height of the newest block whose layer is merged into the finalized state in memory.",
                 &[],
             ),
+            wallet_index: [
+                ("hayai_wallet_index_blocks", "Blocks that the wallet index wrote since the start."),
+                ("hayai_wallet_index_batch_bytes", "Bytes of the write batches of the wallet index since the start."),
+                ("hayai_wallet_index_build_seconds", "Time of the build of the wallet index entries since the start."),
+                ("hayai_wallet_index_write_seconds", "Time of the wallet index writes to RocksDB since the start."),
+                ("hayai_wallet_index_queue_wait_seconds", "Time that the driver waited on the full queue of the wallet index since the start."),
+                ("hayai_wallet_index_persist_wait_seconds", "Time that the driver waited for the sync of the wallet index since the start."),
+            ]
+            .map(|(name, help)| r.gauge(name, help, &[])),
             verified_blocks: r.counter(
                 "zcash_chain_verified_block_total",
                 "Blocks that the node committed since its start.",
@@ -722,6 +735,22 @@ impl NodeMetrics {
         self.relay_candidate_blocks_resolved
             .set(c.candidate_blocks_resolved);
         self.relay_candidate_fallbacks.set(c.candidate_fallbacks);
+    }
+
+    pub fn record_wallet_index(&self, stats: &hayai_index::WriterStats) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let seconds = |us: &std::sync::atomic::AtomicU64| us.load(Relaxed) as f64 / 1e6;
+        let values = [
+            stats.blocks.load(Relaxed) as f64,
+            stats.bytes.load(Relaxed) as f64,
+            seconds(&stats.build_us),
+            seconds(&stats.write_us),
+            seconds(&stats.queue_wait_us),
+            seconds(&stats.persist_wait_us),
+        ];
+        for (gauge, value) in self.wallet_index.iter().zip(values) {
+            gauge.set(value);
+        }
     }
 
     pub fn record_trace_drops(&self, tracer: &Tracer) {

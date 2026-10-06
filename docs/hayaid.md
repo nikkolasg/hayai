@@ -236,6 +236,7 @@ The node writes the files below:
 | `spent.log` | Shadow mode: the outpoints that hayai spent, as the coins store forgot them. |
 | `headers.log` | Full mode: every header that the header chain accepted, and the blocks that it found invalid. A header has one header record (1,508 bytes on Mainnet and Testnet: the Equihash solution has 1,344 bytes). A header that the chain removed and accepted again gets a mark of 53 bytes. The node makes the log durable before each coins flush. |
 | `peers.dat` | Full mode: the address book of the peer manager. |
+| `wallet-index/` | Full mode with `[state] wallet_index`: the RocksDB database of the wallet index (Wallet index). |
 
 A restart takes these steps:
 
@@ -320,6 +321,7 @@ error when the key changes the consensus rules, the network or a data location.
 | | `backend` | `memory` | `memory` (`MemBacking`: log and snapshots) or `rocksdb` (`RocksBacking`) |
 | | `flush_interval_blocks` | `100` | Blocks between two flushes of the finalized coins |
 | | `snapshot_interval_blocks` | `10000` | Memory backend: finalized blocks between two snapshots |
+| | `wallet_index` | `false` | Full mode: keep the wallet index in `cache_dir/wallet-index` for `getrawtransaction`, `getaddressbalance`, `getaddresstxids`, `getaddressutxos` and `z_getsubtreesbyindex` (Wallet index). A key of hayaid only: Zakura always keeps its indexes. The index starts at the genesis block, so turn it on with an empty `cache_dir`. A shadow node refuses the key |
 | `[rpc]` | `listen_addr` | none | JSON-RPC server; full mode only |
 | | `enable_cookie_auth` | `true` | Each request needs the credentials of the cookie file (JSON-RPC server, Protection of the port). `false`: no authentication |
 | | `cookie_dir` | `[state] cache_dir` | Directory of the cookie file `.cookie` |
@@ -482,7 +484,7 @@ zakurad (`docs/regtest-pair.md`, scenario rpc).
 | `getmempoolinfo` | `methods.rs:2273-2292`, `zakurad/src/components/mempool.rs:1199-1215` | Same as Zakura: `usage` is `bytes`, and no `fully_notified` |
 | `getblockheader` | `methods.rs:2117-2243` | Differs: not served for the genesis block (the node does not store it); `finalsaplingroot` only for a block whose state the node holds (the blocks that a reorg can disconnect, at most 1,000) and for a block before Sapling |
 | `getblock` verbosity 0 and 1 | `methods.rs:1875-2115` | Differs: as `getblockheader`; `finalorchardroot`, `chainSupply`, `valuePools` and `trees` only for a block whose state the node holds |
-| `getblock` verbosity 2 | `methods.rs:1941-2013`, `types/transaction.rs` | Not served (error -8): the transaction object is the object of `getrawtransaction`, which belongs to the indexer work package |
+| `getblock` verbosity 2 | `methods.rs:1941-2013`, `types/transaction.rs` | Not served (error -8) |
 | `getchaintips` | `methods.rs:2259-2271`, `types/chain_tips.rs` | Same fields and states. The tips are the tips of the header tree of the node, with the branches that the node left |
 | `validateaddress` | `methods.rs:3664-3668`, `types/validate_address.rs:44-83` | Same as Zakura |
 | `z_validateaddress` | `methods.rs:3670-3674`, `types/z_validate_address.rs:81-123` | Same as Zakura |
@@ -492,7 +494,13 @@ zakurad (`docs/regtest-pair.md`, scenario rpc).
 | `getbestblockheightandhash` | `methods.rs:2252-2257` | Same as Zakura: `hash` is a list of 32 bytes |
 | `getdeprecationinfo` | `methods.rs:1570-1601` | Same as Zakura outside Mainnet: `{}`. On Mainnet Zakura has `end_of_service`; hayaid has no end-of-service height |
 | `sendprivatetransaction` | none | A method of hayaid (Lane publication and private transactions) |
-| `getrawtransaction`, `gettxout`, `getaddressbalance`, `getaddresstxids`, `getaddressutxos`, `z_getsubtreesbyindex`, `z_listunifiedreceivers`, `invalidateblock`, `reconsiderblock`, `rpc.discover` | | Not served: "method not found" (-32601). They need an index of the transactions or a change of the chain state |
+| `getrawtransaction` | `methods.rs:2374-2546`, `types/transaction.rs:527-685` | The mempool first, then the block of `blockhash`, then the wallet index. Without the index: a transaction of the mempool or of a named block only, else error -1 that names `[state] wallet_index`. Differences: the verbose object has no `vShieldedSpend`, `vShieldedOutput`, `vjoinsplit`, `orchard`, `ironwood`, `bindingSig`, `joinSplitPubKey` and `joinSplitSig`, and no `asm` in `scriptSig` and `scriptPubKey`. Not served: the coinbase of the genesis block (the node does not store the genesis block) |
+| `gettxout` | `methods.rs:3967-4077`, `types/transaction.rs:738-791` | Served from the coin set of the committed tip and from the mempool: it needs no wallet index. Differences: no `version` (the coin set does not hold the transaction) and no `asm` |
+| `getaddressbalance` | `methods.rs:1792-1810`, `4666-4753` | Same request forms and fields (`balance`, `received`). Needs the wallet index |
+| `getaddresstxids` | `methods.rs:2747-2790`, `5400-5585` | Same request forms, the same rule for the height range, and error -32602. The tip of the range is the tip of the wallet index. Needs the wallet index |
+| `getaddressutxos` | `methods.rs:2792-2856`, `4756-4802`, `5306-5356` | Same request forms and fields, also with `chainInfo`. `hash` and `height` are the tip of the wallet index. Needs the wallet index |
+| `z_getsubtreesbyindex` | `methods.rs:2662-2745`, `methods/trees.rs:18-37` | Same fields (`pool`, `start_index`, `subtrees` with `root` and `end_height`) and pools (`sapling`, `orchard`, `ironwood`). The index computes each subtree also in the checkpoint range. There Zakura reads the subtrees from an artifact in its binary. Needs the wallet index |
+| `z_listunifiedreceivers`, `invalidateblock`, `reconsiderblock`, `rpc.discover` | | Not served: "method not found" (-32601) |
 
 Rules of the methods:
 
@@ -506,8 +514,91 @@ Rules of the methods:
   `networks` (IPv4 and IPv6 reachable, no onion transport, no proxy), `localaddresses`
   (the node states no address of its own), `warnings`, `ismine`.
 
+The methods of the wallet index read the transparent addresses P2PKH and P2SH, as Zakura.
+A TEX address names its P2PKH hash. No method of the index reads the mempool, as in
+Zakura. Only `getrawtransaction` and `gettxout` read it.
+
 `getblocktemplate`: `mintime` is the median-time-past plus 1 s, `maxtime` is the
 median-time-past plus 90 min, and `curtime` is the clock of the node inside these limits.
+
+## Wallet index
+
+`[state] wallet_index = true` keeps an index of the committed chain in
+`cache_dir/wallet-index` (crate `hayai-index`, `docs/architecture.md`). Zakura writes the
+same kind of index for each block in its default `storage_mode = "archive"`, and has no
+setting to turn it off (`zakura-state/src/service/finalized_state.rs:164-228`).
+
+| Column family | Key (bytes) | Value (bytes) | Zakura column family |
+|---|---|---|---|
+| `tx_loc` | txid (32) | height and index in the block (6) | `tx_loc_by_hash` |
+| `tx_id` | height and index (6) | txid (32) | `hash_by_tx_loc` |
+| `addr_tx` | address (21), height and index (6) | none | `tx_loc_by_transparent_addr_loc` |
+| `addr_utxo` | address (21), height (4), txid (32), output index (4) | value (8) | `utxo_loc_by_transparent_addr_loc` and `utxo_by_out_loc` |
+| `addr_balance` | address (21) | balance and total received (16); a merge operator adds | `balance_by_transparent_addr` |
+| `subtree` | pool (1), subtree index (2) | end height (4) and root (32) | `*_note_commitment_subtree` |
+| `undo` | height (4) | the undo record of the block | none |
+| `meta` | `tip` | height and hash of the newest indexed block (36) | none |
+
+Zakura also stores the bytes of each transaction (`tx_by_loc`). The wallet index reads them
+from the block files.
+
+Write path:
+
+- The driver sends each committed block, with the coins that its inputs spent, to the
+  writer thread of the index, in the same step as the append to the block store. The coins
+  come from the validation of the block: the index reads no coin.
+- The queue holds 64 blocks at most (`hayai_index::QUEUE_BLOCKS`). A full queue makes the
+  driver wait.
+- The writer builds the entries of the waiting blocks in parallel and writes them in one
+  RocksDB write batch, in block order, with the undo record of each block and the tip.
+  The balances are merge operands, so no write reads a value first.
+- A reorg queues an undo of each disconnected block, in the order of the disconnection.
+
+Consistency rule:
+
+1. The durable index holds the base block before the coins store names the base. A sync
+   of the index is a message in the queue: the writer writes each block and each undo
+   that the driver sent before it, then syncs the write-ahead log. The log keeps the
+   order of the writes, so a crash leaves the index of the request time or of a later
+   time.
+2. Each coins flush starts with a persist (`IndexWriter::persist`). The persist takes the
+   sync that the flush before started, at the tip of that time. That sync holds the base
+   block when two conditions are true:
+   - The synced tip is at or above the base. With a flush interval
+     (`flush_interval_blocks`, 100 by default) below the finality depth (1,000 blocks),
+     the old tip is above the new base.
+   - No undo after the request went to or below the base. A reorg in that time undoes
+     blocks above its fork point only.
+   Then the persist waits for that sync, which usually ended during the blocks between
+   the two flushes. Else, and at the first flush after a start, it requests a new sync
+   and waits for it. The persist then
+   requests the next sync, which runs in the background during the writes of the flush
+   (the state record, the header log, the block files and the coins) and during the next
+   blocks.
+3. After the coins flush, no reorg and no restart goes below the base. So each later state
+   of the index also holds the base block.
+4. At a start the index undoes each of its blocks above the base, from the undo records.
+   Its tip must then be the base block. Else the node stops: the index belongs to another
+   chain state, or the node ran without the index.
+5. The replay of the start indexes each block that it pushes. After the start the index
+   holds exactly the committed chain, after a clean stop and after a crash.
+6. Each sync first removes the undo records at or below the durable base of the coins
+   store at the request: no restart and no reorg goes below that base.
+
+Disk cost for each element of the chain, before the compression and the overhead of
+RocksDB: 76 bytes for each transaction (`tx_loc` and `tx_id`), 69 bytes for each unspent
+output to a P2PKH or a P2SH address (`addr_utxo`), 27 bytes for each pair of an address and
+a transaction (`addr_tx`), 37 bytes for each address (`addr_balance`), and 35 or 71 bytes in
+the undo record for each address output and each address spend of the blocks above the
+base. The results of the Testnet sync are in
+`target/testnet-sync/results-zakura-vs-hayai.md`.
+
+The metrics `hayai_wallet_index_blocks`, `_batch_bytes`, `_build_seconds`, `_write_seconds`,
+`_queue_wait_seconds` and `_persist_wait_seconds` give the totals of the writer since the
+start. A clean stop writes them to the log (`wallet index writer closed`), with
+`sync_ms`, the time of the syncs in the writer thread, and `persist_stalls`, the number of
+persists that waited for a new sync. `persist_wait_ms` is the time that the driver waited
+for the persists.
 
 ## Regtest
 

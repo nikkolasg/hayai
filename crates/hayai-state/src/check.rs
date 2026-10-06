@@ -364,7 +364,7 @@ pub fn contextual_check(
     let height = check_parent(view, &block.raw)?;
     let created = block_outputs(&block.raw, height);
     let inputs = resolve_inputs(view, &block.raw, &created)?;
-    contextual_check_with_outputs(view, block, created, &inputs, cfg)
+    contextual_check_with_outputs(view, block, created, inputs, cfg)
 }
 
 /// The coinbase rules that need only the coinbase and the height: placement, the height
@@ -934,12 +934,12 @@ fn check_history(
 /// [`contextual_check`] for a caller that already built [`block_outputs`] of `block` at the
 /// height it will have and resolved its inputs with [`resolve_inputs`] (the validator needs
 /// both before this check, to prepare the unknown transactions); the map becomes the
-/// layer's `created`.
+/// layer's `created`, and `inputs` becomes its `spent_coins`.
 pub fn contextual_check_with_outputs(
     view: &ChainView,
     block: &PreparedBlock,
     created: Map<OutPoint, Coin>,
-    inputs: &[Vec<Coin>],
+    inputs: Vec<Vec<Coin>>,
     cfg: &CheckConfig<'_>,
 ) -> Result<Checked, ContextError> {
     let started = Instant::now();
@@ -973,7 +973,7 @@ pub fn contextual_check_with_outputs(
         0,
         &created,
         &positions,
-        inputs,
+        &inputs,
         height,
         Some(block_time),
         cfg,
@@ -1014,6 +1014,7 @@ pub fn contextual_check_with_outputs(
         wtxids: txs.iter().map(|t| t.wtxid()).collect(),
         created,
         spent,
+        spent_coins: inputs,
         nullifiers,
         orchard_frontier,
         sapling_frontier,
@@ -1076,6 +1077,8 @@ pub struct PrebuiltBody {
     positions: Map<TxId, usize>,
     created: Map<OutPoint, Coin>,
     spent: Set<OutPoint>,
+    /// The coins of the inputs of the transactions after the coinbase.
+    spent_coins: Vec<Vec<Coin>>,
     nullifiers: [Set<[u8; 32]>; 4],
     totals: Totals,
     time_lock: Option<(u32, usize)>,
@@ -1154,6 +1157,7 @@ pub fn prebuild_body(
         positions,
         created,
         spent,
+        spent_coins: inputs,
         nullifiers,
         totals,
         time_lock,
@@ -1264,6 +1268,9 @@ impl PrebuiltBody {
         let mut wtxids = Vec::with_capacity(self.wtxids.len() + 1);
         wtxids.push(first.wtxid());
         wtxids.extend(self.wtxids);
+        let mut spent_coins = Vec::with_capacity(self.spent_coins.len() + 1);
+        spent_coins.push(Vec::new());
+        spent_coins.extend(self.spent_coins);
         Ok(Checked {
             layer: Layer {
                 height,
@@ -1274,6 +1281,7 @@ impl PrebuiltBody {
                 wtxids,
                 created,
                 spent: self.spent,
+                spent_coins,
                 nullifiers: self.nullifiers,
                 orchard_frontier: self.orchard_frontier,
                 sapling_frontier: self.sapling_frontier,

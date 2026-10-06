@@ -343,6 +343,12 @@ pub struct StateSection {
     /// also writes a snapshot.
     #[serde(default = "default_snapshot_interval")]
     pub snapshot_interval_blocks: u32,
+    /// Full mode: keep the wallet index (`hayai-index`) in `cache_dir/wallet-index`: the
+    /// transactions by id, the transparent addresses and the note commitment subtrees, for
+    /// `getrawtransaction`, `getaddress*` and `z_getsubtreesbyindex`. Off by default. The
+    /// index starts at the genesis block: a node turns it on with an empty `cache_dir`.
+    #[serde(default)]
+    pub wallet_index: bool,
 }
 
 impl Default for StateSection {
@@ -352,6 +358,7 @@ impl Default for StateSection {
             backend: default_backend(),
             flush_interval_blocks: default_flush_interval(),
             snapshot_interval_blocks: default_snapshot_interval(),
+            wallet_index: false,
         }
     }
 }
@@ -880,6 +887,9 @@ impl Config {
                  for the coinbase of its templates",
             );
         }
+        if let (Mode::Shadow, true) = (self.network.mode, self.state.wallet_index) {
+            return invalid("the wallet index is a setting of a full node");
+        }
         if self.state.flush_interval_blocks == 0 {
             return invalid("flush_interval_blocks must be at least 1");
         }
@@ -1018,6 +1028,10 @@ pub fn default_toml(network: NetworkKind) -> String {
          flush_interval_blocks = 100\n\
          # Memory backend: blocks between two snapshots. A clean shutdown writes one too.\n\
          snapshot_interval_blocks = 10000\n\
+         # Full mode: the wallet index (transactions by id, transparent addresses, note\n\
+         # commitment subtrees) for getrawtransaction, getaddress* and z_getsubtreesbyindex.\n\
+         # Turn it on with an empty cache_dir: the index starts at the genesis block.\n\
+         wallet_index = false\n\
          \n\
          [rpc]\n\
          {rpc}\n\
