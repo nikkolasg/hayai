@@ -6,6 +6,61 @@ the hayai code that enforces it, and the test that checks it. The Code column li
 the check. When hayai does not implement a rule, the Code column gives the reason why the node is
 correct without it, or the open issue.
 
+✅ implemented · ⚠️ partly implemented · ❌ not implemented yet
+
+| ZIP | Status | Note |
+|---|:---:|---|
+| [ZIP 143: Transaction Signature Validation for Overwinter](#zip-143-transaction-signature-validation-for-overwinter) | ✅ |  |
+| [ZIP 155: addrv2 message](#zip-155-addrv2-message) | ✅ |  |
+| [ZIP 200: Network Upgrade Mechanism](#zip-200-network-upgrade-mechanism) | ✅ |  |
+| [ZIP 201: Network Peer Management for Overwinter](#zip-201-network-peer-management-for-overwinter) | ✅ |  |
+| [ZIP 202: Version 3 Transaction Format for Overwinter](#zip-202-version-3-transaction-format-for-overwinter) | ✅ |  |
+| [ZIP 203: Transaction Expiry](#zip-203-transaction-expiry) | ✅ |  |
+| [ZIP 204: Zcash P2P Network Protocol](#zip-204-zcash-p2p-network-protocol) | ✅ |  |
+| [ZIP 205: Deployment of the Sapling Network Upgrade](#zip-205-deployment-of-the-sapling-network-upgrade) | ✅ |  |
+| [ZIP 206: Deployment of the Blossom Network Upgrade](#zip-206-deployment-of-the-blossom-network-upgrade) | ✅ |  |
+| [ZIP 207: Funding Streams](#zip-207-funding-streams) | ✅ |  |
+| [ZIP 208: Shorter Block Target Spacing](#zip-208-shorter-block-target-spacing) | ✅ |  |
+| [ZIP 209: Prohibit Out-of-Range Chain Value Pool Balances](#zip-209-prohibit-out-of-range-chain-value-pool-balances) | ✅ |  |
+| [ZIP 211: Disabling Addition of New Value to the Sprout Chain Value Pool](#zip-211-disabling-addition-of-new-value-to-the-sprout-chain-value-pool) | ✅ |  |
+| [ZIP 212: Allow Recipient to Derive Ephemeral Secret from Note Plaintext](#zip-212-allow-recipient-to-derive-ephemeral-secret-from-note-plaintext) | ✅ |  |
+| [ZIP 213: Shielded Coinbase](#zip-213-shielded-coinbase) | ✅ |  |
+| [ZIP 214: Consensus rules for a Zcash Development Fund](#zip-214-consensus-rules-for-a-zcash-development-fund) | ✅ |  |
+| [ZIP 215: Explicitly Defining and Modifying Ed25519 Validation Rules](#zip-215-explicitly-defining-and-modifying-ed25519-validation-rules) | ✅ |  |
+| [ZIP 216: Require Canonical Jubjub Point Encodings](#zip-216-require-canonical-jubjub-point-encodings) | ✅ |  |
+| [ZIP 218: 25-second Block Target Spacing](#zip-218-25-second-block-target-spacing) | ✅ |  |
+| [ZIP 221: FlyClient - Consensus-Layer Changes](#zip-221-flyclient---consensus-layer-changes) | ✅ |  |
+| [ZIP 225: Version 5 Transaction Format](#zip-225-version-5-transaction-format) | ✅ |  |
+| [ZIP 229: Version 6 Transaction Format](#zip-229-version-6-transaction-format) | ✅ |  |
+| [ZIP 235: Remove 60% of Transaction Fees From Circulation](#zip-235-remove-60-of-transaction-fees-from-circulation) | ✅ |  |
+| [ZIP 236: Blocks should balance exactly](#zip-236-blocks-should-balance-exactly) | ✅ |  |
+| [ZIP 237: Network Sustainability Mechanism: Halving-Preserving Issuance](#zip-237-network-sustainability-mechanism-halving-preserving-issuance) | ✅ |  |
+| [ZIP 239: Relay of Version 5 Transactions](#zip-239-relay-of-version-5-transactions) | ✅ |  |
+| [ZIP 243: Transaction Signature Validation for Sapling](#zip-243-transaction-signature-validation-for-sapling) | ✅ |  |
+| [ZIP 244: Transaction Identifier Non-Malleability](#zip-244-transaction-identifier-non-malleability) | ✅ |  |
+| [ZIP 250: Deployment of the Heartwood Network Upgrade](#zip-250-deployment-of-the-heartwood-network-upgrade) | ✅ |  |
+| [ZIP 251: Deployment of the Canopy Network Upgrade](#zip-251-deployment-of-the-canopy-network-upgrade) | ✅ |  |
+| [ZIP 252: Deployment of the NU5 Network Upgrade](#zip-252-deployment-of-the-nu5-network-upgrade) | ✅ |  |
+| [ZIP 253: Deployment of the NU6 Network Upgrade](#zip-253-deployment-of-the-nu6-network-upgrade) | ✅ |  |
+| [ZIP 255: Deployment of the NU6.1 Network Upgrade](#zip-255-deployment-of-the-nu61-network-upgrade) | ✅ |  |
+| [ZIP 256: Deployment of Consensus Bug Fixes Between NU6.1 and NU6.2](#zip-256-deployment-of-consensus-bug-fixes-between-nu61-and-nu62) | ✅ |  |
+| [ZIP 257: Deployment of the Orchard Temporary Vulnerability Mitigation and NU6.2 Network Upgrade](#zip-257-deployment-of-the-orchard-temporary-vulnerability-mitigation-and-nu62-network-upgrade) | ✅ |  |
+| [ZIP 258: Deployment of the NU6.3 Network Upgrade](#zip-258-deployment-of-the-nu63-network-upgrade) | ✅ |  |
+| [ZIP 259: Deployment of the NU7 Network Upgrade](#zip-259-deployment-of-the-nu7-network-upgrade) | ✅ |  |
+| [ZIP 271: Dev Fund Extension and One-Time Disbursement](#zip-271-dev-fund-extension-and-one-time-disbursement) | ✅ |  |
+| [ZIP 317: Proportional Transfer Fee Mechanism](#zip-317-proportional-transfer-fee-mechanism) | ✅ |  |
+| [ZIP 401: Addressing Mempool Denial-of-Service](#zip-401-addressing-mempool-denial-of-service) | ⚠️ | 1 rule open: the memory time of evicted transactions (issue hayai-6iw) |
+| [ZIP 1014: Establishing a Dev Fund for ECC, ZF, and Major Grants](#zip-1014-establishing-a-dev-fund-for-ecc-zf-and-major-grants) | ✅ | The consensus part; the other rules govern the funds, not nodes |
+| [ZIP 1015: Block Subsidy Allocation for Non-Direct Development Funding](#zip-1015-block-subsidy-allocation-for-non-direct-development-funding) | ✅ | The consensus part; the other rules govern the funds, not nodes |
+| [ZIP 1016: Community and Coinholder Funding Model](#zip-1016-community-and-coinholder-funding-model) | ✅ | The consensus part; the other rules govern the funds, not nodes |
+| [ZIP 2001: Lockbox Funding Streams](#zip-2001-lockbox-funding-streams) | ✅ |  |
+| [ZIP 2003: Disallow version 4 transactions](#zip-2003-disallow-version-4-transactions) | ✅ |  |
+| [ZIP 2005: Ironwood Quantum Recoverability](#zip-2005-ironwood-quantum-recoverability) | ✅ |  |
+| [ZIP 2008: Update to `FS_FPF_ZCG_H3` address list](#zip-2008-update-to-fsfpfzcgh3-address-list) | ❌ | Not yet: Mainnet has no NU7 height |
+| [Protocol specification](https://zips.z.cash/protocol/protocol.pdf), consensus rules of §3 to §7 | ✅ | |
+
+The ZIPs that do not apply to a node, such as wallet and process ZIPs, are listed at the end. Each section below gives the rules of one ZIP, with a link to the line of code that enforces each rule.
+
 - ZIPs: [ZIP 143](#zip-143-transaction-signature-validation-for-overwinter), [ZIP 155](#zip-155-addrv2-message), [ZIP 200](#zip-200-network-upgrade-mechanism), [ZIP 201](#zip-201-network-peer-management-for-overwinter), [ZIP 202](#zip-202-version-3-transaction-format-for-overwinter), [ZIP 203](#zip-203-transaction-expiry), [ZIP 204](#zip-204-zcash-p2p-network-protocol), [ZIP 205](#zip-205-deployment-of-the-sapling-network-upgrade), [ZIP 206](#zip-206-deployment-of-the-blossom-network-upgrade), [ZIP 207](#zip-207-funding-streams), [ZIP 208](#zip-208-shorter-block-target-spacing), [ZIP 209](#zip-209-prohibit-out-of-range-chain-value-pool-balances), [ZIP 211](#zip-211-disabling-addition-of-new-value-to-the-sprout-chain-value-pool), [ZIP 212](#zip-212-allow-recipient-to-derive-ephemeral-secret-from-note-plaintext), [ZIP 213](#zip-213-shielded-coinbase), [ZIP 214](#zip-214-consensus-rules-for-a-zcash-development-fund), [ZIP 215](#zip-215-explicitly-defining-and-modifying-ed25519-validation-rules), [ZIP 216](#zip-216-require-canonical-jubjub-point-encodings), [ZIP 218](#zip-218-25-second-block-target-spacing), [ZIP 221](#zip-221-flyclient---consensus-layer-changes), [ZIP 225](#zip-225-version-5-transaction-format), [ZIP 229](#zip-229-version-6-transaction-format), [ZIP 235](#zip-235-remove-60-of-transaction-fees-from-circulation), [ZIP 236](#zip-236-blocks-should-balance-exactly), [ZIP 237](#zip-237-network-sustainability-mechanism-halving-preserving-issuance), [ZIP 239](#zip-239-relay-of-version-5-transactions), [ZIP 243](#zip-243-transaction-signature-validation-for-sapling), [ZIP 244](#zip-244-transaction-identifier-non-malleability), [ZIP 250](#zip-250-deployment-of-the-heartwood-network-upgrade), [ZIP 251](#zip-251-deployment-of-the-canopy-network-upgrade), [ZIP 252](#zip-252-deployment-of-the-nu5-network-upgrade), [ZIP 253](#zip-253-deployment-of-the-nu6-network-upgrade), [ZIP 255](#zip-255-deployment-of-the-nu61-network-upgrade), [ZIP 256](#zip-256-deployment-of-consensus-bug-fixes-between-nu61-and-nu62), [ZIP 257](#zip-257-deployment-of-the-orchard-temporary-vulnerability-mitigation-and-nu62-network-upgrade), [ZIP 258](#zip-258-deployment-of-the-nu63-network-upgrade), [ZIP 259](#zip-259-deployment-of-the-nu7-network-upgrade), [ZIP 271](#zip-271-dev-fund-extension-and-one-time-disbursement), [ZIP 317](#zip-317-proportional-transfer-fee-mechanism), [ZIP 401](#zip-401-addressing-mempool-denial-of-service), [ZIP 1014](#zip-1014-establishing-a-dev-fund-for-ecc-zf-and-major-grants), [ZIP 1015](#zip-1015-block-subsidy-allocation-for-non-direct-development-funding), [ZIP 1016](#zip-1016-community-and-coinholder-funding-model), [ZIP 2001](#zip-2001-lockbox-funding-streams), [ZIP 2003](#zip-2003-disallow-version-4-transactions), [ZIP 2005](#zip-2005-ironwood-quantum-recoverability), [ZIP 2008](#zip-2008-update-to-fs_fpf_zcg_h3-address-list).
 - Protocol specification: [§3.4](#protocol-specification-34-transactions-and-treestates), [§3.5](#protocol-specification-35-joinsplit-transfers-and-descriptions), [§3.6](#protocol-specification-36-spend-transfers-output-transfers-and-their-descriptions), [§3.7](#protocol-specification-37-action-transfers-and-their-descriptions), [§3.8](#protocol-specification-38-note-commitment-trees), [§3.9](#protocol-specification-39-nullifier-sets), [§3.11](#protocol-specification-311-coinbase-transactions), [§4.3](#protocol-specification-43-joinsplit-descriptions), [§4.4](#protocol-specification-44-spend-descriptions), [§4.5](#protocol-specification-45-output-descriptions), [§4.6](#protocol-specification-46-action-descriptions), [§4.10](#protocol-specification-410-sighash-transaction-hashing), [§4.17](#protocol-specification-417-chain-value-pool-balances), [§7.1](#protocol-specification-71-transaction-encoding-and-consensus), [§7.1.1](#protocol-specification-711-transaction-identifiers), [§7.1.2](#protocol-specification-712-transaction-consensus-rules), [§7.3](#protocol-specification-73-spend-description-encoding-and-consensus), [§7.4](#protocol-specification-74-output-description-encoding-and-consensus), [§7.5](#protocol-specification-75-action-description-encoding-and-consensus), [§7.6](#protocol-specification-76-block-header-encoding-and-consensus), [§7.7](#protocol-specification-77-proof-of-work), [§7.8](#protocol-specification-78-calculating-block-subsidy-funding-streams-lockbox-disbursement-and-founders-reward), [§7.9](#protocol-specification-79-payment-of-founders-reward), [§7.10](#protocol-specification-710-payment-of-funding-streams-deferred-lockbox-and-lockbox-disbursement), [§7.10.1](#protocol-specification-7101-zip-214-funding-streams), [§7.11](#protocol-specification-711-changes-to-the-script-system), [§7.12](#protocol-specification-712-bitcoin-improvement-proposals).
 - Other: [Checkpoints](#checkpoints), [Block rules without a ZIP](#block-rules-without-a-zip), [ZIPs that do not apply to a node](#zips-that-do-not-apply-to-a-node), [Open points](#open-points).
