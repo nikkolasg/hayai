@@ -16,9 +16,10 @@ use hayai_crypto::zcash_protocol::consensus::BranchId;
 use hayai_rpc::cookie::{self, COOKIE_FILE};
 use hayai_rpc::http::MAX_HEAD;
 use hayai_rpc::{
-    BlockGenerator, BlockInfo, BlockSubmitSink, ChainTip, Cookie, HttpServer, MetricsServer,
-    NodeQuery, NodeState, PeerRow, Registry, Rpc, RpcConfig, SubmitOutcome, SubmittedBlock,
-    TemplateFeed, TipSource, TipState,
+    AddressUtxo, BlockGenerator, BlockInfo, BlockSubmitSink, ChainTip, Cookie, HttpServer,
+    IndexError, MetricsServer, NodeQuery, NodeState, PeerRow, Registry, Rpc, RpcConfig,
+    SubmitOutcome, SubmittedBlock, SubtreePool, SubtreeRow, TemplateFeed, TipSource, TipState,
+    TransparentAddress, TxOutInfo,
 };
 use hayai_template::messages::{Hash32, HexBytes, Submit};
 use hayai_template::submission::rebuild_block;
@@ -860,6 +861,107 @@ impl NodeQuery for State {
     fn stop(&self) {
         self.calls.lock().unwrap().push("stop".into());
     }
+    fn mempool_transaction(&self, _txid: &[u8; 32]) -> Option<Bytes> {
+        None
+    }
+    /// One coin: output 1 of the txid `[7; 32]`, at height 90, to an OP_TRUE script.
+    fn tx_out(&self, txid: &[u8; 32], index: u32, _include_mempool: bool) -> Option<TxOutInfo> {
+        (*txid == [7; 32] && index == 1).then(|| TxOutInfo {
+            value: 150_000_000,
+            script: Bytes::from_static(&[0x51]),
+            height: Some(90),
+            coinbase: true,
+        })
+    }
+    // The node of this double runs without the wallet index.
+    fn index_tip(&self) -> Result<(u32, BlockHash), IndexError> {
+        Err(IndexError::Off)
+    }
+    fn transaction_location(&self, _txid: &[u8; 32]) -> Result<Option<(u32, u16)>, IndexError> {
+        Err(IndexError::Off)
+    }
+    fn address_balance(&self, _a: &[TransparentAddress]) -> Result<(u64, u64), IndexError> {
+        Err(IndexError::Off)
+    }
+    fn address_txids(
+        &self,
+        _a: &[TransparentAddress],
+        _start: u32,
+        _end: u32,
+    ) -> Result<Vec<[u8; 32]>, IndexError> {
+        Err(IndexError::Off)
+    }
+    fn address_utxos(
+        &self,
+        _a: &[TransparentAddress],
+    ) -> Result<(Vec<AddressUtxo>, (u32, BlockHash)), IndexError> {
+        Err(IndexError::Off)
+    }
+    fn subtrees(
+        &self,
+        _pool: SubtreePool,
+        _start: u16,
+        _limit: Option<u16>,
+    ) -> Result<Vec<SubtreeRow>, IndexError> {
+        Err(IndexError::Off)
+    }
+}
+
+/// Without the wallet index, the methods of the index answer error -1 with the setting that
+/// turns it on. `gettxout` reads the coin set and needs no index.
+#[test]
+fn the_methods_of_the_wallet_index_refuse_without_the_index() {
+    let h = harness();
+    let rpc = Rpc::with_parts(
+        RpcConfig::new(Network::Regtest),
+        h.feed.clone(),
+        h.sink.clone(),
+        Arc::new(Chain),
+        None,
+        Some(Arc::new(State::default())),
+    );
+    let server = HttpServer::serve("127.0.0.1:0", rpc, None).unwrap();
+    let mut c = Client::connect(server.addr());
+    use hayai_crypto::zcash_address::{ToAddress, ZcashAddress};
+    use hayai_crypto::zcash_protocol::consensus::NetworkType;
+    let address = ZcashAddress::from_transparent_p2sh(NetworkType::Test, [1; 20]).encode();
+    let txid = hex::encode([7; 32]);
+    for (method, params) in [
+        ("getrawtransaction", json!([txid])),
+        ("getaddressbalance", json!([address])),
+        ("getaddresstxids", json!([{ "addresses": [address] }])),
+        (
+            "getaddressutxos",
+            json!([{ "addresses": [address], "chainInfo": true }]),
+        ),
+        ("z_getsubtreesbyindex", json!(["sapling", 0])),
+    ] {
+        let v = c.call(method, params);
+        assert_eq!(v["error"]["code"], -1, "{method}: {v}");
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("wallet_index = true"),
+            "{method}: {message}"
+        );
+    }
+    assert_eq!(
+        c.call("getaddressbalance", json!(["not an address"]))["error"]["code"],
+        -5
+    );
+    assert_eq!(
+        c.call("z_getsubtreesbyindex", json!(["sprout", 0]))["error"]["code"],
+        -1
+    );
+    let out = c.call("gettxout", json!([txid, 1]))["result"].clone();
+    assert_eq!(out["bestblock"], BlockHash([0xcc; 32]).to_string());
+    assert_eq!(out["confirmations"], 10);
+    assert_eq!(out["value"], 1.5);
+    assert_eq!(out["coinbase"], true);
+    assert_eq!(
+        out["scriptPubKey"],
+        json!({ "hex": "51", "type": "nonstandard" })
+    );
+    assert_eq!(c.call("gettxout", json!([txid, 0]))["result"], Value::Null);
 }
 
 /// The methods of the module `info`.

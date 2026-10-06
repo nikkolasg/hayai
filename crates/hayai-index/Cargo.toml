@@ -1,0 +1,39 @@
+[package]
+name = "hayai-index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The wallet index of hayaid: transactions by id, transparent addresses and note commitment subtrees"
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-wire/upstream",
+    "hayai-coins/upstream",
+    "hayai-trees/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-wire/zakura",
+    "hayai-coins/zakura",
+    "hayai-trees/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-coins.workspace = true
+hayai-trees.workspace = true
+rocksdb.workspace = true
+rayon.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+hex.workspace = true
+tempfile.workspace = true

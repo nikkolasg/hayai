@@ -81,6 +81,7 @@ hayai-validate    bulk block validation pipeline producing a layer
 hayai-relay       compact block relay protocol (docs/protocol-compact-relay.md)
 hayai-template    live block template (docs/protocol-template-push.md)
 hayai-blockstore  flat append-only block files with a height index
+hayai-index       wallet index: transactions by id, transparent addresses, note commitment subtrees
 hayai-sync        header chain with forks, block download scheduler, peer misbehaviour score
 hayai-net         legacy Zcash P2P codec and handshake, compact-relay negotiation, both-paths relay, address book, peer manager
 hayai-rpc         getblocktemplate/submitblock shim over the live template
@@ -594,6 +595,28 @@ header length in the byte budget and the solution length of a submission.
   index `height → (file, offset, len)` and `hash → height` in RocksDB.
 - To serve a block, the store reads the wire bytes from the file. There is no parse.
 
+## hayai-index
+
+The wallet index of hayaid (`[state] wallet_index`, off by default): one RocksDB database
+with the transactions by id and by location, the transparent addresses (transactions,
+unspent outputs, balance) and the completed note commitment subtrees. `docs/hayaid.md`,
+Wallet index, has the column families and the consistency rule.
+
+- Input: each committed block with the coins of its inputs (`Layer::spent_coins`, which the
+  validation fills from its one coin read) and the frontiers before the block. The index
+  reads no coin and no value before a write: the balances are RocksDB merge operands.
+- `IndexWriter`: one thread, a bounded queue (64 blocks), the entries of the waiting blocks
+  built in parallel on the rayon pool, one write batch for them. The buffers of the build
+  stay for the next batch.
+- Each block has an undo record (the address outputs and spends, the subtrees). A reorg and
+  a start undo blocks from these records. They do not read the block files.
+- Subtrees: a block whose leaves cross a multiple of 2^16 appends its leaves up to the last
+  leaf of the subtree to a copy of the frontier before it, and takes the root of level 16.
+  Only such a block does this work, also in the checkpoint range.
+- Keys have a fixed size. A location is the height (big-endian) and the index, so the keys
+  of one address sort in chain order. `addr_tx` and `addr_utxo` have a prefix extractor on
+  the 21-byte address. `tx_loc` has a Bloom filter.
+
 ## hayai-sync
 
 State machines for synchronization. The crate has no sockets and no threads of its own.
@@ -882,6 +905,9 @@ See `docs/protocol-template-push.md`, section getblocktemplate compatibility. `T
 receives every `TemplateUpdate`. `Rpc` answers `getblocktemplate`, `submitblock`,
 `getblockcount` and `getbestblockhash` over JSON-RPC 1.0/2.0. `HttpServer` is a thread-per-
 connection HTTP/1.1 front end. The node supplies `BlockSubmitSink` and `TipSource`.
+`index` has the methods of the wallet index (`getrawtransaction`, `gettxout`,
+`getaddress*`, `z_getsubtreesbyindex`) over `NodeQuery`. `IndexError::Off` is the answer
+of a node without the index.
 
 ## hayai-bench
 

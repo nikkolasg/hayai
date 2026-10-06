@@ -155,6 +155,7 @@ pub fn checkpoint_layer(
         wtxids: raw.txs.iter().map(|t| t.wtxid()).collect(),
         created,
         spent,
+        spent_coins: inputs,
         nullifiers,
         orchard_frontier,
         sapling_frontier,

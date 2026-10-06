@@ -1349,3 +1349,26 @@ Design decisions and lessons, behaviour level. Bug fixes are not recorded here.
   recent rows. Two programs with one function cannot drift apart.
 - A textfile with its own label `node` needs `honor_labels` on the node-exporter job, or
   Prometheus renames the label to `exported_node`.
+
+## 2026-10-06 — Wallet index (hayai-1bd)
+
+- Optional, one key (`[state] wallet_index`), off by default. Zakura has no such key: its
+  archive mode always writes the indexes. The index needs the chain from the genesis block,
+  so a node turns it on with an empty `cache_dir`.
+- The block is its own access list: the validation keeps the coins of the inputs in the
+  layer (`Layer::spent_coins`), and the driver takes them out before the push. The index
+  reads no coin, and the balances are merge operands, so no write reads first.
+- A writer thread with a bounded queue keeps the work off the driver. The waiting blocks go
+  in one write batch. Each block has an undo record, so a reorg and a start undo without
+  the block files.
+- Consistency: the durable index holds the base block before the coins store names it; a
+  start undoes the index to the base, and the replay indexes the blocks again.
+- The first version drained the queue and synced the index log before each coins flush,
+  and the driver waited: 144 s of a 24 min Testnet sync, almost all of it the sync (one
+  block for each write batch, 15 µs for each write). The sync now runs in the background
+  from one flush to the next: a sync holds the next base when its tip is at or above the
+  base and no undo after its request went to or below the base. The finality depth above
+  the flush interval makes that the usual case. Rule: an order of two writes needs only
+  the end of the first write before the start of the second, not a wait in the driver.
+- Open: the write-ahead log is on. The variant without the log (an atomic memtable flush of
+  all column families at each persist) is not measured yet.

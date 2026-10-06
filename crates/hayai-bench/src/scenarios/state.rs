@@ -92,6 +92,7 @@ pub fn layer(entries: &BlockEntries, parent: &Chain) -> Layer {
         wtxids: Vec::new(),
         created,
         spent,
+        spent_coins: Vec::new(),
         nullifiers,
         orchard_frontier: frontiers.orchard,
         sapling_frontier: frontiers.sapling,

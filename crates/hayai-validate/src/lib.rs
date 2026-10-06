@@ -274,7 +274,7 @@ pub fn validate_block(
     } = draft_block(raw, store, view, cfg)?;
     let (verified, checked) = rayon::join(
         || verify(verification),
-        || check(view, &block, created, &inputs, cfg),
+        || check(view, &block, created, inputs, cfg),
     );
     let verified = verified?;
     let checked = checked?;
@@ -396,7 +396,7 @@ pub fn build_layer<'k>(
         mut timings,
         started,
     } = draft_block(raw, store, view, cfg)?;
-    let checked = check(view, &block, created, &inputs, cfg)?;
+    let checked = check(view, &block, created, inputs, cfg)?;
     record_context(&mut timings, &checked);
     timings.total = started.elapsed();
     Ok((checked.layer, verification, timings))
@@ -538,7 +538,7 @@ fn check(
     view: &ChainView,
     block: &PreparedBlock,
     created: Map<OutPoint, Coin>,
-    inputs: &[Vec<Coin>],
+    inputs: Vec<Vec<Coin>>,
     cfg: &ValidateConfig,
 ) -> Result<Checked, BlockError> {
     let check_cfg = cfg.check_config();
