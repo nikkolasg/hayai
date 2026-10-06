@@ -2,8 +2,11 @@
 # Rendered by main.tf for machine A (role zakurad) and machine B (role hayaid). First
 # boot: install Docker, then race-bootstrap.service mounts the data volume on
 # /var/lib/docker, clones the sources, builds the image of the role and starts
-# node-exporter. race-start.service starts the node and its RPC caller
-# (scripts/race_rpc_caller.py) at the start time, with docker/race/compose.node.yml.
+# node-exporter. race-start.service starts the node, its sidecar
+# (scripts/race_sidecar.py) and its RPC caller (scripts/race_rpc_caller.py) at the start
+# time, with docker/race/compose.node.yml. Both node machines get the same TCP setting:
+# zakurad warns at its start that tcp_slow_start_after_idle = 1 lowers the throughput
+# for each peer.
 
 package_update: true
 packages:
@@ -14,6 +17,11 @@ packages:
   - chrony
 
 write_files:
+  - path: /etc/sysctl.d/90-race.conf
+    permissions: "0644"
+    content: |
+      net.ipv4.tcp_slow_start_after_idle = 0
+
   - path: /usr/local/sbin/race-bootstrap
     permissions: "0755"
     content: |
@@ -69,10 +77,9 @@ write_files:
         'RACE_CALLER_INTERVAL=${rpc_caller_interval}' \
         'RACE_CALLER_LONGPOLL=${rpc_caller_long_poll ? 1 : 0}' >.env
       docker compose -f compose.node.yml up -d node-exporter
-      # The image of the RPC caller is on the machine before the start time.
-      if [ '${rpc_caller}' = true ]; then
-        docker compose -f compose.node.yml --profile '${role}' pull -q '${role}-caller'
-      fi
+      # The image of the sidecar and of the RPC caller (one image) is on the machine
+      # before the start time.
+      docker compose -f compose.node.yml --profile '${role}' pull -q '${role}-sidecar'
       touch /var/lib/race-bootstrap.done
 
   - path: /usr/local/sbin/race-start
@@ -97,9 +104,9 @@ write_files:
         echo "image_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' '${image}')"
       } >/var/log/race-start.log
       if [ '${rpc_caller}' = true ]; then
-        docker compose -f compose.node.yml --profile '${role}' up -d '${role}' '${role}-caller'
+        docker compose -f compose.node.yml --profile '${role}' up -d '${role}' '${role}-sidecar' '${role}-caller'
       else
-        docker compose -f compose.node.yml --profile '${role}' up -d '${role}'
+        docker compose -f compose.node.yml --profile '${role}' up -d '${role}' '${role}-sidecar'
       fi
       touch /var/lib/race-start.done
 
@@ -132,6 +139,7 @@ write_files:
       TimeoutStartSec=infinity
 
 runcmd:
+  - [sysctl, -p, /etc/sysctl.d/90-race.conf]
   - [systemctl, daemon-reload]
   - [systemctl, start, --no-block, race-bootstrap.service]
   - [systemctl, start, --no-block, race-start.service]

@@ -8,19 +8,22 @@ Zcash crates). Testnet: the zakura crypto backend (NU7 rules).
 
 One `zakurad` and one `hayaid` run on two equal machines. A third machine records both.
 The nodes only observe the network: no miner uses them, and they hold no funds. An RPC
-caller on each node machine calls `getblocktemplate` of its node.
+caller on each node machine calls `getblocktemplate` of its node, with the long poll of a
+pool. A sidecar on each node machine writes the compared quantities of its node to a
+textfile of node-exporter, with the same method on both machines.
 
 ```
  machine A                 machine B                 machine C (small)
  zakurad       :8233 P2P   hayaid        :8233 P2P   Prometheus (loopback)
  RPC caller (loopback)     RPC caller (loopback)     Grafana :3000
+ sidecar ──> textfile      sidecar ──> textfile
  node-exporter             node-exporter
    :9999 :9100  <──────────  :19101 :9100  <──────── scrape each 5 s
 ```
 
 Files: `docker/race/` (compose files, node configurations, Prometheus rules, dashboards),
 `deploy/terraform/aws-race/`, `scripts/race_deploy.sh`, `scripts/race_rpc_caller.py`,
-`scripts/race_blocks.py`.
+`scripts/race_sidecar.py`, `scripts/race_blocks.py`.
 `docs/zakura-measurements.md` has the definition of each metric of both nodes.
 
 The network is one variable: `network` in Terraform, `RACE_NETWORK` for the script and
@@ -39,8 +42,10 @@ the compose files. The default is `mainnet`. The other value is `testnet`.
 
 ## Compared quantities
 
-Verdict CLOSE: both nodes measure the same work with the stated difference. No quantity
-has the verdict SAME. The comparison dashboard and `blocks.csv` have no other pair.
+Verdict SAME: one method and one definition on both machines. Verdict CLOSE: both nodes
+measure the same work with the stated difference. The comparison dashboard and
+`blocks.csv` have no other pair. Each quantity of the sidecar has its definition on both
+nodes and its verdict in the help text of its metric (section Sidecar).
 
 | Quantity | zakurad | hayaid | Verdict and difference | Place |
 |---|---|---|---|---|
@@ -52,12 +57,16 @@ has the verdict SAME. The comparison dashboard and `blocks.csv` have no other pa
 | P2P bytes | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total`: header and body of each message at the codec | Same names: bytes that a reader took from its socket, and bytes of each frame written in full | CLOSE | Dashboard |
 | Download queue | `sync_downloads_in_flight`: tasks in download or in verification | Same name: requests without an answer plus downloaded blocks that wait for the validator | CLOSE | Dashboard |
 | Contextual commit time, for each block | `state_contextual_total_duration_seconds`: initial contextual checks, then the commit to the non-finalized state (transparent spends, anchors, note commitment trees, chain push, with a clone of the chain) | `hayai_contextual_commit_duration_seconds`: stages `context`, `trees`, `history`, then the push of the layer on the chain | CLOSE. The split of the checks between this interval and the earlier validation is not the same on both nodes | Dashboard, `blocks.csv` |
-| Block received to committed, for each block | No metric. Start: trace row `block_request_finish` (the peer service returns the decoded block). Stop: log line `downloaded and verified gossiped block` (after the commit to the state in memory) | Trace field `commit_finish.received_to_commit_us`. Start: arrival of the `block` message, before the parse. Stop: the block is the tip, after the write to the block file and the update of the prepared store | CLOSE. hayaid has the parse and the block file write inside the interval; zakurad does not. The Zakura value has the error of a clock calibration, which `blocks.md` states | `blocks.csv`. The dashboard has hayaid only |
+| Block received to committed, for each block | `race_last_block_received_to_committed_seconds` of the sidecar. Start: trace row `block_request_finish` (the peer service returns the decoded block). Stop: log line `downloaded and verified gossiped block` (after the commit to the state in memory). A gossiped block only | Same name. Trace field `commit_finish.received_to_commit_us`. Start: arrival of the `block` message, before the parse. Stop: the block is the tip, after the write to the block file and the update of the prepared store | CLOSE. hayaid has the parse and the block file write inside the interval; zakurad does not. The Zakura value has the error of a clock calibration: `race_last_block_clock_error_seconds`, and in `blocks.md` | Dashboard, `blocks.csv` |
 | Reuse of the mempool verification | `zakura_consensus_cache_hit` / (hit + miss): shielded bundles, block and mempool lookups | `hayai_prepared_store_hits_total` / (hits + misses): transactions of blocks | CLOSE. Unit: bundle against transaction. zakurad reuses no script result | Dashboard |
 | Mempool size | `zcash_mempool_size_transactions` | Same name: the prepared store | CLOSE | Dashboard |
-| RPC mean service time | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. Data only when a client calls a method: the RPC caller calls `getblocktemplate` each 5 s. `getblocktemplate` without `longpollid`: zakurad builds the template in the call; hayaid returns the template that it built at the tip change. With the long poll of the RPC caller the mean contains the wait of the long poll on both nodes: use the mean of `blocks.md` then | Dashboard, `blocks.md` |
-| Template served after a block, for each block | No metric. Start: log line `downloaded and verified gossiped block`. Stop: the first `getblocktemplate` answer of the RPC caller with the block as `previousblockhash` | No metric. Start: `unix_us` of the trace row `commit_finish`. Stop: the same answer of its RPC caller | CLOSE. Same client and same stop on both machines. zakurad writes the log line after the commit, so its start is later, and a value can be below 0. Only a gossiped block has a value of zakurad. Without the long poll each value is late by 0 s to 5 s | `blocks.csv` |
-| CPU, memory, disk, disk I/O, network | node-exporter of machine A | node-exporter of machine B | Same method. The values are of the machine, which runs one node | Dashboard |
+| `getblocktemplate` time on the client side | `race_rpc_getblocktemplate_seconds` of the sidecar: each call without `longpollid` of the RPC caller (each 5 s, and at once after each long-poll answer), request sent to answer read | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The node metric `rpc_request_duration_seconds` has the wait of each long poll on both nodes, so no panel reads it for `getblocktemplate` | Dashboard, `blocks.md` |
+| RPC mean service time, other methods | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. Data only when a client calls a method. zakurad parses the parameters inside the interval | Dashboard |
+| Template served after a block, for each block | `race_last_block_template_served_seconds` of the sidecar. Start: log line `downloaded and verified gossiped block`. Stop: the first `getblocktemplate` answer of the RPC caller with the block as `previousblockhash` (the long poll) | Same name. Start: `unix_us` of the trace row `commit_finish`. Stop: the same answer of its RPC caller | CLOSE. Same client and same stop on both machines. zakurad writes the log line after the commit, so its start is later, and a value can be below 0. Only a gossiped block has a value of zakurad | Dashboard, `blocks.csv` |
+| Template transactions after a block, for each block | `race_last_block_template_transactions` of the sidecar: the first answer without `longpollid` at or after the first answer on the block | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The mempools differ: each node has other peers | Dashboard, `blocks.csv` |
+| CPU, memory and peak memory, disk I/O of the node | `race_node_*` of the sidecar: `cpu.stat`, `memory.current`, `memory.peak`, `io.stat` of the cgroup of the node container | Same | SAME. The memory includes the page cache of the container | Dashboard |
+| Data directory | `race_node_data_bytes` of the sidecar: disk blocks of the data volume (du), each 60 s | Same | CLOSE. Both have the trace tables. The zakurad directory has its log file; hayaid writes its log to Docker | Dashboard |
+| CPU, memory, disk, disk I/O, network of the machine | node-exporter of machine A | node-exporter of machine B | SAME. The values are of the machine: one node and the containers of the race | Dashboard |
 
 Not compared, because zakurad has no such measurement (hayai dashboard only):
 
@@ -67,7 +76,6 @@ Not compared, because zakurad has no such measurement (hayai dashboard only):
   template only when a `getblocktemplate` request arrives.
 - Script check time and the other validation stages.
 - Header height: zakurad with the legacy stack has no header chain.
-- CPU and memory of the process: zakurad exports no `process_*` metric.
 
 Not compared, because hayaid has no such measurement (Zakura dashboard only): wait in the
 queue of the block writer, heights of the checkpoint verifier, RocksDB metrics.
@@ -127,7 +135,10 @@ terraform output grafana_password_command
   commit above as its default; `hayai_ref` must be a full commit hash). The network
   selects the crypto backend of the hayaid image.
 - `rpc_caller = false` starts no RPC caller. `rpc_caller_interval` (default 5) and
-  `rpc_caller_long_poll` (default `false`) are its two settings.
+  `rpc_caller_long_poll` (default `true`) are its two settings. The sidecar runs in both
+  cases.
+- The cloud-init of A and B sets `net.ipv4.tcp_slow_start_after_idle = 0`
+  (`/etc/sysctl.d/90-race.conf`), the same on both machines (section System setting).
 - `start_at` is the UTC minute of the start. Each node machine waits for it on its own
   clock (chrony). Set it 90 minutes or more after the apply (estimate of the build time).
 - After `start_at`, run the value of `terraform output start_log_command` on A and on B.
@@ -160,9 +171,15 @@ scripts/race_deploy.sh stop    user@a.example user@b.example user@c.example
 - `build` makes `zakurad:race` and `hayaid:race` on this machine. `start` copies each image
   to its host. `start` stops when the hayaid image has the crypto backend of the other
   network.
-- `start` starts an RPC caller with each node, and `stop` stops both. Each node host
-  pulls `python:3.13.7-alpine3.22` from the public registry. `RACE_CALLER=0` for `start`:
-  no RPC caller. `RACE_CALLER_INTERVAL` and `RACE_CALLER_LONGPOLL` are its two settings.
+- `start` starts an RPC caller and a sidecar with each node, and `stop` stops them. Each
+  node host pulls `python:3.13.7-alpine3.22` from the public registry (one image for the
+  RPC caller and the sidecar). `RACE_CALLER=0` for `start`: no RPC caller.
+  `RACE_CALLER_INTERVAL` and `RACE_CALLER_LONGPOLL` (default 1) are its two settings.
+- `start` stops when the Docker of A or B does not use cgroup v2 with the systemd cgroup
+  driver (`docker info`): the sidecar reads the cgroup of the node container at a path
+  of that driver.
+- Set `net.ipv4.tcp_slow_start_after_idle = 0` on A and on B before `start` (section
+  System setting). `status` shows the value of each node machine.
 - `start` stops when a host has data of a run. It starts both nodes at the second full
   minute after its last step, on the clock of each host: the hosts need NTP or chrony.
   `status` shows `planned_start_epoch` and `actual_start_epoch` of each node.
@@ -172,6 +189,22 @@ scripts/race_deploy.sh stop    user@a.example user@b.example user@c.example
   on A and B in the firewall of the provider.
 - Grafana: `http://c.example:3000`, user `admin`, password in
   `hayai-race/secrets/grafana_admin_password` on C.
+
+## System setting
+
+zakurad writes a warning at its start: `TCP slow-start-after-idle is enabled, which
+resets TCP's congestion window between block requests and significantly reduces
+single-peer throughput` (seen on the Regtest dry run of 2026-10-06). The value is a
+setting of the host, and both nodes use the network of the host. Set it to 0 on both
+node machines, the same on both:
+
+```sh
+echo 'net.ipv4.tcp_slow_start_after_idle = 0' | sudo tee /etc/sysctl.d/90-race.conf
+sudo sysctl -p /etc/sysctl.d/90-race.conf
+```
+
+The cloud-init of Terraform does it on A and B. `scripts/race_deploy.sh status` shows the
+value of each node machine.
 
 ## Node configuration
 
@@ -191,6 +224,26 @@ scripts/race_deploy.sh stop    user@a.example user@b.example user@c.example
   when the queue is full.
 - `miner_address` is the Mainnet test address of the Zakura source. No miner uses it.
 
+## Zakura below the last checkpoint
+
+zakurad selects the work for each block below the last checkpoint at its start
+(`select_source_mode`, `crates/zakura-state/src/service/finalized_state/vct.rs:287`). The
+verified-commitment-trees path (`[consensus] vct_fast_sync`, on by default with
+`checkpoint_sync = true`) needs an embedded final frontier of the network
+(`embedded_final_frontiers`, `vct.rs:626`). Source only, not run on Mainnet or Testnet:
+
+| Network | Embedded final frontier | Work of zakurad for each block below the last checkpoint |
+|---|---|---|
+| Mainnet | Yes (`vct/mainnet-frontier.bin`) | VCT state on, source `HeaderAuxiliary`. The roots of the trees come with the native header sync (`GetHeaders { want_tree_aux_roots }`), and `p2p_stack = "legacy"` runs no native stack. Without a supplied root, and before a first block on the fast path, the committer recomputes the note commitment trees of the block (`finalized_state.rs:1214-1222`, counter `state_vct_legacy_block_count`). Expected with the race configuration: the recompute for each block, as on Testnet. After a first block on the fast path, a block without a root stops with a retryable error (`VctSuppliedRootUnavailable`, counter `state_vct_root_unavailable_count`) |
+| Testnet | No (`Network::Testnet(_) => None`) | Legacy committer: zakurad recomputes the Sprout, Sapling, Orchard and Ironwood note commitment trees of each block |
+| Regtest | Only with the test variable `VCT_REGTEST_FRONTIER` | Legacy committer. The `/metrics` text of a Regtest node has `state_vct_legacy_block_count` and `state_vct_fast_path_miss` (`scripts/zakura_metric_names.txt`) |
+
+The historical frontier grid (`zakura-assets`, `MAINNET_FRONTIER_GRID`) is also Mainnet
+only (`treestate_artifact.rs:1062`). It serves historical tree states and does not
+select the path. The counters `state_vct_legacy_block_count` and
+`state_vct_fast_path_hit` show the path of a run: `collect` writes the `/metrics` text of
+zakurad to `race-zakurad-metrics.txt`.
+
 ## RPC caller
 
 `scripts/race_rpc_caller.py` runs on each node machine in the service `zakurad-caller` or
@@ -200,6 +253,12 @@ schedule and limits.
 - Each 5 s (`RACE_CALLER_INTERVAL`) the caller sends one `getblocktemplate` call without
   `longpollid` to the RPC server of its node on the loopback address. It reads the cookie
   file of the node for each call, from the data volume of the node (read-only mount).
+- Long poll (default on: `RACE_CALLER_LONGPOLL=1`, Terraform `rpc_caller_long_poll =
+  true`), as a pool does: the caller also holds one call with the `longpollid` of the
+  last answer and the capability `longpoll`, on a second connection, and records its
+  return (`"mode": "longpoll"`). After each long-poll answer with a template it sends one
+  call without `longpollid` at once (`"mode": "after_longpoll"`), which gives the
+  transactions of the template that the node serves after the block.
 - For each call it writes one JSON line to `getblocktemplate.jsonl` in its volume: the
   wall clock of the machine at the return (`unix_us`), the time of the call on the client
   side (`duration_us`), and the `height`, the `previousblockhash` and the number of
@@ -212,20 +271,19 @@ schedule and limits.
   (the node has 1,024), 128 MiB. On the Regtest run the container used 23 MiB and less
   than 1 % of one CPU. The file grows by about 200 bytes for each call (about 3.5 MB for
   each day) and has no rotation.
-- Result on the dashboards: the panels of `rpc_request_duration_seconds` for
-  `getblocktemplate` have data for both nodes. Result in `blocks.csv`: the columns
-  `hayai_template_served_s` and `zakura_template_served_s`. Result in `blocks.md`: the
-  mean time of a call on the client side for each node.
-- Long poll (`RACE_CALLER_LONGPOLL=1`, Terraform `rpc_caller_long_poll = true`; default
-  off): the caller also holds one call with the `longpollid` of the last answer and the
-  capability `longpoll`, on a second connection, and records its return (`"mode":
-  "longpoll"`). The columns `*_template_served_s` then do not have the error of the call
-  interval (Regtest run: 0.6 ms to 5.5 ms on both nodes). Both nodes count the wait of a long poll in
-  `rpc_request_duration_seconds`, so the dashboard mean is then not the time of a call
-  without `longpollid`. Other error sources: a long poll also returns when the template
-  changes on the same block (the table reads the first answer on a block only); no long
-  poll is open between a return and the next request; a step of the machine clock
-  changes a value.
+- Result on the dashboards (through the sidecar): template served after a block, template
+  transactions after a block, and the time of a call without `longpollid` on the client
+  side. Result in `blocks.csv`: the columns `*_template_served_s` and
+  `*_template_transactions`. Result in `blocks.md`: the mean time of a call without
+  `longpollid` on the client side for each node.
+- With the long poll the columns `*_template_served_s` do not have the error of the call
+  interval (Regtest runs: 0.3 ms to 5.5 ms on both nodes). Without it each value is late
+  by 0 s to 5 s. Both nodes count the wait of a long poll in
+  `rpc_request_duration_seconds`, so the mean of that node metric is not the time of a
+  call without `longpollid`: the comparison dashboard reads the time on the client side.
+  Other error sources: a long poll also returns when the template changes on the same
+  block (the first answer on a block counts only); no long poll is open between a return
+  and the next request; a step of the machine clock changes a value.
 - Differences between the nodes that the caller hides: hayaid holds a call only with the
   capability `longpoll`, and zakurad holds it with the `longpollid` alone; hayaid
   answers a wrong cookie with the status 401, and zakurad closes the connection; hayaid
@@ -234,15 +292,69 @@ schedule and limits.
   Terraform. On a running machine: `docker compose -f compose.node.yml --profile <node>
   stop <node>-caller` in the race directory.
 
+## Sidecar
+
+`scripts/race_sidecar.py` runs on each node machine in the service `zakurad-sidecar` or
+`hayaid-sidecar` of `compose.node.yml`, with `--node zakurad` or `--node hayaid`. Both
+services have the same program, the image of the RPC caller, the same limits (0.5 CPU,
+CPU weight 64, 128 MiB), no network, and read-only mounts but the textfile volume. Each
+second the sidecar writes `race_<node>.prom` to the volume `textfile`. node-exporter
+reads the volume (`--collector.textfile.directory`) and exports each `race_*` metric with
+the label `node` of the file. The Prometheus job of node-exporter has `honor_labels:
+true`, so that label wins over the label of the target.
+
+| Metric | zakurad | hayaid | Verdict |
+|---|---|---|---|
+| `race_last_block_height` | Height of the last log line `downloaded and verified gossiped block` (gossip only) | Height of the last trace row `commit_finish` with the result `committed` | The other `race_last_block_*` metrics are of this block |
+| `race_last_block_received_to_committed_seconds` | Log time of that line minus `ts` of the row `block_request_finish` of the same hash, on the wall clock through the clock calibration of `scripts/race_blocks.py` (`calibrate`, on the last 1,000 rounds and blocks) | `commit_finish.received_to_commit_us` of the last commit | CLOSE (section Compared quantities) |
+| `race_last_block_clock_error_seconds` | Error of the calibration, plus or minus | None | |
+| `race_last_block_template_served_seconds` | First answer of the RPC caller on the block minus the time of the log line | First answer minus `commit_finish.unix_us` | CLOSE |
+| `race_last_block_template_transactions` | Transactions of the first answer without `longpollid` at or after the first answer on the block | Same | CLOSE |
+| `race_rpc_getblocktemplate_seconds` (summary: `_sum`, `_count`) | Client-side times of the calls without `longpollid` that returned a template, from the whole file of the caller | Same | CLOSE |
+| `race_node_cpu_seconds_total` | `usage_usec` of `cpu.stat` of the cgroup of the node container | Same | SAME |
+| `race_node_memory_bytes`, `race_node_memory_peak_bytes` | `memory.current`, `memory.peak` of that cgroup (with the page cache) | Same | SAME |
+| `race_node_io_read_bytes_total`, `race_node_io_write_bytes_total` | Sum of `rbytes`, `wbytes` of `io.stat` of that cgroup, without a stacked device | Same | SAME |
+| `race_node_data_bytes` | Disk blocks of the data volume, each inode one time (as du), each 60 s | Same | CLOSE |
+
+- A metric without a value is not in the file: no committed block yet, no answer on the
+  last block, no calibration, no cgroup. The sidecar writes a line to its output when the
+  cgroup appears or goes, and when the calibration of zakurad has no result.
+- The help text of each metric in the file states its start and stop on each node and
+  its verdict. One summary without quantiles: a panel shows its mean as
+  `rate(_sum) / rate(_count)` (recording rule `race:rpc_getblocktemplate_seconds:mean5m`).
+- Cgroup. Each node container has the cgroup parent `race-<node>.slice`. With cgroup v2
+  and the systemd cgroup driver of Docker (Ubuntu 22.04 and later), the slice is
+  `/sys/fs/cgroup/race.slice/race-<node>.slice` and has the node container only. The
+  sidecar mounts `/sys/fs/cgroup` read-only at `/host/cgroup` and reads the files of the
+  slice. It has no privilege, no host PID namespace and no Docker socket: the socket
+  would give the control of Docker. The mount shows the resource counters of each cgroup
+  of the host, read only. On a test machine (2026-10-06) a container without capabilities
+  read `cpu.stat`, `memory.current`, `memory.peak` and `io.stat` of a sibling container
+  this way. The slice stays after the node stops; the counters then stop.
+- `io.stat` has a line for each device. A device-mapper or md device on top of a disk
+  has the same bytes as the disk: the sidecar does not count a device with an entry in
+  `/sys/dev/block/<major>:<minor>/slaves`.
+- Zakura calibration. The sidecar reads the trace rows and the log lines as they come
+  and calls the functions of `scripts/race_blocks.py`. A row of a later start of zakurad
+  starts the calibration again. The dry run of 2026-10-06 (8 blocks) gave the same values
+  as `race_blocks.py` on the same files.
+- Bounds of memory: 10,000 blocks for the commits, the requests and the answers of the
+  caller; 1,000 rounds and blocks for the calibration (5,000 `find_blocks_finish` rows);
+  16 MiB for each read of a file. The sidecar reads each file from its start when it
+  starts: a restart of the sidecar reads the log of zakurad again.
+
 ## Dashboards
 
 Grafana has three dashboards. The home dashboard is the comparison.
 
 | Dashboard | Content | Variables |
 |---|---|---|
-| "zakurad and hayaid: comparison" (`comparison.json`) | The quantities of the table above only. Each panel description starts with the verdict and states the difference. Rows: Sync, Tip for each block, Resources, Compared quantities (the table) | `zakura`, `hayai`: the value of the label `node` of each node |
-| "hayai node" (`hayai-node.json`) | Each metric of hayaid: chain, block download, the gauges of the last block, block duration histograms, mempool and template, relay, RPC, shadow mode, process, machine | `job`, `instance`, `machine` (node-exporter) |
-| "Zakura node" (`zakura-node.json`) | The metrics that a running zakurad exports with the legacy stack: chain, checkpoint verifier, download queue, block commit, proofs, mempool, mining, RPC, network, RocksDB, machine. Each duration is a summary: the panels use sum / count | `job`, `instance`, `machine` |
+| "zakurad and hayaid: comparison" (`comparison.json`) | The quantities of the table above only. Each panel description starts with the verdict and states the difference. Rows: Sync, Tip for each block, Resources of the node container, Resources of the machine, Compared quantities (the table) | `zakura`, `hayai`: the value of the label `node` of each node |
+| "hayai node" (`hayai-node.json`) | Each metric of hayaid: chain, block download, the gauges of the last block, block duration histograms, mempool and template, relay, RPC, shadow mode, process, the sidecar of the machine, machine | `job`, `instance`, `machine` (node-exporter) |
+| "Zakura node" (`zakura-node.json`) | The metrics that a running zakurad exports with the legacy stack: chain, checkpoint verifier, download queue, block commit, proofs, mempool, mining, RPC, network, RocksDB, the sidecar of the machine, machine. Each duration is a summary: the panels use sum / count | `job`, `instance`, `machine` |
+
+`scripts/gen_race_dashboards.py` writes the three files. Change the generator, then run
+`python3 scripts/gen_race_dashboards.py docker/race/grafana/dashboards`.
 
 Comparison dashboard, row Sync:
 
@@ -261,9 +373,17 @@ Comparison dashboard, row Tip:
 |---|---|
 | Contextual commit time against block height (one panel for each node) | One point for each block. X: block height. A panel has one X field, and each node has its own height series |
 | Contextual commit time against time | Both nodes, one point for each block |
-| Block received to committed against block height: hayaid only | zakurad has no such metric. Its value is in `blocks.csv` |
+| Block received to committed against block height (one panel for each node) | `race_last_block_received_to_committed_seconds` against `race_last_block_height`. A trend panel has one X field |
+| Block received to committed against time | Both nodes. Each step of the line is one block |
+| Template served after a block, Template transactions after a block | Both nodes. Each step of the line is one block |
 | Last blocks: contextual commit time | Table, newest first, joined on the scrape time. The two height columns show when the nodes are at different blocks. Grafana cannot join two nodes on the height, because the height is a value and not a label. `blocks.csv` has the table that is joined on the height |
-| Reuse of the mempool verification, RPC mean service time | One line for each node |
+| Reuse of the mempool verification | One line for each node |
+| getblocktemplate time on the client side | `race:rpc_getblocktemplate_seconds:mean5m`, one line for each node. It does not read `rpc_request_duration_seconds`: both nodes count the wait of the long poll in it |
+| RPC mean service time: sendrawtransaction, other methods | `race:rpc_request_seconds:mean5m`, one line for each node |
+
+Comparison dashboard, rows Resources: the CPU cores, the memory and its peak, the disk
+I/O of the node container and the data directory (sidecar), then the CPU, memory, disk
+and network of the machine (node-exporter).
 
 A panel of one value for each block reads the last sample of each step. With a time
 range above some hours the step is above the block spacing, and the panel shows a part
@@ -300,9 +420,10 @@ of the blocks. Use a range of 2 hours or less for each block, or `blocks.csv`.
 
 | File | Content |
 |---|---|
-| `blocks.csv` | One row for each block height from the tip phase on. Columns: `height`, `hash`, source, transactions and bytes of the block of hayaid, `hayai_received_to_validated_s`, `hayai_received_to_committed_s`, `zakura_received_to_committed_s`, `diff_received_to_committed_s`, `hayai_contextual_commit_s`, `zakura_contextual_commit_s`, `diff_contextual_commit_s`, `hayai_received_to_template_empty_s`, `hayai_received_to_template_full_s`, `hayai_template_served_s`, `zakura_template_served_s`, `note`. A difference is hayaid minus zakurad. An empty cell: the node has no measurement for that block |
-| `blocks.md` | Count, median, 90 % value and largest value of each column; the error of the Zakura clock calibration; the number of blocks without a Zakura value and the reason; for each RPC caller the number of calls, the mean time of a call without `longpollid` on the client side, the number of errors and the mode of the first answer on a block; the first 20 rows |
+| `blocks.csv` | One row for each block height from the tip phase on. Columns: `height`, `hash`, source, transactions and bytes of the block of hayaid, `hayai_received_to_validated_s`, `hayai_received_to_committed_s`, `zakura_received_to_committed_s`, `diff_received_to_committed_s`, `hayai_contextual_commit_s`, `zakura_contextual_commit_s`, `diff_contextual_commit_s`, `hayai_received_to_template_empty_s`, `hayai_received_to_template_full_s`, `hayai_template_served_s`, `zakura_template_served_s`, `hayai_template_transactions`, `zakura_template_transactions`, `note`. A difference is hayaid minus zakurad. An empty cell: the node has no measurement for that block |
+| `blocks.md` | Count, median, 90 % value and largest value of each column; the error of the Zakura clock calibration; the number of blocks without a Zakura value and the reason; for each RPC caller the number of calls without `longpollid` (each interval and after each long-poll answer), their mean time on the client side, the number of errors and the mode of the first answer on a block; the first 20 rows |
 | `race-zakurad-getblocktemplate.jsonl`, `race-hayaid-getblocktemplate.jsonl` | The file of each RPC caller: one line for each call |
+| `race-zakurad-sidecar.prom`, `race-hayaid-sidecar.prom` | The last textfile of each sidecar |
 | `race-hayaid-traces/`, `race-zakurad-traces/` | The trace tables of both nodes |
 | `race-zakurad-block-lines.log` | The log lines of zakurad that the table reads |
 | `zakurad-series-*.json` | The three Prometheus series of zakurad for its contextual commit time, with a step of 5 s |
@@ -332,6 +453,8 @@ The table of blocks (`scripts/race_blocks.py`):
   `unix_us` of the row `commit_finish`; zakurad: the time of the log line
   `downloaded and verified gossiped block`). Both times are on the wall clock of that
   machine. A block without an answer or without a commit time has an empty cell.
+- "Template transactions": the transactions of the first answer without `longpollid` at
+  or after the first answer on the block.
 
 ## Report when hayaid stops
 
@@ -366,6 +489,9 @@ Also send the output of `status`.
   until now.
 - The log file of zakurad has no rotation. Read "Disk in use".
 - The estimates of this page (disk, memory of hayaid, build time) are not measured.
+- The memory of a node container includes its page cache. The kernel can take back the
+  page cache, so the value depends on the free memory of the machine and on the file
+  access of the node, not only on the memory of the process.
 
 ## Removal
 
@@ -391,8 +517,8 @@ export RACE_PROMETHEUS_ADDR=127.0.0.1:39090 RACE_GRAFANA_ADDR=127.0.0.1 RACE_GRA
 export RACE_LAST_CHECKPOINT_HEIGHT=5
 mkdir -p secrets && (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
 docker compose -p race-dryrun-monitor -f compose.monitor.yml up -d
-docker compose -p race-dryrun-node -f compose.node.yml --profile zakurad up -d node-exporter zakurad zakurad-caller
-docker compose -p race-dryrun-node -f compose.node.yml --profile hayaid up -d hayaid hayaid-caller
+docker compose -p race-dryrun-node -f compose.node.yml --profile zakurad up -d node-exporter zakurad zakurad-caller zakurad-sidecar
+docker compose -p race-dryrun-node -f compose.node.yml --profile hayaid up -d hayaid hayaid-caller hayaid-sidecar
 cd ../.. && scripts/race_deploy.sh collect local local local
 ```
 
@@ -404,6 +530,8 @@ cd ../.. && scripts/race_deploy.sh collect local local local
 - Each RPC caller reads the RPC address from the configuration of its node. The method
   `generate` is for the operator of the dry run only: the caller does not use it.
 - The SSH target `local` runs the commands of `collect` on this machine.
+- One node-exporter reads the textfiles of both sidecars. Each `race_*` metric has the
+  label `node` of its file.
 - A Regtest chain has no tip of a network: "Time to the tip" stays empty, and the table
   of blocks starts at the first block that zakurad got by gossip.
 - `docker compose -p <project> ... down --volumes` removes each project.

@@ -83,9 +83,11 @@ class Board:
             out.append(t)
         return out
 
-    def ts(self, title, description, exprs, unit="short", w=12, h=8, stack=False, points=False):
-        interval = {"interval": "5s"} if points else {}
+    def ts(self, title, description, exprs, unit="short", w=12, h=8, stack=False, points=False, steps=False):
+        interval = {"interval": "5s"} if points or steps else {}
         custom = {"lineWidth": 1, "fillOpacity": 10 if stack else 0, "spanNulls": False}
+        if steps:
+            custom["lineInterpolation"] = "stepAfter"
         if stack:
             custom["stacking"] = {"mode": "normal", "group": "A"}
         if points:
@@ -274,6 +276,33 @@ def machine_panels(b, sel_by_name):
     )
 
 
+def sidecar_panels(b, sel, zakura):
+    """The race_* metrics of the sidecar of the machine (scripts/race_sidecar.py, help
+    text of each metric). `sel`: the selector of the node-exporter."""
+    src = "Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter."
+    cg = "the cgroup v2 of the node container (slice race-<node>.slice)"
+    b.ts("Container CPU", f"rate of race_node_cpu_seconds_total over 1 minute: CPU cores of {cg}. {src}", [(f"rate(race_node_cpu_seconds_total{{{sel}}}[1m])", "cores")], "none", w=8)
+    b.ts("Container memory", f"race_node_memory_bytes (memory.current) and race_node_memory_peak_bytes (memory.peak) of {cg}, with the page cache. {src}", [
+        (f"race_node_memory_bytes{{{sel}}}", "current"),
+        (f"race_node_memory_peak_bytes{{{sel}}}", "peak"),
+    ], "bytes", w=8)
+    b.ts("Container disk I/O", f"rate of race_node_io_read_bytes_total and race_node_io_write_bytes_total over 1 minute: io.stat of {cg}. {src}", [
+        (f"rate(race_node_io_read_bytes_total{{{sel}}}[1m])", "read"),
+        (f"rate(race_node_io_write_bytes_total{{{sel}}}[1m])", "written"),
+    ], "Bps", w=8)
+    b.ts("Data directory", f"race_node_data_bytes: disk blocks of the data directory of the node (du), each 60 s. {src}", [(f"race_node_data_bytes{{{sel}}}", "data directory")], "bytes", w=8)
+    b.ts("Template served after a block", f"race_last_block_template_served_seconds: first getblocktemplate answer of the RPC caller on the last block minus the commit time of the block on this machine. {src}", [(f"race_last_block_template_served_seconds{{{sel}}}", "served")], "s", w=8, steps=True)
+    b.ts("Template transactions after a block", f"race_last_block_template_transactions: transactions of the first answer without longpollid at or after the first answer on the last block. {src}", [(f"race_last_block_template_transactions{{{sel}}}", "transactions")], "none", w=8, steps=True)
+    b.ts("getblocktemplate time on the client side", f"race_rpc_getblocktemplate_seconds: mean time of a call without longpollid on the client side (rate of _sum / rate of _count over 5 minutes). The node metric rpc_request_duration_seconds has the wait of each long poll. {src}", [
+        (f"rate(race_rpc_getblocktemplate_seconds_sum{{{sel}}}[5m]) / rate(race_rpc_getblocktemplate_seconds_count{{{sel}}}[5m])", "mean"),
+    ], "s", w=8)
+    if zakura:
+        b.ts("Block received to committed", f"race_last_block_received_to_committed_seconds: trace row block_request_finish (on the wall clock through the clock calibration) to the log line 'downloaded and verified gossiped block', for the last gossiped block, and race_last_block_clock_error_seconds: the error of the calibration. {src}", [
+            (f"race_last_block_received_to_committed_seconds{{{sel}}}", "received to committed"),
+            (f"race_last_block_clock_error_seconds{{{sel}}}", "error of the calibration"),
+        ], "s", w=8, steps=True)
+
+
 # ---------------------------------------------------------------- hayai node
 
 def hayai_node():
@@ -448,6 +477,9 @@ def hayai_node():
     ], "none", w=6)
     b.ts("Coins cache memory", "hayai_coins_cache_bytes.", [(f"hayai_coins_cache_bytes{{{S}}}", "cache")], "bytes", w=6)
 
+    b.row("Sidecar of the machine (race_* metrics of the node-exporter of the variable)")
+    sidecar_panels(b, 'job="node", instance=~"$machine"', zakura=False)
+
     b.row("Machine (the node-exporter of the variable; the machine runs one node)")
     machine_panels(b, [("machine", 'instance=~"$machine"')])
     b.write("hayai-node.json")
@@ -603,7 +635,10 @@ def zakura_node():
         (f"zakura_state_rocksdb_compaction_running{{{S}}}", "running"),
     ], "none", w=8)
 
-    b.row("Machine (the node-exporter of the variable). zakurad exports no process metric.")
+    b.row("Sidecar of the machine (race_* metrics of the node-exporter of the variable). zakurad exports no process metric.")
+    sidecar_panels(b, 'job="node", instance=~"$machine"', zakura=True)
+
+    b.row("Machine (the node-exporter of the variable)")
     machine_panels(b, [("machine", 'instance=~"$machine"')])
     b.write("zakura-node.json")
     return b
@@ -612,8 +647,8 @@ def zakura_node():
 # ---------------------------------------------------------------- comparison
 
 DEFINITIONS = """
-Verdict CLOSE: both nodes measure the same work with the stated difference. No row has the verdict SAME.
-A quantity that only one node measures is not on a comparison panel. Source of each definition: `docs/zakura-measurements.md`.
+Verdict SAME: one method and one definition on both machines. Verdict CLOSE: both nodes measure the same work with the stated difference.
+A quantity that only one node measures is not on a comparison panel. Source of each definition: `docs/zakura-measurements.md` and the help text of each `race_*` metric of the sidecar (`scripts/race_sidecar.py`).
 
 | Quantity | zakurad | hayaid | Verdict and difference |
 |---|---|---|---|
@@ -625,11 +660,16 @@ A quantity that only one node measures is not on a comparison panel. Source of e
 | P2P bytes | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total`: header and body of each message at the codec | Same names: bytes that the reader took from the socket, and bytes of each frame written in full | CLOSE |
 | Download queue | `sync_downloads_in_flight`: tasks in download or in verification | Same name: requests without an answer plus downloaded blocks that wait for the validator | CLOSE |
 | Contextual commit time, for each block | `state_contextual_total_duration_seconds`: initial contextual checks, then the commit to the non-finalized state (transparent spends, anchors, note commitment trees, chain push) | `hayai_contextual_commit_duration_seconds`: stages context, trees, history, then the push of the layer on the chain | CLOSE. The split of the checks between this interval and the earlier validation is not the same on both nodes. zakurad includes a clone of the chain |
-| Block received to committed, for each block | No metric. Trace row `block_request_finish` to the log line `downloaded and verified gossiped block` | `hayai_last_block_received_to_committed_seconds`, trace field `commit_finish.received_to_commit_us` | CLOSE, in the table of `collect` only (`blocks.csv`). Start: zakurad when the peer service returns the decoded block; hayaid at the arrival of the message, before the parse. Stop: zakurad after the commit in memory; hayaid after the write to the block file and the update of the prepared store. The panel here has hayaid only |
+| Block received to committed, for each block | `race_last_block_received_to_committed_seconds` of the sidecar: trace row `block_request_finish` (on the wall clock through the clock calibration) to the log line `downloaded and verified gossiped block`. Gossiped blocks only | `race_last_block_received_to_committed_seconds` of the sidecar: trace field `commit_finish.received_to_commit_us` | CLOSE. Start: zakurad when the peer service returns the decoded block; hayaid at the arrival of the message, before the parse. Stop: zakurad after the commit in memory; hayaid after the write to the block file and the update of the prepared store. The zakurad value has the error `race_last_block_clock_error_seconds` |
+| Template served after a block, for each block | `race_last_block_template_served_seconds`: first `getblocktemplate` answer of the RPC caller on the block (the long poll) minus the time of the log line `downloaded and verified gossiped block` | Same, minus `unix_us` of the trace row `commit_finish` | CLOSE. Same client and same stop. zakurad writes its log line after the commit response, so its start is later and a value can be below 0 |
+| Template transactions after a block, for each block | `race_last_block_template_transactions`: the first answer without `longpollid` at or after the first answer on the block | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The mempools differ |
 | Reuse of the mempool verification | `zakura_consensus_cache_hit` / (hit + miss): shielded bundles, block and mempool lookups | `hayai_prepared_store_hits_total` / (hits + misses): transactions of blocks | CLOSE. Unit: bundle against transaction. zakurad reuses no script result |
 | Mempool size | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | Same names: the prepared store | CLOSE. hayaid updates the gauges at each commit and each second |
-| RPC mean service time | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. zakurad parses the parameters inside the interval. `getblocktemplate` without `longpollid`: zakurad builds the template in the call; hayaid returns the template that it built at the tip change. A call with `longpollid` contains the wait |
-| CPU, memory, disk, disk I/O, network | node-exporter of the machine of zakurad | node-exporter of the machine of hayaid | Same method. The values are of the machine, which runs one node |
+| `getblocktemplate` time on the client side | `race_rpc_getblocktemplate_seconds` of the sidecar: calls without `longpollid` of the RPC caller, request sent to answer read | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The node metric `rpc_request_duration_seconds` has the wait of each long poll on both nodes, so no panel reads it for `getblocktemplate` |
+| RPC mean service time, other methods | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. zakurad parses the parameters inside the interval |
+| CPU, memory and peak, disk I/O of the node | `race_node_*` of the sidecar: `cpu.stat`, `memory.current`, `memory.peak`, `io.stat` of the cgroup of the node container | Same | SAME. Memory includes the page cache of the container |
+| Data directory | `race_node_data_bytes` of the sidecar: du of the data volume each 60 s | Same | CLOSE. The zakurad directory has its log file; hayaid writes its log to Docker |
+| CPU, memory, disk, disk I/O, network of the machine | node-exporter of the machine of zakurad | node-exporter of the machine of hayaid | SAME. The values are of the machine, which runs one node and the race containers |
 
 Not compared, because zakurad has no such measurement:
 
@@ -637,7 +677,6 @@ Not compared, because zakurad has no such measurement:
 - Block received to template ready, and tip change to template ready (hayai dashboard). zakurad builds a template only when a `getblocktemplate` request arrives. An external probe is necessary for this comparison (docs/sync-race.md).
 - Script check time, validation stages (hayai dashboard).
 - Header height: zakurad with the legacy stack has no header chain.
-- CPU and memory of the process: zakurad exports no `process_*` metric.
 
 Not compared, because hayaid has no such measurement: wait in the queue of the block writer, checkpoint verifier heights, RocksDB metrics (Zakura dashboard).
 
@@ -650,6 +689,9 @@ def comparison():
     Hn = 'node=~"$hayai"'
     ZJ = f'job="zakurad", {Z}'
     HJ = f'job="hayaid", {Hn}'
+    # The race_* metrics of the sidecars, through the node-exporter of each machine.
+    ZN = f'job="node", {Z}'
+    HN = f'job="node", {Hn}'
     both = lambda metric: [(f"{metric}{{{ZJ}}}", "zakurad"), (f"{metric}{{{HJ}}}", "hayaid")]
     rule = lambda series: [(f"{series}{{{ZJ}}}", "zakurad"), (f"{series}{{{HJ}}}", "hayaid")]
     by_node = lambda series: [
@@ -704,9 +746,11 @@ def comparison():
     b.trend("Contextual commit time against block height: zakurad", "CLOSE. One point for each block: race:contextual_commit_seconds:last against race:contextual_commit_block_height. zakurad: state_contextual_total_duration_seconds (initial contextual checks and the commit to the non-finalized state, with a clone of the chain). Two blocks in one scrape interval of 5 s give one point with their mean." + one_x + step, last("race:contextual_commit_block_height", ZJ), [("zakurad", last("race:contextual_commit_seconds:last", ZJ))])
     b.trend("Contextual commit time against block height: hayaid", "CLOSE. One point for each block: race:contextual_commit_seconds:last against race:contextual_commit_block_height. hayaid: hayai_contextual_commit_duration_seconds (stages context, trees, history and the push of the layer). Two blocks in one scrape interval of 5 s give one point with their mean." + one_x + step, last("race:contextual_commit_block_height", HJ), [("hayaid", last("race:contextual_commit_seconds:last", HJ))])
     b.ts("Contextual commit time against time", "CLOSE. The same series as the panel on the left, against the time of the scrape after the commit." + step, [(last("race:contextual_commit_seconds:last", ZJ), "zakurad"), (last("race:contextual_commit_seconds:last", HJ), "hayaid")], "s", points=True, h=9)
-    b.trend("Block received to committed against block height: hayaid only", "hayaid only: zakurad has no such metric. hayai_last_block_received_to_committed_seconds against hayai_last_block_height. The value of zakurad comes from its trace and its log, in blocks.csv of `scripts/race_deploy.sh collect` (verdict CLOSE, differences in the table below).", f"hayai_last_block_height{{{HJ}}} > 0", [
-        ("hayaid", f"hayai_last_block_received_to_committed_seconds{{{HJ}}}"),
-    ])
+    r2c = "race_last_block_received_to_committed_seconds of the sidecar of each machine. Start: zakurad when the peer service returns the decoded block (trace row block_request_finish on the wall clock through the clock calibration, error in race_last_block_clock_error_seconds); hayaid at the arrival of the block message, before the parse. Stop: zakurad after the commit in memory (log line 'downloaded and verified gossiped block'); hayaid after the write to the block file and the update of the prepared store. zakurad has a value for a gossiped block only."
+    b.trend("Block received to committed against block height: zakurad", f"CLOSE. One point for each block. {r2c}" + one_x + step, last("race_last_block_height", ZN), [("zakurad", last("race_last_block_received_to_committed_seconds", ZN))])
+    b.trend("Block received to committed against block height: hayaid", f"CLOSE. One point for each block. {r2c}" + one_x + step, last("race_last_block_height", HN), [("hayaid", last("race_last_block_received_to_committed_seconds", HN))])
+    b.ts("Block received to committed against time", f"CLOSE. {r2c} Each step of the line is one block.", [(f"race_last_block_received_to_committed_seconds{{{ZN}}}", "zakurad"), (f"race_last_block_received_to_committed_seconds{{{HN}}}", "hayaid")], "s", steps=True, h=9)
+    b.ts("Template served after a block", "CLOSE. race_last_block_template_served_seconds: the first getblocktemplate answer of the RPC caller of the machine with the last block as previousblockhash (the long poll), minus the commit time of the block on the same machine. zakurad: the time of the log line 'downloaded and verified gossiped block', which comes after the commit response, so a value can be below 0. hayaid: unix_us of the trace row commit_finish. Same client and same stop on both machines. Each step of the line is one block.", [(f"race_last_block_template_served_seconds{{{ZN}}}", "zakurad"), (f"race_last_block_template_served_seconds{{{HN}}}", "hayaid")], "s", steps=True, h=9)
     b.ts("Reuse of the mempool verification", "CLOSE. race:verification_reuse:ratio5m. zakurad: hits of the verification cache of shielded bundles / lookups, for blocks and mempool. hayaid: transactions of blocks found in the prepared store / transactions of blocks. Unit: bundle against transaction.", by_node("race:verification_reuse:ratio5m"), "percentunit", h=9)
     b.table("Last blocks: contextual commit time", "CLOSE. One row for each scrape in which a node has a value, newest first. The rows are joined on the scrape time, not on the block height: the two height columns show when the nodes are at different blocks. Grafana cannot join two nodes on a value, and the height is not a label. The table that is joined on the height is blocks.csv of `collect`." + step, [
         (last("race:contextual_commit_block_height", ZJ), "zakurad height"),
@@ -714,9 +758,10 @@ def comparison():
         (last("race:contextual_commit_block_height", HJ), "hayaid height"),
         (last("race:contextual_commit_seconds:last", HJ), "hayaid contextual commit"),
     ], units={"zakurad contextual commit": "s", "hayaid contextual commit": "s"}, limit=100)
-    b.ts("RPC mean service time: getblocktemplate", "CLOSE. race:rpc_request_seconds:mean5m. Data only when a client calls the method. Without longpollid, zakurad builds the template in the call and hayaid returns the template that it built at the tip change. A call with longpollid contains the wait.", [
-        (f'race:rpc_request_seconds:mean5m{{{Z}, method="getblocktemplate"}} and on (node) zakura_build_info', "zakurad"),
-        (f'race:rpc_request_seconds:mean5m{{{Hn}, method="getblocktemplate"}} and on (node) hayai_build_info', "hayaid"),
+    b.ts("Template transactions after a block", "CLOSE. race_last_block_template_transactions: transactions of the first getblocktemplate answer without longpollid at or after the first answer on the last block. The RPC caller sends such a call at once after each long-poll answer. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The mempools differ: each node has other peers. Each step of the line is one block.", [(f"race_last_block_template_transactions{{{ZN}}}", "zakurad"), (f"race_last_block_template_transactions{{{HN}}}", "hayaid")], "none", steps=True, w=8)
+    b.ts("getblocktemplate time on the client side", "CLOSE. race:rpc_getblocktemplate_seconds:mean5m: mean time of a getblocktemplate call without longpollid over 5 minutes, on the client side (request sent to answer read), from the file of the RPC caller: the call of each interval and the call after each long-poll answer. Without longpollid, zakurad builds the template in the call and hayaid returns the template that it built at the tip change. The node metric rpc_request_duration_seconds is not on this panel: both nodes count the wait of each long poll in it.", [
+        (f"race:rpc_getblocktemplate_seconds:mean5m{{{ZN}}}", "zakurad"),
+        (f"race:rpc_getblocktemplate_seconds:mean5m{{{HN}}}", "hayaid"),
     ], "s", w=8)
     b.ts("RPC mean service time: sendrawtransaction", "CLOSE. Both calls wait for the result of the mempool admission. hayaid includes the announcement to the relay.", [
         (f'race:rpc_request_seconds:mean5m{{{Z}, method="sendrawtransaction"}} and on (node) zakura_build_info', "zakurad"),
@@ -727,8 +772,25 @@ def comparison():
         (f'race:rpc_request_seconds:mean5m{{{Hn}, method!~"getblocktemplate|sendrawtransaction"}} and on (node) hayai_build_info', "hayaid {{method}}"),
     ], "s", w=8)
 
-    b.row("Resources (node-exporter of each machine; each machine runs one node)")
-    one = "Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine."
+    b.row("Resources of the node container (the sidecar of each machine, cgroup v2 of the container)")
+    cg = "Same method on both machines: the sidecar reads the cgroup v2 files of the node container (slice race-<node>.slice)."
+    b.ts("Container CPU", f"SAME. race:node_cpu_cores: rate of race_node_cpu_seconds_total (usage_usec of cpu.stat) over 1 minute, in CPU cores. {cg}", [(f"race:node_cpu_cores{{{ZN}}}", "zakurad"), (f"race:node_cpu_cores{{{HN}}}", "hayaid")], "none")
+    b.ts("Container memory and peak", f"SAME. race_node_memory_bytes (memory.current) and race_node_memory_peak_bytes (memory.peak). Both include the page cache of the files of the container. {cg}", [
+        (f"race_node_memory_bytes{{{ZN}}}", "zakurad"),
+        (f"race_node_memory_peak_bytes{{{ZN}}}", "zakurad peak"),
+        (f"race_node_memory_bytes{{{HN}}}", "hayaid"),
+        (f"race_node_memory_peak_bytes{{{HN}}}", "hayaid peak"),
+    ], "bytes")
+    b.ts("Container disk I/O", f"SAME. race:node_io_read_bytes_per_second and race:node_io_write_bytes_per_second: rbytes and wbytes of io.stat, devices without a lower device. {cg}", [
+        (f"race:node_io_read_bytes_per_second{{{ZN}}}", "zakurad read"),
+        (f"race:node_io_write_bytes_per_second{{{ZN}}}", "zakurad written"),
+        (f"race:node_io_read_bytes_per_second{{{HN}}}", "hayaid read"),
+        (f"race:node_io_write_bytes_per_second{{{HN}}}", "hayaid written"),
+    ], "Bps")
+    b.ts("Data directory", "CLOSE. race_node_data_bytes: disk blocks of the data volume of the node (du), each 60 s, from the sidecar. The zakurad directory has its log file; hayaid writes its log to Docker. Both have the trace tables.", [(f"race_node_data_bytes{{{ZN}}}", "zakurad"), (f"race_node_data_bytes{{{HN}}}", "hayaid")], "bytes")
+
+    b.row("Resources of the machine (node-exporter of each machine; each machine runs one node)")
+    one = "SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race."
     b.ts("Machine CPU", f"race:machine_cpu_utilisation: share of the CPU time that is not idle. {one}", [(f"race:machine_cpu_utilisation{{{Z}}} and on (node) zakura_build_info", "zakurad"), (f"race:machine_cpu_utilisation{{{Hn}}} and on (node) hayai_build_info", "hayaid")], "percentunit")
     b.ts("Machine memory in use", f"race:machine_memory_used_bytes: MemTotal minus MemAvailable. {one}", [(f"race:machine_memory_used_bytes{{{Z}}} and on (node) zakura_build_info", "zakurad"), (f"race:machine_memory_used_bytes{{{Hn}}} and on (node) hayai_build_info", "hayaid")], "bytes")
     b.ts("Disk in use", f"race:machine_disk_used_bytes: used bytes of the file system of the node data, with the image of the node. {one}", [(f"race:machine_disk_used_bytes{{{Z}}} and on (node) zakura_build_info", "zakurad"), (f"race:machine_disk_used_bytes{{{Hn}}} and on (node) hayai_build_info", "hayaid")], "bytes")

@@ -1,5 +1,6 @@
 {"unix_us": 1700000072000000, "mode": "poll", "duration_us": 300, "ok": true, "height": 101, "previousblockhash": "6464646464646464646464646464646464646464646464646464646464646464", "transactions": 0}
 {"unix_us": 1700000075003400, "mode": "longpoll", "duration_us": 3003400, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 0}
+{"unix_us": 1700000075003900, "mode": "after_longpoll", "duration_us": 500, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 2}
 {"unix_us": 1700000075004000, "mode": "longpoll", "duration_us": 600, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 2}
 {"unix_us": 1700000077000000, "mode": "poll", "duration_us": 500, "ok": true, "height": 102, "previousblockhash": "6565656565656565656565656565656565656565656565656565656565656565", "transactions": 2}
 {"unix_us": 1700000082000000, "mode": "poll", "duration_us": 250, "ok": false, "error": "http", "http_status": 401, "message": ""}

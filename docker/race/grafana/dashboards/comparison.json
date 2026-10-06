@@ -1164,8 +1164,8 @@
     },
     {
       "type": "trend",
-      "title": "Block received to committed against block height: hayaid only",
-      "description": "hayaid only: zakurad has no such metric. hayai_last_block_received_to_committed_seconds against hayai_last_block_height. The value of zakurad comes from its trace and its log, in blocks.csv of `scripts/race_deploy.sh collect` (verdict CLOSE, differences in the table below).",
+      "title": "Block received to committed against block height: zakurad",
+      "description": "CLOSE. One point for each block. race_last_block_received_to_committed_seconds of the sidecar of each machine. Start: zakurad when the peer service returns the decoded block (trace row block_request_finish on the wall clock through the clock calibration, error in race_last_block_clock_error_seconds); hayaid at the arrival of the block message, before the parse. Stop: zakurad after the commit in memory (log line 'downloaded and verified gossiped block'); hayaid after the write to the block file and the update of the prepared store. zakurad has a value for a gossiped block only. A panel has one X field, and each node has its own height series: one panel for each node. The panel against time below has both nodes. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1178,7 +1178,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "hayai_last_block_height{job=\"hayaid\", node=~\"$hayai\"} > 0",
+          "expr": "last_over_time(race_last_block_height{job=\"node\", node=~\"$zakura\"}[$__interval])",
           "legendFormat": "block height"
         },
         {
@@ -1187,7 +1187,127 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "hayai_last_block_received_to_committed_seconds{job=\"hayaid\", node=~\"$hayai\"}",
+          "expr": "last_over_time(race_last_block_received_to_committed_seconds{job=\"node\", node=~\"$zakura\"}[$__interval])",
+          "legendFormat": "zakurad"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "block height": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "zakurad": {
+                "aggregations": [
+                  "last"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "zakurad (last)": "zakurad"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "block height",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block height"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "xField": "block height",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      }
+    },
+    {
+      "type": "trend",
+      "title": "Block received to committed against block height: hayaid",
+      "description": "CLOSE. One point for each block. race_last_block_received_to_committed_seconds of the sidecar of each machine. Start: zakurad when the peer service returns the decoded block (trace row block_request_finish on the wall clock through the clock calibration, error in race_last_block_clock_error_seconds); hayaid at the arrival of the block message, before the parse. Stop: zakurad after the commit in memory (log line 'downloaded and verified gossiped block'); hayaid after the write to the block file and the update of the prepared store. zakurad has a value for a gossiped block only. A panel has one X field, and each node has its own height series: one panel for each node. The panel against time below has both nodes. The panel reads the last sample of each step: with a step above the time between two blocks (a long time range) it shows a part of the blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "X",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race_last_block_height{job=\"node\", node=~\"$hayai\"}[$__interval])",
+          "legendFormat": "block height"
+        },
+        {
+          "refId": "Y0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "last_over_time(race_last_block_received_to_committed_seconds{job=\"node\", node=~\"$hayai\"}[$__interval])",
           "legendFormat": "hayaid"
         }
       ],
@@ -1274,12 +1394,138 @@
           "mode": "multi"
         }
       },
-      "id": 18,
+      "id": 19,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block received to committed against time",
+      "description": "CLOSE. race_last_block_received_to_committed_seconds of the sidecar of each machine. Start: zakurad when the peer service returns the decoded block (trace row block_request_finish on the wall clock through the clock calibration, error in race_last_block_clock_error_seconds); hayaid at the arrival of the block message, before the parse. Stop: zakurad after the commit in memory (log line 'downloaded and verified gossiped block'); hayaid after the write to the block file and the update of the prepared store. zakurad has a value for a gossiped block only. Each step of the line is one block.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_received_to_committed_seconds{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_received_to_committed_seconds{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 20,
       "gridPos": {
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 56
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Template served after a block",
+      "description": "CLOSE. race_last_block_template_served_seconds: the first getblocktemplate answer of the RPC caller of the machine with the last block as previousblockhash (the long poll), minus the commit time of the block on the same machine. zakurad: the time of the log line 'downloaded and verified gossiped block', which comes after the commit response, so a value can be below 0. hayaid: unix_us of the trace row commit_finish. Same client and same stop on both machines. Each step of the line is one block.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_served_seconds{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_served_seconds{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 65
       }
     },
     {
@@ -1335,12 +1581,12 @@
           "sort": "desc"
         }
       },
-      "id": 19,
+      "id": 22,
       "gridPos": {
         "h": 9,
         "w": 12,
-        "x": 0,
-        "y": 56
+        "x": 12,
+        "y": 65
       }
     },
     {
@@ -1453,18 +1699,81 @@
         "showHeader": true,
         "cellHeight": "sm"
       },
-      "id": 20,
+      "id": 23,
       "gridPos": {
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 74
       }
     },
     {
       "type": "timeseries",
-      "title": "RPC mean service time: getblocktemplate",
-      "description": "CLOSE. race:rpc_request_seconds:mean5m. Data only when a client calls the method. Without longpollid, zakurad builds the template in the call and hayaid returns the template that it built at the tip change. A call with longpollid contains the wait.",
+      "title": "Template transactions after a block",
+      "description": "CLOSE. race_last_block_template_transactions: transactions of the first getblocktemplate answer without longpollid at or after the first answer on the last block. The RPC caller sends such a call at once after each long-poll answer. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The mempools differ: each node has other peers. Each step of the line is one block.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_transactions{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_transactions{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 83
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "getblocktemplate time on the client side",
+      "description": "CLOSE. race:rpc_getblocktemplate_seconds:mean5m: mean time of a getblocktemplate call without longpollid over 5 minutes, on the client side (request sent to answer read), from the file of the RPC caller: the call of each interval and the call after each long-poll answer. Without longpollid, zakurad builds the template in the call and hayaid returns the template that it built at the tip change. The node metric rpc_request_duration_seconds is not on this panel: both nodes count the wait of each long poll in it.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1476,7 +1785,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "race:rpc_request_seconds:mean5m{node=~\"$zakura\", method=\"getblocktemplate\"} and on (node) zakura_build_info",
+          "expr": "race:rpc_getblocktemplate_seconds:mean5m{job=\"node\", node=~\"$zakura\"}",
           "legendFormat": "zakurad"
         },
         {
@@ -1485,7 +1794,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "race:rpc_request_seconds:mean5m{node=~\"$hayai\", method=\"getblocktemplate\"} and on (node) hayai_build_info",
+          "expr": "race:rpc_getblocktemplate_seconds:mean5m{job=\"node\", node=~\"$hayai\"}",
           "legendFormat": "hayaid"
         }
       ],
@@ -1514,12 +1823,12 @@
           "sort": "desc"
         }
       },
-      "id": 21,
+      "id": 25,
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 0,
-        "y": 74
+        "x": 8,
+        "y": 83
       }
     },
     {
@@ -1575,12 +1884,12 @@
           "sort": "desc"
         }
       },
-      "id": 22,
+      "id": 26,
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
-        "y": 74
+        "x": 16,
+        "y": 83
       }
     },
     {
@@ -1636,31 +1945,324 @@
           "sort": "desc"
         }
       },
-      "id": 23,
+      "id": 27,
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 16,
-        "y": 74
+        "x": 0,
+        "y": 91
       }
     },
     {
       "type": "row",
-      "title": "Resources (node-exporter of each machine; each machine runs one node)",
+      "title": "Resources of the node container (the sidecar of each machine, cgroup v2 of the container)",
       "collapsed": false,
       "panels": [],
-      "id": 24,
+      "id": 28,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 99
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container CPU",
+      "description": "SAME. race:node_cpu_cores: rate of race_node_cpu_seconds_total (usage_usec of cpu.stat) over 1 minute, in CPU cores. Same method on both machines: the sidecar reads the cgroup v2 files of the node container (slice race-<node>.slice).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_cpu_cores{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_cpu_cores{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 29,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 100
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container memory and peak",
+      "description": "SAME. race_node_memory_bytes (memory.current) and race_node_memory_peak_bytes (memory.peak). Both include the page cache of the files of the container. Same method on both machines: the sidecar reads the cgroup v2 files of the node container (slice race-<node>.slice).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_bytes{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_peak_bytes{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad peak"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_bytes{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_peak_bytes{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid peak"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 30,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 100
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container disk I/O",
+      "description": "SAME. race:node_io_read_bytes_per_second and race:node_io_write_bytes_per_second: rbytes and wbytes of io.stat, devices without a lower device. Same method on both machines: the sidecar reads the cgroup v2 files of the node container (slice race-<node>.slice).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_io_read_bytes_per_second{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad read"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_io_write_bytes_per_second{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad written"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_io_read_bytes_per_second{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid read"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race:node_io_write_bytes_per_second{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid written"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 31,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 108
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Data directory",
+      "description": "CLOSE. race_node_data_bytes: disk blocks of the data volume of the node (du), each 60 s, from the sidecar. The zakurad directory has its log file; hayaid writes its log to Docker. Both have the trace tables.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_data_bytes{job=\"node\", node=~\"$zakura\"}",
+          "legendFormat": "zakurad"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_data_bytes{job=\"node\", node=~\"$hayai\"}",
+          "legendFormat": "hayaid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 32,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 108
+      }
+    },
+    {
+      "type": "row",
+      "title": "Resources of the machine (node-exporter of each machine; each machine runs one node)",
+      "collapsed": false,
+      "panels": [],
+      "id": 33,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 116
       }
     },
     {
       "type": "timeseries",
       "title": "Machine CPU",
-      "description": "race:machine_cpu_utilisation: share of the CPU time that is not idle. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "description": "race:machine_cpu_utilisation: share of the CPU time that is not idle. SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1710,18 +2312,18 @@
           "sort": "desc"
         }
       },
-      "id": 25,
+      "id": 34,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 83
+        "y": 117
       }
     },
     {
       "type": "timeseries",
       "title": "Machine memory in use",
-      "description": "race:machine_memory_used_bytes: MemTotal minus MemAvailable. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "description": "race:machine_memory_used_bytes: MemTotal minus MemAvailable. SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1771,18 +2373,18 @@
           "sort": "desc"
         }
       },
-      "id": 26,
+      "id": 35,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 83
+        "y": 117
       }
     },
     {
       "type": "timeseries",
       "title": "Disk in use",
-      "description": "race:machine_disk_used_bytes: used bytes of the file system of the node data, with the image of the node. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "description": "race:machine_disk_used_bytes: used bytes of the file system of the node data, with the image of the node. SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1832,18 +2434,18 @@
           "sort": "desc"
         }
       },
-      "id": 27,
+      "id": 36,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 125
       }
     },
     {
       "type": "timeseries",
       "title": "Disk I/O",
-      "description": "race:machine_disk_read_bytes_per_second and race:machine_disk_written_bytes_per_second. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "description": "race:machine_disk_read_bytes_per_second and race:machine_disk_written_bytes_per_second. SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1911,18 +2513,18 @@
           "sort": "desc"
         }
       },
-      "id": 28,
+      "id": 37,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 125
       }
     },
     {
       "type": "timeseries",
       "title": "Machine network",
-      "description": "race:machine_network_receive_bytes_per_second and race:machine_network_transmit_bytes_per_second. Same method on both machines: node-exporter. zakurad exports no process metric, so the panel has the values of the machine.",
+      "description": "race:machine_network_receive_bytes_per_second and race:machine_network_transmit_bytes_per_second. SAME. Same method on both machines: node-exporter. The values are of the machine: the node and the containers of the race.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1990,12 +2592,12 @@
           "sort": "desc"
         }
       },
-      "id": 29,
+      "id": 38,
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 133
       }
     },
     {
@@ -2003,12 +2605,12 @@
       "title": "Compared quantities",
       "collapsed": false,
       "panels": [],
-      "id": 30,
+      "id": 39,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 107
+        "y": 141
       }
     },
     {
@@ -2016,14 +2618,14 @@
       "title": "Definition of each compared quantity",
       "options": {
         "mode": "markdown",
-        "content": "\nVerdict CLOSE: both nodes measure the same work with the stated difference. No row has the verdict SAME.\nA quantity that only one node measures is not on a comparison panel. Source of each definition: `docs/zakura-measurements.md`.\n\n| Quantity | zakurad | hayaid | Verdict and difference |\n|---|---|---|---|\n| Block height | `zcash_chain_verified_block_height`, set after the commit response | Same name, set at the commit | CLOSE. Same event: the tip after a commit |\n| Blocks for each second | `rate(zcash_chain_verified_block_total[1m])` | Same | CLOSE |\n| Time to the last checkpoint, time to the tip | First evaluation with the height at the checkpoint, or 2 blocks or less below the reference height | Same rule | CLOSE. Resolution 5 s. The reference is one value for both nodes: the highest of the header chain of hayaid and of the estimate of zakurad |\n| Peers | `zcash_net_peers`: ready and not ready peers of the legacy stack | `zcash_net_peers`: peers after the handshake | CLOSE |\n| Height on disk | `state_finalized_block_height`: the newest block in RocksDB | Same name: the newest block whose coins are in the coins store on disk. hayaid also has each block in its block files | CLOSE. hayaid flushes each 100 blocks by default; zakurad writes each finalized block |\n| P2P bytes | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total`: header and body of each message at the codec | Same names: bytes that the reader took from the socket, and bytes of each frame written in full | CLOSE |\n| Download queue | `sync_downloads_in_flight`: tasks in download or in verification | Same name: requests without an answer plus downloaded blocks that wait for the validator | CLOSE |\n| Contextual commit time, for each block | `state_contextual_total_duration_seconds`: initial contextual checks, then the commit to the non-finalized state (transparent spends, anchors, note commitment trees, chain push) | `hayai_contextual_commit_duration_seconds`: stages context, trees, history, then the push of the layer on the chain | CLOSE. The split of the checks between this interval and the earlier validation is not the same on both nodes. zakurad includes a clone of the chain |\n| Block received to committed, for each block | No metric. Trace row `block_request_finish` to the log line `downloaded and verified gossiped block` | `hayai_last_block_received_to_committed_seconds`, trace field `commit_finish.received_to_commit_us` | CLOSE, in the table of `collect` only (`blocks.csv`). Start: zakurad when the peer service returns the decoded block; hayaid at the arrival of the message, before the parse. Stop: zakurad after the commit in memory; hayaid after the write to the block file and the update of the prepared store. The panel here has hayaid only |\n| Reuse of the mempool verification | `zakura_consensus_cache_hit` / (hit + miss): shielded bundles, block and mempool lookups | `hayai_prepared_store_hits_total` / (hits + misses): transactions of blocks | CLOSE. Unit: bundle against transaction. zakurad reuses no script result |\n| Mempool size | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | Same names: the prepared store | CLOSE. hayaid updates the gauges at each commit and each second |\n| RPC mean service time | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. zakurad parses the parameters inside the interval. `getblocktemplate` without `longpollid`: zakurad builds the template in the call; hayaid returns the template that it built at the tip change. A call with `longpollid` contains the wait |\n| CPU, memory, disk, disk I/O, network | node-exporter of the machine of zakurad | node-exporter of the machine of hayaid | Same method. The values are of the machine, which runs one node |\n\nNot compared, because zakurad has no such measurement:\n\n- Block received to block validated (hayai dashboard).\n- Block received to template ready, and tip change to template ready (hayai dashboard). zakurad builds a template only when a `getblocktemplate` request arrives. An external probe is necessary for this comparison (docs/sync-race.md).\n- Script check time, validation stages (hayai dashboard).\n- Header height: zakurad with the legacy stack has no header chain.\n- CPU and memory of the process: zakurad exports no `process_*` metric.\n\nNot compared, because hayaid has no such measurement: wait in the queue of the block writer, checkpoint verifier heights, RocksDB metrics (Zakura dashboard).\n\nNot compared, because the definitions differ: `sync_block_verify_duration_seconds` appears on zakurad only for a block of the legacy syncer and was not seen on a running node; shielded proof time (batch on zakurad, block on hayaid).\n"
+        "content": "\nVerdict SAME: one method and one definition on both machines. Verdict CLOSE: both nodes measure the same work with the stated difference.\nA quantity that only one node measures is not on a comparison panel. Source of each definition: `docs/zakura-measurements.md` and the help text of each `race_*` metric of the sidecar (`scripts/race_sidecar.py`).\n\n| Quantity | zakurad | hayaid | Verdict and difference |\n|---|---|---|---|\n| Block height | `zcash_chain_verified_block_height`, set after the commit response | Same name, set at the commit | CLOSE. Same event: the tip after a commit |\n| Blocks for each second | `rate(zcash_chain_verified_block_total[1m])` | Same | CLOSE |\n| Time to the last checkpoint, time to the tip | First evaluation with the height at the checkpoint, or 2 blocks or less below the reference height | Same rule | CLOSE. Resolution 5 s. The reference is one value for both nodes: the highest of the header chain of hayaid and of the estimate of zakurad |\n| Peers | `zcash_net_peers`: ready and not ready peers of the legacy stack | `zcash_net_peers`: peers after the handshake | CLOSE |\n| Height on disk | `state_finalized_block_height`: the newest block in RocksDB | Same name: the newest block whose coins are in the coins store on disk. hayaid also has each block in its block files | CLOSE. hayaid flushes each 100 blocks by default; zakurad writes each finalized block |\n| P2P bytes | `zcash_net_in_bytes_total`, `zcash_net_out_bytes_total`: header and body of each message at the codec | Same names: bytes that the reader took from the socket, and bytes of each frame written in full | CLOSE |\n| Download queue | `sync_downloads_in_flight`: tasks in download or in verification | Same name: requests without an answer plus downloaded blocks that wait for the validator | CLOSE |\n| Contextual commit time, for each block | `state_contextual_total_duration_seconds`: initial contextual checks, then the commit to the non-finalized state (transparent spends, anchors, note commitment trees, chain push) | `hayai_contextual_commit_duration_seconds`: stages context, trees, history, then the push of the layer on the chain | CLOSE. The split of the checks between this interval and the earlier validation is not the same on both nodes. zakurad includes a clone of the chain |\n| Block received to committed, for each block | `race_last_block_received_to_committed_seconds` of the sidecar: trace row `block_request_finish` (on the wall clock through the clock calibration) to the log line `downloaded and verified gossiped block`. Gossiped blocks only | `race_last_block_received_to_committed_seconds` of the sidecar: trace field `commit_finish.received_to_commit_us` | CLOSE. Start: zakurad when the peer service returns the decoded block; hayaid at the arrival of the message, before the parse. Stop: zakurad after the commit in memory; hayaid after the write to the block file and the update of the prepared store. The zakurad value has the error `race_last_block_clock_error_seconds` |\n| Template served after a block, for each block | `race_last_block_template_served_seconds`: first `getblocktemplate` answer of the RPC caller on the block (the long poll) minus the time of the log line `downloaded and verified gossiped block` | Same, minus `unix_us` of the trace row `commit_finish` | CLOSE. Same client and same stop. zakurad writes its log line after the commit response, so its start is later and a value can be below 0 |\n| Template transactions after a block, for each block | `race_last_block_template_transactions`: the first answer without `longpollid` at or after the first answer on the block | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The mempools differ |\n| Reuse of the mempool verification | `zakura_consensus_cache_hit` / (hit + miss): shielded bundles, block and mempool lookups | `hayai_prepared_store_hits_total` / (hits + misses): transactions of blocks | CLOSE. Unit: bundle against transaction. zakurad reuses no script result |\n| Mempool size | `zcash_mempool_size_transactions`, `zcash_mempool_size_bytes` | Same names: the prepared store | CLOSE. hayaid updates the gauges at each commit and each second |\n| `getblocktemplate` time on the client side | `race_rpc_getblocktemplate_seconds` of the sidecar: calls without `longpollid` of the RPC caller, request sent to answer read | Same | CLOSE. zakurad builds the template in the call; hayaid returns the template that it built at the tip change. The node metric `rpc_request_duration_seconds` has the wait of each long poll on both nodes, so no panel reads it for `getblocktemplate` |\n| RPC mean service time, other methods | `rpc_request_duration_seconds` (summary): sum / count | Same name (histogram): sum / count | CLOSE. zakurad parses the parameters inside the interval |\n| CPU, memory and peak, disk I/O of the node | `race_node_*` of the sidecar: `cpu.stat`, `memory.current`, `memory.peak`, `io.stat` of the cgroup of the node container | Same | SAME. Memory includes the page cache of the container |\n| Data directory | `race_node_data_bytes` of the sidecar: du of the data volume each 60 s | Same | CLOSE. The zakurad directory has its log file; hayaid writes its log to Docker |\n| CPU, memory, disk, disk I/O, network of the machine | node-exporter of the machine of zakurad | node-exporter of the machine of hayaid | SAME. The values are of the machine, which runs one node and the race containers |\n\nNot compared, because zakurad has no such measurement:\n\n- Block received to block validated (hayai dashboard).\n- Block received to template ready, and tip change to template ready (hayai dashboard). zakurad builds a template only when a `getblocktemplate` request arrives. An external probe is necessary for this comparison (docs/sync-race.md).\n- Script check time, validation stages (hayai dashboard).\n- Header height: zakurad with the legacy stack has no header chain.\n\nNot compared, because hayaid has no such measurement: wait in the queue of the block writer, checkpoint verifier heights, RocksDB metrics (Zakura dashboard).\n\nNot compared, because the definitions differ: `sync_block_verify_duration_seconds` appears on zakurad only for a block of the legacy syncer and was not seen on a running node; shielded proof time (batch on zakurad, block on hayaid).\n"
       },
-      "id": 31,
+      "id": 40,
       "gridPos": {
         "h": 22,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 142
       }
     }
   ]

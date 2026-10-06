@@ -13,17 +13,22 @@ Usage:
               each call: the node writes a new one at each start.
   --out       The caller adds one JSON line for each call to this file.
   --interval  Seconds between two calls without `longpollid` (default 5).
-  --longpoll  1: also holds one call with the `longpollid` of the last answer, on a second
-              connection, and records its return. 0 (default): no such call. The node
-              counts a long poll in `rpc_request_duration_seconds` with its wait, so the
-              mean of that metric is then not the time of a call without `longpollid`.
+  --longpoll  1 (default): also holds one call with the `longpollid` of the last answer, on
+              a second connection, as a pool does, and records its return. After each
+              long-poll answer with a template it sends one call without `longpollid` at
+              once (mode `after_longpoll`): the transactions of the template that the
+              node serves after a new block. 0: no such call. The node counts a long poll
+              in `rpc_request_duration_seconds` with its wait, so the mean of that metric
+              is not the time of a call without `longpollid`: the sidecar
+              (scripts/race_sidecar.py) exports the time on the client side.
   --timeout   Limit of a call without `longpollid`, in seconds (default 30).
 
 The only method is `getblocktemplate`. The caller changes nothing in the node.
 
 One line for each call:
   unix_us      Wall clock of this machine at the return of the call, µs since the epoch.
-  mode         `poll` (no `longpollid`) or `longpoll`.
+  mode         `poll` (no `longpollid`, each interval), `longpoll`, or `after_longpoll`
+               (no `longpollid`, at once after a long-poll answer).
   duration_us  Time of the call on the client side: request sent to answer read.
   ok           true: the answer has a template. Then `height`, `previousblockhash` and
                `transactions` (the number of transactions of the template).
@@ -163,6 +168,8 @@ class Caller:
             # with the `longpollid` alone and accepts the capability.
             params = [{"capabilities": ["longpoll"], "longpollid": longpollid}]
             line = self.call("longpoll", params, LONGPOLL_TIMEOUT_S)
+            if line["ok"]:
+                self.call("after_longpoll", [], self.timeout)
             with self.lock:
                 same = self.longpollid == longpollid
             # An error, or a node that does not hold the call: no loop without a wait.
@@ -178,7 +185,7 @@ def main():
     parser.add_argument("--cookie", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--interval", type=float, default=5)
-    parser.add_argument("--longpoll", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--longpoll", type=int, choices=(0, 1), default=1)
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args()
     if args.interval <= 0:

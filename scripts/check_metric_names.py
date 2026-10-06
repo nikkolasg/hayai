@@ -13,11 +13,15 @@ Three checks. Exit status 1 lists every unknown name.
    histogram map to the histogram name.
 3. Each metric in an expression of the race (docker/race) is a known name:
    - the recording rules and the dashboard comparison.json: a name that hayaid
-     registers, a name of zakurad, a name of NODE_EXPORTER, `up`, or a series that the
-     rules record (race.yml, and the rule that compose.monitor.yml writes);
+     registers, a name of zakurad, a name of NODE_EXPORTER, a name of the sidecar, `up`,
+     or a series that the rules record (race.yml, and the rule that compose.monitor.yml
+     writes);
    - the dashboard hayai-node.json: a name that hayaid registers, or a name of
-     NODE_EXPORTER;
-   - the dashboard zakura-node.json: a name of zakurad, or a name of NODE_EXPORTER.
+     NODE_EXPORTER or of the sidecar;
+   - the dashboard zakura-node.json: a name of zakurad, or a name of NODE_EXPORTER or of
+     the sidecar.
+   The names of the sidecar are the keys of METRICS in scripts/race_sidecar.py, with
+   _sum and _count for a summary.
    The names of zakurad are the families of scripts/zakura_metric_names.txt: the
    `/metrics` text of a running zakurad. zakurad exports summaries, so a `_bucket`
    series of a name of zakurad is not a known name.
@@ -40,6 +44,7 @@ USERS = [
 RACE_RULES = REPO / "docker/race/prometheus/rules/race.yml"
 RACE_DASHBOARDS = REPO / "docker/race/grafana/dashboards"
 ZAKURA_RUNNING = REPO / "scripts/zakura_metric_names.txt"
+SIDECAR = REPO / "scripts/race_sidecar.py"
 
 # The metrics that hayaid exports with the name, the labels and the unit of Zakura
 # (docs/zakura-compat.md, Metrics).
@@ -164,8 +169,14 @@ def main() -> int:
     def of_zakura(name):
         return name in zakura or re.sub(r"_(sum|count)$", "", name) in zakura
 
+    sidecar = set()
+    for name, kind in re.findall(r'^    "(race_[a-z_]+)": \(\n\s+"(\w+)"', SIDECAR.read_text(), flags=re.M):
+        sidecar |= {name + "_sum", name + "_count"} if kind == "summary" else {name}
+    if not sidecar:
+        errors.append(f"no metric name in METRICS of {SIDECAR.relative_to(REPO)}")
+
     def of_machine(name):
-        return name in NODE_EXPORTER
+        return name in NODE_EXPORTER or name in sidecar
 
     def of_race(name):
         return name in recorded or name == "up" or of_hayai(name) or of_zakura(name) or of_machine(name)

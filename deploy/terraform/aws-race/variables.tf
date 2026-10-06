@@ -122,7 +122,7 @@ variable "node_memory" {
 }
 
 variable "rpc_caller" {
-  description = "true: an RPC caller (scripts/race_rpc_caller.py) runs beside each node and calls getblocktemplate. false: no RPC caller."
+  description = "true: an RPC caller (scripts/race_rpc_caller.py) runs beside each node and calls getblocktemplate. false: no RPC caller. The sidecar (scripts/race_sidecar.py) runs in both cases."
   type        = bool
   default     = true
 }
@@ -134,9 +134,9 @@ variable "rpc_caller_interval" {
 }
 
 variable "rpc_caller_long_poll" {
-  description = "true: each RPC caller also holds one getblocktemplate long poll. The mean of rpc_request_duration_seconds then contains the wait of the long poll."
+  description = "true: each RPC caller also holds one getblocktemplate long poll, as a pool does, and sends one call without longpollid after each long-poll answer. The node metric rpc_request_duration_seconds then contains the wait of the long poll; the comparison dashboard reads the time on the client side from the sidecar. false: calls without longpollid only."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "tags" {

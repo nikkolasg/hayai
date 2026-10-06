@@ -48,6 +48,15 @@ block has a value, and the node can answer some µs before it writes the line (a
 below 0). Without the long poll of the caller the value has an error between 0 and the
 call interval. The summary states which mode gave the first answer.
 
+"Template transactions" (`hayai_template_transactions`, `zakura_template_transactions`):
+the transactions of the first answer without `longpollid` (mode `poll` or
+`after_longpoll`) at or after the first answer on the block. The caller sends such a call
+at once after each long-poll answer.
+
+scripts/race_sidecar.py uses the clock calibration (`calibrate`), the log parser
+(`zakura_log_line`) and the reader of the caller file (`CallerAnswers`) of this file for
+the live metrics of the same quantities.
+
 A height is in the table when hayaid committed a block at it, from --from-height on
 (default: the first height of a gossiped block in the log of zakurad, else each height).
 The Zakura value of "received to committed" is in the row only when zakurad has the same
@@ -55,6 +64,7 @@ block hash. Exit status 1: no committed block in the traces of hayaid.
 """
 
 import argparse
+import bisect
 import csv
 import json
 import os
@@ -83,6 +93,8 @@ COLUMNS = [
     "hayai_received_to_template_full_s",
     "hayai_template_served_s",
     "zakura_template_served_s",
+    "hayai_template_transactions",
+    "zakura_template_transactions",
     "note",
 ]
 
@@ -177,34 +189,95 @@ def best_range(intervals, low, high):
     return best
 
 
+def zakura_log_line(line):
+    """("round", time) for a line `starting sync`, ("commit", time, hash, height) for a line
+    `downloaded and verified gossiped block`, else None. Each time is in µs since the Unix
+    epoch."""
+    line = ANSI.sub("", line)
+    at = log_micros(line)
+    if at is None:
+        return None
+    if ROUND in line:
+        return ("round", at)
+    match = GOSSIPED.search(line)
+    if match:
+        return ("commit", at, match.group(1), int(match.group(2)))
+    return None
+
+
 def zakura_log(log_path, since=0):
     """(times of the sync rounds, hash -> (height, commit time)) from the log lines of
     zakurad at or after `since`. Each time is in µs since the Unix epoch."""
     rounds, committed = [], {}
     with open(log_path, errors="replace") as f:
         for line in f:
-            line = ANSI.sub("", line)
-            at = log_micros(line)
-            if at is None or at < since:
+            parsed = zakura_log_line(line)
+            if parsed is None or parsed[1] < since:
                 continue
-            if ROUND in line:
-                rounds.append(at)
+            if parsed[0] == "round":
+                rounds.append(parsed[1])
             else:
-                match = GOSSIPED.search(line)
-                if match:
-                    committed.setdefault(match.group(1), (int(match.group(2)), at))
+                committed.setdefault(parsed[2], (parsed[3], parsed[1]))
     return rounds, committed
+
+
+def peer_offset(windows, finds, upper):
+    """best_range of the offsets of legacy_peer_request below `upper` that put a
+    find_blocks_finish row (`finds`) in a round. `windows`: the rounds on the wall clock,
+    sorted, one after the other."""
+    starts = [start for start, _ in windows]
+    intervals = []
+    for f in finds:
+        # Only a round that ends at or after f + upper - SEARCH_US and starts at or before
+        # f + upper can contain the row.
+        i = bisect.bisect_right(starts, f + upper)
+        while i > 0 and windows[i - 1][1] >= f + upper - SEARCH_US:
+            i -= 1
+            intervals.append((windows[i][0] - f, windows[i][1] - f))
+    return best_range(intervals, upper - SEARCH_US, upper)
+
+
+def calibrate(pairs, windows, finds, gaps):
+    """(offset, calibration): the offset in µs of the clock of legacy_peer_request to the
+    wall clock, or None when a step has no data. The calibration is a dict for the summary;
+    its key `reason` names the missing data, and `error_s` is the error of each value.
+
+    pairs: (ts of round_start, time of its log line `starting sync`) of each round.
+    windows: (ts of round_start, ts of the next tips_obtained) on the clock of legacy_sync.
+    finds: ts of the find_blocks_finish rows.
+    gaps: log time minus ts of block_request_finish, for each block with both."""
+    calibration = {"error_s": None, "reason": None}
+    if not pairs:
+        calibration["reason"] = "no round_start row with a log line"
+        return None, calibration
+    offsets = [at - ts for ts, at in pairs]
+    sync_offset = statistics.median(offsets)
+    calibration["sync_rounds"] = len(pairs)
+    calibration["sync_spread_s"] = (max(offsets) - min(offsets)) / 1e6
+    if not gaps:
+        calibration["reason"] = "no block has a block_request_finish row and a log line"
+        return None, calibration
+    rounds = sorted((start + sync_offset, end + sync_offset) for start, end in windows)
+    count, low, high = peer_offset(rounds, finds, min(gaps))
+    if count == 0:
+        calibration["reason"] = "no find_blocks_finish row is in a round"
+        return None, calibration
+    calibration.update(
+        error_s=(high - low) / 2e6,
+        find_rows=len(finds),
+        find_rows_in_a_round=count,
+        blocks=len(gaps),
+    )
+    return (low + high) / 2, calibration
 
 
 def zakura_received_to_committed(trace_dir, log_path):
     """(hash -> (height, seconds), calibration). The calibration is a dict for the
     summary; its key `error_s` is None when the clocks have no calibration."""
-    calibration = {"error_s": None, "reason": None}
     peer_rows = read_rows(os.path.join(trace_dir, "legacy_peer_request.jsonl"))
     sync_rows = read_rows(os.path.join(trace_dir, "legacy_sync.jsonl"))
     if not peer_rows or not sync_rows:
-        calibration["reason"] = "no legacy_peer_request or legacy_sync rows"
-        return {}, calibration
+        return {}, {"error_s": None, "reason": "no legacy_peer_request or legacy_sync rows"}
     # The rows and the log lines of the last start of the process only.
     process = peer_rows[-1]["process_trace_id"]
     peer_rows = [r for r in peer_rows if r["process_trace_id"] == process]
@@ -212,45 +285,25 @@ def zakura_received_to_committed(trace_dir, log_path):
     # The first row of the process and its log line can be some µs apart.
     rounds, committed = zakura_log(log_path, int(process.split("-")[1]) // 1000 - 1_000_000)
     starts = [r["ts"] for r in sync_rows if r["event"] == "round_start"]
-    pairs = min(len(starts), len(rounds))
-    if pairs == 0:
-        calibration["reason"] = "no round_start row with a log line"
-        return {}, calibration
-    offsets = [rounds[k] - starts[k] for k in range(pairs)]
-    sync_offset = statistics.median(offsets)
-    calibration["sync_rounds"] = pairs
-    calibration["sync_spread_s"] = (max(offsets) - min(offsets)) / 1e6
-
     requests = {}
     for r in peer_rows:
         if r["event"] == "block_request_finish" and r.get("result") == "available":
             requests.setdefault(r.get("returned_hash"), r["ts"])
     both = [h for h in requests if h in committed]
-    if not both:
-        calibration["reason"] = "no block has a block_request_finish row and a log line"
-        return {}, calibration
-    upper = min(committed[h][1] - requests[h] for h in both)
-    # Each round on the wall clock: round_start to the next tips_obtained.
+    # Each round: round_start to the next tips_obtained.
     windows, opened = [], None
     for r in sync_rows:
         if r["event"] == "round_start":
             opened = r["ts"]
         elif r["event"] == "tips_obtained" and opened is not None:
-            windows.append((opened + sync_offset, r["ts"] + sync_offset))
+            windows.append((opened, r["ts"]))
             opened = None
     finds = [r["ts"] for r in peer_rows if r["event"] == "find_blocks_finish"]
-    intervals = [(start - f, end - f) for f in finds for start, end in windows]
-    count, low, high = best_range(intervals, upper - SEARCH_US, upper)
-    if count == 0:
-        calibration["reason"] = "no find_blocks_finish row is in a round"
-        return {}, calibration
-    offset = (low + high) / 2
-    calibration.update(
-        error_s=(high - low) / 2e6,
-        find_rows=len(finds),
-        find_rows_in_a_round=count,
-        blocks=len(both),
+    offset, calibration = calibrate(
+        list(zip(starts, rounds)), windows, finds, [committed[h][1] - requests[h] for h in both]
     )
+    if offset is None:
+        return {}, calibration
     values = {h: (committed[h][0], (committed[h][1] - requests[h] - offset) / 1e6) for h in both}
     return values, calibration
 
@@ -301,36 +354,74 @@ def zakura_contextual_commit(paths):
     return values, stats
 
 
-def caller_answers(path):
-    """(previousblockhash -> (time, mode) of the first answer, statistics) from the JSON
-    lines of scripts/race_rpc_caller.py."""
-    first, durations = {}, []
-    stats = {"polls": 0, "long_polls": 0, "errors": 0, "mean_poll_s": None}
-    for r in read_rows(path):
+# Modes of a call without `longpollid` (scripts/race_rpc_caller.py).
+PLAIN = ("poll", "after_longpoll")
+
+
+class CallerAnswers:
+    """The answers of the RPC caller of one node, line by line (scripts/race_rpc_caller.py).
+    This class is also the reader of scripts/race_sidecar.py.
+
+    first: previousblockhash -> (time, mode) of the first answer on the block.
+    transactions: previousblockhash -> (time, transactions) of the first answer without
+    `longpollid` at or after the first answer on the block.
+    stats: `polls` (calls without `longpollid` with a template), `long_polls`, `errors`.
+    plain_us: the sum of the times of the calls in `polls`, on the client side.
+    keep: when set, `first` and `transactions` keep the newest `keep` blocks only."""
+
+    def __init__(self, keep=None):
+        self.keep = keep
+        self.first, self.transactions = {}, {}
+        self.stats = {"polls": 0, "long_polls": 0, "errors": 0}
+        self.plain_us = 0
+
+    def add(self, r):
         if not r.get("ok"):
-            stats["errors"] += 1
-            continue
-        if r.get("mode") == "poll":
-            stats["polls"] += 1
-            durations.append(r["duration_us"])
+            self.stats["errors"] += 1
+            return
+        plain = r.get("mode") in PLAIN
+        if plain:
+            self.stats["polls"] += 1
+            self.plain_us += r["duration_us"]
         else:
-            stats["long_polls"] += 1
-        known = first.get(r["previousblockhash"])
-        if known is None or r["unix_us"] < known[0]:
-            first[r["previousblockhash"]] = (r["unix_us"], r.get("mode"))
-    if durations:
-        stats["mean_poll_s"] = statistics.fmean(durations) / 1e6
-    return first, stats
+            self.stats["long_polls"] += 1
+        block, at = r["previousblockhash"], r["unix_us"]
+        first = self.first.get(block)
+        if first is None or at < first[0]:
+            first = self.first[block] = (at, r.get("mode"))
+            if self.keep is not None and len(self.first) > self.keep:
+                oldest = next(iter(self.first))
+                del self.first[oldest]
+                self.transactions.pop(oldest, None)
+        known = self.transactions.get(block)
+        if plain and at >= first[0] and (known is None or at < known[0]):
+            self.transactions[block] = (at, r["transactions"])
+
+    def mean_plain_s(self):
+        return self.plain_us / self.stats["polls"] / 1e6 if self.stats["polls"] else None
 
 
-def template_served(answers, block_hash, committed_unix_us, stats):
+def caller_answers(path):
+    """The CallerAnswers of a file of scripts/race_rpc_caller.py."""
+    answers = CallerAnswers()
+    for r in read_rows(path):
+        answers.add(r)
+    return answers
+
+
+def template_served(answers, block_hash, committed_unix_us):
     """Seconds from the commit of a block to the first answer of the caller on it."""
-    answer = answers.get(block_hash)
+    answer = answers.first.get(block_hash)
     if answer is None or committed_unix_us is None:
         return None
     key = "first_by_long_poll" if answer[1] == "longpoll" else "first_by_poll"
-    stats[key] = stats.get(key, 0) + 1
+    answers.stats[key] = answers.stats.get(key, 0) + 1
     return (answer[0] - committed_unix_us) / 1e6
+
+
+def template_transactions(answers, block_hash):
+    known = answers.transactions.get(block_hash)
+    return None if known is None else known[1]
 
 
 def difference(a, b):
@@ -338,12 +429,12 @@ def difference(a, b):
 
 
 def build_rows(hayai, zakura_commit, zakura_contextual, from_height, callers=None, zakura_committed=None):
-    """`callers`: node -> (answers, statistics) of caller_answers. `zakura_committed`:
-    hash -> (height, commit time) of zakura_log."""
+    """`callers`: node -> CallerAnswers. `zakura_committed`: hash -> (height, commit
+    time) of zakura_log."""
     rows = []
     callers = callers or {}
-    hayai_answers, hayai_stats = callers.get("hayai", ({}, {}))
-    zakura_answers, zakura_stats = callers.get("zakura", ({}, {}))
+    hayai_answers = callers.get("hayai", CallerAnswers())
+    zakura_answers = callers.get("zakura", CallerAnswers())
     zakura_committed = zakura_committed or {}
     by_height = {height: h for h, (height, _) in zakura_commit.items()}
     for height in sorted(hayai):
@@ -371,12 +462,12 @@ def build_rows(hayai, zakura_commit, zakura_contextual, from_height, callers=Non
                 "diff_contextual_commit_s": difference(b["contextual_commit"], contextual),
                 "hayai_received_to_template_empty_s": b.get("template_empty"),
                 "hayai_received_to_template_full_s": b.get("template_full"),
-                "hayai_template_served_s": template_served(
-                    hayai_answers, b["hash"], b["committed_unix_us"], hayai_stats
-                ),
+                "hayai_template_served_s": template_served(hayai_answers, b["hash"], b["committed_unix_us"]),
                 "zakura_template_served_s": template_served(
-                    zakura_answers, b["hash"], zakura_committed.get(b["hash"], (None, None))[1], zakura_stats
+                    zakura_answers, b["hash"], zakura_committed.get(b["hash"], (None, None))[1]
                 ),
+                "hayai_template_transactions": template_transactions(hayai_answers, b["hash"]),
+                "zakura_template_transactions": template_transactions(zakura_answers, b["hash"]),
                 "note": note,
             }
         )
@@ -407,7 +498,12 @@ def summary(rows, calibration, contextual_stats, from_height, callers=None):
         lines.append("No block.")
     if from_height is not None:
         lines.append(f"First height of the table: {from_height}.")
-    lines += ["", "Each value is in seconds. A difference is hayaid minus zakurad.", ""]
+    lines += [
+        "",
+        "Each value is in seconds, but a `*_template_transactions` value is a number of"
+        " transactions. A difference is hayaid minus zakurad.",
+        "",
+    ]
     lines += ["| Quantity | Blocks | Median | 90 % | Largest |", "|---|---|---|---|---|"]
     for column in COLUMNS[5:-1]:
         values = [r[column] for r in rows if r[column] is not None]
@@ -441,7 +537,8 @@ def summary(rows, calibration, contextual_stats, from_height, callers=None):
         lines.append("No file of the caller: the columns `*_template_served_s` are empty.")
     else:
         lines += [
-            "Mean time of a call without `longpollid`, on the client side, for the whole file."
+            "Calls without `longpollid`: the calls of each interval and the call after each long-poll"
+            " answer. Mean time of such a call, on the client side, for the whole file."
             " \"First answer\": the mode of the first answer on a block of the table. An answer"
             " by a call without `longpollid` is late by 0 to the call interval.",
             "",
@@ -453,9 +550,9 @@ def summary(rows, calibration, contextual_stats, from_height, callers=None):
             if node not in callers:
                 lines.append(f"| {name} | no file | | | | | |")
                 continue
-            stats = callers[node][1]
+            stats = callers[node].stats
             lines.append(
-                f"| {name} | {stats['polls']} | {cell(stats['mean_poll_s'])} | {stats['long_polls']}"
+                f"| {name} | {stats['polls']} | {cell(callers[node].mean_plain_s())} | {stats['long_polls']}"
                 f" | {stats['errors']} | {stats.get('first_by_long_poll', 0)}"
                 f" | {stats.get('first_by_poll', 0)} |"
             )

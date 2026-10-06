@@ -2458,7 +2458,7 @@
     },
     {
       "type": "row",
-      "title": "Machine (the node-exporter of the variable). zakurad exports no process metric.",
+      "title": "Sidecar of the machine (race_* metrics of the node-exporter of the variable). zakurad exports no process metric.",
       "collapsed": false,
       "panels": [],
       "id": 41,
@@ -2467,6 +2467,468 @@
         "w": 24,
         "x": 0,
         "y": 99
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container CPU",
+      "description": "rate of race_node_cpu_seconds_total over 1 minute: CPU cores of the cgroup v2 of the node container (slice race-<node>.slice). Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(race_node_cpu_seconds_total{job=\"node\", instance=~\"$machine\"}[1m])",
+          "legendFormat": "cores"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 42,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 100
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container memory",
+      "description": "race_node_memory_bytes (memory.current) and race_node_memory_peak_bytes (memory.peak) of the cgroup v2 of the node container (slice race-<node>.slice), with the page cache. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_bytes{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "current"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_memory_peak_bytes{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "peak"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 43,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 100
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container disk I/O",
+      "description": "rate of race_node_io_read_bytes_total and race_node_io_write_bytes_total over 1 minute: io.stat of the cgroup v2 of the node container (slice race-<node>.slice). Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(race_node_io_read_bytes_total{job=\"node\", instance=~\"$machine\"}[1m])",
+          "legendFormat": "read"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(race_node_io_write_bytes_total{job=\"node\", instance=~\"$machine\"}[1m])",
+          "legendFormat": "written"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 44,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 100
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Data directory",
+      "description": "race_node_data_bytes: disk blocks of the data directory of the node (du), each 60 s. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_node_data_bytes{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "data directory"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 45,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 108
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Template served after a block",
+      "description": "race_last_block_template_served_seconds: first getblocktemplate answer of the RPC caller on the last block minus the commit time of the block on this machine. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_served_seconds{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "served"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 46,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 108
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Template transactions after a block",
+      "description": "race_last_block_template_transactions: transactions of the first answer without longpollid at or after the first answer on the last block. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_template_transactions{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "transactions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 47,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 108
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "getblocktemplate time on the client side",
+      "description": "race_rpc_getblocktemplate_seconds: mean time of a call without longpollid on the client side (rate of _sum / rate of _count over 5 minutes). The node metric rpc_request_duration_seconds has the wait of each long poll. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(race_rpc_getblocktemplate_seconds_sum{job=\"node\", instance=~\"$machine\"}[5m]) / rate(race_rpc_getblocktemplate_seconds_count{job=\"node\", instance=~\"$machine\"}[5m])",
+          "legendFormat": "mean"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 48,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 116
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block received to committed",
+      "description": "race_last_block_received_to_committed_seconds: trace row block_request_finish (on the wall clock through the clock calibration) to the log line 'downloaded and verified gossiped block', for the last gossiped block, and race_last_block_clock_error_seconds: the error of the calibration. Source: the sidecar of the machine (scripts/race_sidecar.py), through node-exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "5s",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_received_to_committed_seconds{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "received to committed"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "race_last_block_clock_error_seconds{job=\"node\", instance=~\"$machine\"}",
+          "legendFormat": "error of the calibration"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 49,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 116
+      }
+    },
+    {
+      "type": "row",
+      "title": "Machine (the node-exporter of the variable)",
+      "collapsed": false,
+      "panels": [],
+      "id": 50,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 124
       }
     },
     {
@@ -2513,12 +2975,12 @@
           "sort": "desc"
         }
       },
-      "id": 42,
+      "id": 51,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 100
+        "y": 125
       }
     },
     {
@@ -2565,12 +3027,12 @@
           "sort": "desc"
         }
       },
-      "id": 43,
+      "id": 52,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 100
+        "y": 125
       }
     },
     {
@@ -2617,12 +3079,12 @@
           "sort": "desc"
         }
       },
-      "id": 44,
+      "id": 53,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 108
+        "y": 133
       }
     },
     {
@@ -2678,12 +3140,12 @@
           "sort": "desc"
         }
       },
-      "id": 45,
+      "id": 54,
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 133
       }
     },
     {
@@ -2739,12 +3201,12 @@
           "sort": "desc"
         }
       },
-      "id": 46,
+      "id": 55,
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 141
       }
     }
   ]

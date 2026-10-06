@@ -15,13 +15,18 @@
 #   build    Build the two images on this machine. It needs no host.
 #   start    Copy the files and the images, start the monitoring on C, then start both
 #            nodes at the same minute, each one with its RPC caller
-#            (scripts/race_rpc_caller.py). It stops when a node host has data of a race.
-#   status   Containers, resources, height, peers and last log line of each node, and
-#            the last line of each RPC caller.
-#   stop     Stop both nodes and both RPC callers. The data and the monitoring stay.
+#            (scripts/race_rpc_caller.py) and its sidecar (scripts/race_sidecar.py). It
+#            stops when a node host has data of a race, or when the Docker of A or B
+#            does not use cgroup v2 with the systemd cgroup driver (the sidecar reads
+#            the cgroup of the node container).
+#   status   Containers, resources, height, peers and last log line of each node, the
+#            last line of each RPC caller, the values of each sidecar, and
+#            net.ipv4.tcp_slow_start_after_idle of A and B (it must be 0 on both).
+#   stop     Stop both nodes, both RPC callers and both sidecars. The data and the
+#            monitoring stay.
 #   collect  Fetch the versions, the node logs, the metrics, the trace files of both
-#            nodes, the files of both RPC callers and the series of the race into
-#            race-results/<UTC time>/, and write
+#            nodes, the files of both RPC callers, the last textfile of both sidecars
+#            and the series of the race into race-results/<UTC time>/, and write
 #            the table of blocks at the tip (blocks.csv, blocks.md) with
 #            scripts/race_blocks.py. It needs python3 on this machine.
 #   swap     `clean`, then `start` with the roles of A and B exchanged.
@@ -47,7 +52,8 @@
 #                     sends one `getblocktemplate` call each RACE_CALLER_INTERVAL
 #                     seconds. 0: no RPC caller.
 #   RACE_CALLER_INTERVAL  Seconds between two calls of an RPC caller (default 5).
-#   RACE_CALLER_LONGPOLL  1: each RPC caller also holds one long poll. 0 (default).
+#   RACE_CALLER_LONGPOLL  1 (default): each RPC caller also holds one long poll and
+#                     sends one call without `longpollid` after each answer. 0: no long poll.
 #   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT, RACE_PROMETHEUS_ADDR
 #                     Other ports than 9999, 19101 and 127.0.0.1:9090, as in
 #                     docker/race/compose.monitor.yml (the dry run).
@@ -78,7 +84,7 @@ RACE_MEMORY="${RACE_MEMORY:-0}"
 RACE_LOG_LINES="${RACE_LOG_LINES:-20000}"
 RACE_CALLER="${RACE_CALLER:-1}"
 RACE_CALLER_INTERVAL="${RACE_CALLER_INTERVAL:-5}"
-RACE_CALLER_LONGPOLL="${RACE_CALLER_LONGPOLL:-0}"
+RACE_CALLER_LONGPOLL="${RACE_CALLER_LONGPOLL:-1}"
 # The file of an RPC caller in its container (docker/race/compose.node.yml).
 CALLER_FILE="/var/lib/race-caller/getblocktemplate.jsonl"
 ZAKURAD_METRICS_PORT="${RACE_ZAKURAD_METRICS_PORT:-9999}"
@@ -168,6 +174,13 @@ check_hosts() {
     remote "${host}" "docker compose version >/dev/null" ||
       die "${host}: no SSH access, or no Docker with the compose plugin"
   done
+  # The sidecar reads /sys/fs/cgroup/race.slice/race-<node>.slice (compose.node.yml).
+  local cgroup
+  for host in "${A}" "${B}"; do
+    cgroup=$(remote "${host}" "docker info --format '{{.CgroupDriver}} {{.CgroupVersion}}'")
+    [[ "${cgroup}" == "systemd 2" ]] ||
+      die "${host}: Docker has the cgroup driver and version '${cgroup}'; the sidecar needs 'systemd 2'"
+  done
 }
 
 # Copies docker/race and the program of the RPC caller to a host. The secrets and the
@@ -176,7 +189,8 @@ copy_files() { # HOST
   remote "$1" "mkdir -p '${RACE_DIR}'"
   tar -C "${REPO}/docker/race" --exclude=./secrets --exclude=./.env -cf - . |
     remote "$1" "tar -C '${RACE_DIR}' -xf -"
-  tar -C "${REPO}/scripts" -cf - race_rpc_caller.py | remote "$1" "tar -C '${RACE_DIR}' -xf -"
+  tar -C "${REPO}/scripts" -cf - race_rpc_caller.py race_sidecar.py race_blocks.py |
+    remote "$1" "tar -C '${RACE_DIR}' -xf -"
 }
 
 # Copies a local image to a host that does not have it.
@@ -230,11 +244,11 @@ unfirewall() { # HOST
   done
 }
 
-# Schedules the start of the node of a host and of its RPC caller at an epoch second, in
-# the background of the host, and records the start in race-info.txt.
+# Schedules the start of the node of a host, of its sidecar and of its RPC caller at an
+# epoch second, in the background of the host, and records the start in race-info.txt.
 schedule() { # HOST PROFILE IMAGE EPOCH
-  local services=$2
-  [[ "${RACE_CALLER}" != 1 ]] || services="$2 $2-caller"
+  local services="$2 $2-sidecar"
+  [[ "${RACE_CALLER}" != 1 ]] || services="${services} $2-caller"
   remote "$1" "cd '${RACE_DIR}' && {
     echo 'profile=$2'
     echo 'planned_start_epoch=$4'
@@ -281,15 +295,14 @@ start() {
       'RACE_ZAKURA_IMAGE=${ZAKURA_IMAGE}' 'RACE_HAYAI_IMAGE=${HAYAI_IMAGE}' \
       'RACE_CPUS=${RACE_CPUS}' 'RACE_MEMORY=${RACE_MEMORY}' \
       'RACE_CALLER_SCRIPT=./race_rpc_caller.py' 'RACE_CALLER_INTERVAL=${RACE_CALLER_INTERVAL}' \
-      'RACE_CALLER_LONGPOLL=${RACE_CALLER_LONGPOLL}' >.env"
+      'RACE_CALLER_LONGPOLL=${RACE_CALLER_LONGPOLL}' 'RACE_SCRIPTS_DIR=.' >.env"
   done
-  # The image of the RPC caller is on each host before the start time.
-  if [[ "${RACE_CALLER}" == 1 ]]; then
-    node_compose "${A}" "--profile zakurad pull -q zakurad-caller"
-    node_compose "${B}" "--profile hayaid pull -q hayaid-caller"
-  else
-    log "RACE_CALLER=0: no RPC caller; the getblocktemplate panels and the template_served columns stay empty"
-  fi
+  # The image of the sidecar and of the RPC caller (one image) is on each host before
+  # the start time.
+  node_compose "${A}" "--profile zakurad pull -q zakurad-sidecar"
+  node_compose "${B}" "--profile hayaid pull -q hayaid-sidecar"
+  [[ "${RACE_CALLER}" == 1 ]] ||
+    log "RACE_CALLER=0: no RPC caller; the getblocktemplate panels and the template columns stay empty"
 
   log "starting Prometheus and Grafana on ${C}"
   remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
@@ -327,7 +340,11 @@ node_status() { # HOST PROFILE CONTAINER METRICS_PORT
     { docker exec $3 tail -n 1 /home/zebra/.cache/zakura/zakurad.log 2>/dev/null ||
       docker logs --tail 1 $3 2>&1; }
     docker exec $3-caller tail -n 1 '${CALLER_FILE}' 2>/dev/null ||
-      echo 'no line of the RPC caller'" || log "warning: no status of $1"
+      echo 'no line of the RPC caller'
+    docker exec $3-sidecar grep -v '^#' /textfile/race_$2.prom 2>/dev/null ||
+      echo 'no textfile of the sidecar'
+    echo \"net.ipv4.tcp_slow_start_after_idle=\$(sysctl -n net.ipv4.tcp_slow_start_after_idle)\"" ||
+    log "warning: no status of $1"
 }
 
 status() {
@@ -338,9 +355,9 @@ status() {
 }
 
 stop() {
-  node_compose "${A}" "--profile zakurad stop zakurad-caller zakurad"
-  node_compose "${B}" "--profile hayaid stop hayaid-caller hayaid"
-  log "both nodes and both RPC callers are stopped; the data and the monitoring stay"
+  node_compose "${A}" "--profile zakurad stop zakurad-caller zakurad-sidecar zakurad"
+  node_compose "${B}" "--profile hayaid stop hayaid-caller hayaid-sidecar hayaid"
+  log "both nodes, both RPC callers and both sidecars are stopped; the data and the monitoring stay"
 }
 
 # A file of a container, also of a stopped one, on the standard output of the host.
@@ -417,6 +434,11 @@ collect() {
     >"${out}/race-zakurad-getblocktemplate.jsonl" || log "no file of the RPC caller of zakurad"
   remote "${B}" "$(container_file race-hayaid-caller "${CALLER_FILE}")" \
     >"${out}/race-hayaid-getblocktemplate.jsonl" || log "no file of the RPC caller of hayaid"
+  # The last textfile of each sidecar: the race_* values at the time of collect.
+  remote "${A}" "$(container_file race-zakurad-sidecar /textfile/race_zakurad.prom)" \
+    >"${out}/race-zakurad-sidecar.prom" || log "no textfile of the sidecar of zakurad"
+  remote "${B}" "$(container_file race-hayaid-sidecar /textfile/race_hayaid.prom)" \
+    >"${out}/race-hayaid-sidecar.prom" || log "no textfile of the sidecar of hayaid"
 
   # The tip phase starts when the second node reaches the tip. The table of blocks
   # starts at the block after the lowest height of that moment. Without that moment

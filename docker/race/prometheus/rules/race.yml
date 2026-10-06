@@ -157,3 +157,28 @@ groups:
         expr: >-
           sum by (node) (rate(node_network_transmit_bytes_total{job="node",
           device!~"lo|docker.*|veth.*|br-.*"}[1m]))
+
+  # The race_* metrics of the sidecar of each node machine (scripts/race_sidecar.py),
+  # exported by the node-exporter of the machine (job node). The label `node` comes from
+  # the sidecar. The same expression for both nodes.
+  - name: race-sidecar
+    interval: 5s
+    rules:
+      # CPU cores that the node container uses: rate of usage_usec of its cgroup.
+      - record: race:node_cpu_cores
+        expr: rate(race_node_cpu_seconds_total{job="node"}[1m])
+
+      # Bytes that the node container reads from and writes to its disks, each second.
+      - record: race:node_io_read_bytes_per_second
+        expr: rate(race_node_io_read_bytes_total{job="node"}[1m])
+
+      - record: race:node_io_write_bytes_per_second
+        expr: rate(race_node_io_write_bytes_total{job="node"}[1m])
+
+      # Mean time on the client side of a getblocktemplate call without longpollid over
+      # 5 minutes, from the file of the RPC caller. The node metric
+      # rpc_request_duration_seconds has the wait of each long poll in it on both nodes.
+      - record: race:rpc_getblocktemplate_seconds:mean5m
+        expr: >-
+          rate(race_rpc_getblocktemplate_seconds_sum{job="node"}[5m])
+          / rate(race_rpc_getblocktemplate_seconds_count{job="node"}[5m])
