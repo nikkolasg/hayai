@@ -12,3 +12,4 @@ target/
 /docker/race/secrets/
 /docker/race/.env
 /race-results/
+/.claude/worktrees/
