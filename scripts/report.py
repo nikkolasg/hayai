@@ -293,11 +293,11 @@ def headline(bench, relay_bytes):
         f"<span class='nfd'>{text}</span><span class='nfv'><b>{esc(big)}</b> {esc(detail)}</span></a>"
         for fid, kind, title, text, big, detail in items
     )
-    return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It syncs Testnet in <b>70 % less time</b> than Zakura and validates a new full block <b>{times(zak, warm)} faster</b>.</p>
+    return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It syncs Testnet <b>3.4× faster</b> than Zakura and validates a new full block <b>{times(zak, warm)} faster</b>.</p>
 <p class="lead">It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It stays compatible with every Zcash node. Source: <a href="https://github.com/nikkolasg/hayai">github.com/nikkolasg/hayai</a>.</p>
 <div class="live">
 <span class="eyebrow">First run on a public network &middot; preliminary</span>
-<p class="livehead">On Testnet, hayai reached the same height as Zakura in <b>70 % less time</b>, with its wallet index on.</p>
+<p class="livehead">On Testnet, hayai reached the same height as Zakura <b>3.4× faster</b>, with its wallet index on.</p>
 <div class="scroll"><table class="livet"><thead><tr><th>Testnet sync from genesis to height 2,565,600</th><th>zakurad 1.6.0</th><th>hayaid with wallet index</th></tr></thead><tbody>
 <tr><td>Time</td><td class="num">81.9 min</td><td class="num h">24.2 min</td></tr>
 </tbody></table></div>
