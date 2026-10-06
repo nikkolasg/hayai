@@ -249,6 +249,14 @@ CASES = [
 ]
 
 
+def adoption(bench, relay_bytes):
+    """Speed-up of a full block over 3 hops (100 ms round trip, 100 Mbit/s) in the latency
+    model: (only the receiving miner runs hayai, every node runs hayai), against Zakura."""
+    inp = model_inputs(bench, relay_bytes)
+    total = lambda case: sum(latency(case, inp["full"], inp, 100, 3, 100).values())
+    return total("legacy") / total("you"), total("legacy") / total("hayai")
+
+
 def headline(bench, relay_bytes):
     """The opening of the page: one sentence, then the new features with one figure each."""
     T = "transparent-6500x1"
@@ -270,10 +278,10 @@ def headline(bench, relay_bytes):
     full, ref = orch["full_bytes"], orch["batch_ref_bytes"]
     items = [
         ("relay", "New protocol", "Block relay by reference",
-         "A new block travels as a header and references to transactions that the peer already holds. The peer rebuilds the block and forwards it at once.",
+         "A new block travels as a header and references to transactions that the peer already holds. The peer rebuilds the block and forwards it at once, and the gain grows with each hayai node on the path.",
          times(full, ref), f"fewer bytes: {fmt_bytes(ref)}, not {fmt_bytes(full)}"),
         ("lane", "New protocol", "Transaction lanes",
-         "A miner chooses the transactions of its next block, then searches for the proof of work. hayai shares that choice with peers during the search, and the solved block goes out as one short reference.",
+         "A miner chooses the transactions of its next block, then searches for the proof of work. hayai shares that choice with peers during the search, and the solved block goes out as one short reference. The more peers run hayai, the more of them receive the block this way.",
          "61 B", "to name a block that equals its published candidate"),
         ("verify-once", "Performance", "Each transaction is verified one time",
          "The node checks a transaction when it arrives and keeps the result. A new block needs only the checks that depend on the chain.",
@@ -288,13 +296,14 @@ def headline(bench, relay_bytes):
          "The coin set and <b>the newest 1,000 blocks</b> stay in memory. A block reads all its coins in one batch.",
          times(c_z, c_h), f"faster coin lookup: {fmt_time(c_h)}, not {fmt_time(c_z)}"),
     ]
+    one, every = adoption(bench, relay_bytes)
     cells = "".join(
         f"<a class='nf' href='#{fid}'><span class='eyebrow'>{esc(kind)}</span><span class='nft'>{esc(title)}</span>"
         f"<span class='nfd'>{text}</span><span class='nfv'><b>{esc(big)}</b> {esc(detail)}</span></a>"
         for fid, kind, title, text, big, detail in items
     )
     return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It syncs Testnet <b>3.4× faster</b> than Zakura and validates a new full block <b>{times(zak, warm)} faster</b>.</p>
-<p class="lead">It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It stays compatible with every Zcash node. Source: <a href="https://github.com/nikkolasg/hayai">github.com/nikkolasg/hayai</a>.</p>
+<p class="lead">It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It stays compatible with every Zcash node, and its relay gains grow with each node that runs hayai. In the latency model, a full block reaches a miner <b>{one:.2f}× faster</b> when only that miner runs hayai, and <b>{every:.1f}× faster</b> when every node on the path does. Source: <a href="https://github.com/nikkolasg/hayai">github.com/nikkolasg/hayai</a>.</p>
 <div class="live">
 <span class="eyebrow">First run on a public network &middot; preliminary</span>
 <p class="livehead">On Testnet, hayai reached the same height as Zakura <b>3.4× faster</b>, with its wallet index on.</p>
@@ -658,6 +667,7 @@ def card(fid, title, summary, problem, context, solution, related, compat, bench
 
 def features(bench, relay_bytes):
     cards = []
+    adopt_one, adopt_every = adoption(bench, relay_bytes)
 
     # 1. Relay.
     by_fix = {r["fixture"]: r for r in relay_bytes if not r["fixture"].startswith("main")}
@@ -718,7 +728,7 @@ def features(bench, relay_bytes):
                 "hayai uses the same split: batches travel ahead of the block, and the block names them.",
             ]),
         ],
-        "Peers that also run hayai, or that implement the draft ZIP. Legacy peers receive every block by the normal protocol, after hayai validates it.",
+        f"Peers that also run hayai, or that implement the draft ZIP. Legacy peers receive every block by the normal protocol, after hayai validates it. The gain grows with adoption: each hop between two hayai nodes saves the transfer of the full block and a validation before the forward. In the latency model, a full block reaches a miner <b>{adopt_one:.2f}× faster</b> when only that miner runs hayai, and <b>{adopt_every:.1f}× faster</b> when every node on the path does.",
         [bytes_chart, rec_chart, fwd_chart],
     ))
 
@@ -1065,7 +1075,7 @@ def features(bench, relay_bytes):
             "Nodes in these systems spread batches of transactions continuously, and the block only names them.",
             "The candidate reference goes one step further: it names the whole block that the miner is working on.",
         ])],
-        "The peer, and the miner who publishes the lane. Peers without the feature receive the normal announcement.",
+        "The peer, and the miner who publishes the lane. Peers without the feature receive the normal announcement. Each additional hayai peer holds the candidate before the block exists, so the share of the network that receives a solved block as one short reference grows with adoption.",
         [cand_chart, pre_chart, own_chart],
     ))
 
