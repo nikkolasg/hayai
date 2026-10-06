@@ -116,6 +116,9 @@ impl NullifierSet {
 }
 
 /// One [`NullifierSet`] per pool.
+///
+/// Spec §3.9: Sprout, Sapling, Orchard and Ironwood nullifiers are disjoint, so each pool
+/// has its own set.
 pub struct NullifierStore {
     sets: [NullifierSet; 4],
 }

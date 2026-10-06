@@ -160,15 +160,18 @@ impl PeerSession {
         let mut actions = Vec::new();
         match message {
             LegacyMessage::Version(v) => {
+                // ZIP 204: one version message for each connection.
                 let None = self.peer_version else {
                     return Err(SessionError::DuplicateVersion);
                 };
+                // ZIP 204, ZIP 201: refuse a peer below the minimum protocol version.
                 if v.version < self.config.min_peer_version {
                     return Err(SessionError::VersionTooOld {
                         version: v.version,
                         min: self.config.min_peer_version,
                     });
                 }
+                // ZIP 204: a version with the own nonce is a connection to self.
                 if v.nonce == self.nonce {
                     return Err(SessionError::SelfConnection);
                 }
@@ -186,7 +189,14 @@ impl PeerSession {
                 self.got_verack = true;
                 self.try_establish(&mut actions);
             }
-            LegacyMessage::Ping(nonce) => actions.push(Action::Send(LegacyMessage::Pong(nonce))),
+            // ZIP 204: a ping gets a pong with its nonce. Before the handshake ends, the
+            // node sends only version and verack, so it ignores the ping (Zakura too).
+            LegacyMessage::Ping(nonce) => {
+                if self.established {
+                    actions.push(Action::Send(LegacyMessage::Pong(nonce)));
+                }
+            }
+            // ZIP 204: only a pong with the nonce of the ping answers it.
             LegacyMessage::Pong(nonce) => {
                 if let Some((_, sent)) = self.outstanding_ping.take_if(|(n, _)| *n == nonce) {
                     self.ping_time = Some(sent.elapsed());
@@ -208,6 +218,7 @@ impl PeerSession {
                 }
             }
             other => {
+                // ZIP 204: no other message before the handshake ends.
                 if !self.established {
                     return Err(SessionError::BeforeHandshake(other.command_name()));
                 }
@@ -286,6 +297,7 @@ impl PeerSession {
 
     /// Timeouts and keepalive; call periodically.
     pub fn on_tick(&mut self, now: Instant) -> Result<Vec<Action>, SessionError> {
+        // ZIP 204: close a peer without a handshake, or without a pong, in time.
         if !self.established {
             if now.duration_since(self.started) > self.config.handshake_timeout {
                 return Err(SessionError::HandshakeTimeout(
@@ -479,12 +491,9 @@ mod tests {
             s.on_message(LegacyMessage::Mempool),
             Err(SessionError::BeforeHandshake("mempool".into()))
         );
-        // sendaddrv2 before verack is allowed (BIP 155), as are pings.
+        // sendaddrv2 before verack is allowed (BIP 155), as are pings (without a pong).
         assert_eq!(s.on_message(LegacyMessage::SendAddrV2), Ok(vec![]));
-        assert_eq!(
-            s.on_message(LegacyMessage::Ping(3)),
-            Ok(vec![Action::Send(LegacyMessage::Pong(3))])
-        );
+        assert_eq!(s.on_message(LegacyMessage::Ping(3)), Ok(vec![]));
         let LegacyMessage::Version(mut old) = peer_version(NODE_NETWORK, 1) else {
             unreachable!()
         };
@@ -512,6 +521,25 @@ mod tests {
         assert_eq!(
             s.on_tick(now + Duration::from_secs(6)),
             Err(SessionError::HandshakeTimeout(Duration::from_secs(5)))
+        );
+    }
+
+    /// ZIP 204: a peer sends no message other than `version` and `verack` before the
+    /// handshake ends, so a `ping` before the handshake gets no `pong`.
+    #[test]
+    fn a_ping_before_the_handshake_gets_no_pong() {
+        let (mut s, _) = start(None);
+        assert_eq!(s.on_message(LegacyMessage::Ping(3)), Ok(vec![]));
+        assert_eq!(
+            s.on_message(peer_version(NODE_NETWORK, 7)),
+            Ok(vec![Action::Send(LegacyMessage::Verack)])
+        );
+        // The version of the peer is in, its verack is not.
+        assert_eq!(s.on_message(LegacyMessage::Ping(4)), Ok(vec![]));
+        s.on_message(LegacyMessage::Verack).unwrap();
+        assert_eq!(
+            s.on_message(LegacyMessage::Ping(5)),
+            Ok(vec![Action::Send(LegacyMessage::Pong(5))])
         );
     }
 

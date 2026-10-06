@@ -69,6 +69,9 @@ impl OrchardKeys {
 /// The Orchard circuit version whose keys verify the Orchard and Ironwood bundles of
 /// `branch`: `None` before NU5 (no Orchard pool). Mirrors upstream
 /// `BundleVersion::circuit_version`.
+///
+/// Spec §4.6, ZIP 257, ZIP 258: the key of the epoch (NU5 to NU6.1 `InsecurePreNU6_2`,
+/// NU6.2 `FixedPostNU6_2`, from NU6.3 `PostNU6_3`).
 pub fn circuit_version(branch: BranchId) -> Option<OrchardCircuitVersion> {
     if !nu5_or_later(branch) {
         return None;
@@ -83,6 +86,9 @@ pub fn circuit_version(branch: BranchId) -> Option<OrchardCircuitVersion> {
 /// Whether every Orchard or Ironwood bundle of `items` is valid under `vk`. The upstream
 /// validator derives the public inputs of each bundle from its flags, so a bundle with
 /// `enableCrossAddress = 0` is verified against the restricted instance.
+///
+/// Spec §4.6: the proofs and the spend authorization signatures; Spec §3.7, §7.1.2: the
+/// binding signature of each pool.
 pub(crate) fn verify_orchard(vk: &VerifyingKey, items: &[&Item]) -> bool {
     let mut validator = orchard::bundle::BatchValidator::new(vk);
     for item in items {

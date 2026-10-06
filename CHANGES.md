@@ -1546,3 +1546,19 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   the driver.
 - Open: the write-ahead log is on. The variant without the log (an atomic memtable flush of all
   column families at each persist) is not measured yet.
+
+## Consensus trace (2026-10-06)
+
+- `docs/consensus.md` is the one place for the consensus coverage: each normative rule of a
+  ZIP or of the specification is a row with its code, its test, the Zakura code and a status
+  from a closed list. A missing or untested rule shows as such; nothing is summarized away.
+- Code marks: `// ZIP <n>: ...` and `// Spec §<section>: ...` at each check and constant.
+  Search for them to find the code of a rule.
+- Lesson: an upstream function that computes a digest is not a consensus check. The upstream
+  v5 sighash hashes an empty output list for `SIGHASH_SINGLE` without an output, and ZIP 244
+  requires a failure. A rule that an upstream crate seems to enforce needs a refused-input
+  test in hayai.
+- Lesson: a setter that nothing calls hides a missing rule (`Relay::set_min_peer_version`,
+  `PreparedStore::relay_ids`). A rule needs a test at the level of the node, not only of the
+  helper.
+

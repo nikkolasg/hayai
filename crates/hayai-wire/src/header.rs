@@ -46,6 +46,7 @@ pub struct PowParams {
 
 impl PowParams {
     /// Mainnet: Equihash (200, 9).
+    /// Spec §7.7.1: n = 200, k = 9 on Mainnet and Testnet.
     pub const MAINNET: Self = Self { n: 200, k: 9 };
     /// Testnet: the Mainnet parameters.
     pub const TESTNET: Self = Self::MAINNET;
@@ -103,6 +104,9 @@ impl BlockHeader {
     /// The solution length must be the length of one of the [`PowParams::KNOWN`] sets, in
     /// the canonical CompactSize encoding. The parser rejects other lengths. Whether the
     /// length matches the network is a check of the caller.
+    ///
+    /// Spec §7.6: `solutionSize` has the minimal encoding, and the parser refuses each
+    /// other encoding (`CompactSize::read_t` of `zcash_encoding`).
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         let Some(fixed) = bytes.get(..Self::SOLUTION_OFFSET) else {
             return Err(ParseError::Header(format!(
@@ -183,6 +187,8 @@ impl BlockHeader {
 /// target of zero (a zero mantissa, or a mantissa that a small exponent shifts out), or an
 /// exponent that overflows 256 bits (`arith_uint256::SetCompact` semantics with the
 /// rejections of zcashd's `CheckProofOfWork`).
+///
+/// Spec §7.7.4: `ToTarget`; a negative or zero target is no target.
 pub fn expand_target(bits: u32) -> Option<[u8; 32]> {
     let exponent = (bits >> 24) as usize;
     let mantissa = bits & 0x007f_ffff;
@@ -219,6 +225,8 @@ pub fn expand_target(bits: u32) -> Option<[u8; 32]> {
 /// The compact form keeps the three most significant bytes. A mantissa whose top bit is
 /// set would read as the sign bit, so it moves down one byte and the size goes up by one.
 /// The target zero encodes as zero, which [`expand_target`] rejects.
+///
+/// Spec §7.7.4: `ToCompact`.
 pub fn compact_from_target(target: &[u8; 32]) -> u32 {
     let Some(top) = target.iter().rposition(|b| *b != 0) else {
         return 0;
@@ -271,6 +279,8 @@ pub fn check_target(bits: u32, pow_limit: &[u8; 32]) -> Result<[u8; 32], PowErro
 /// (`hayai_consensus::difficulty`). This function does not check that rule.
 pub fn check_pow(header: &BlockHeader, pow_limit: &[u8; 32]) -> Result<(), PowError> {
     let target = check_target(header.bits, pow_limit)?;
+    // Spec §7.7.2: SHA-256d of the whole header, as a little-endian integer, is at most
+    // `ToTarget(nBits)`.
     if !le_at_most(&header.hash().0, &target) {
         return Err(PowError::HashAboveTarget);
     }
@@ -281,6 +291,8 @@ pub fn check_pow(header: &BlockHeader, pow_limit: &[u8; 32]) -> Result<(), PowEr
 /// against the header fields before the nonce, with the nonce as the Equihash nonce, as in
 /// `zcashd`'s `CheckEquihashSolution`. A solution whose length does not match `params`
 /// fails.
+///
+/// Spec §7.7.1: the Equihash input is the header up to `nBits`, then `nNonce`.
 pub fn check_equihash(header: &BlockHeader, params: PowParams) -> Result<(), equihash::Error> {
     let bytes = header.serialize();
     equihash::is_valid_solution(

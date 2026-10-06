@@ -305,8 +305,9 @@ fn now_secs() -> u32 {
 /// context of the index, with the clock of the node.
 ///
 /// The index of a shadow node starts at a block above the genesis block. Its seed holds
-/// the time and the `nBits` of the start block and of the 27 blocks before it (fewer only
-/// when the chain is shorter), so every rule runs from the first block after the start. A
+/// the time and the `nBits` of the start block and of the blocks before it,
+/// [`DIFFICULTY_CONTEXT_BLOCKS`] blocks in all (fewer only when the chain is shorter), so
+/// every rule runs from the first block after the start. A
 /// context that is too short for a rule (an index with a shorter seed) is never a pass: the
 /// header passes the rules that did not run only when `trust_short_context` is set, and
 /// each such header increments `hayai_shadow_trusted_bits_total`. Without it the header

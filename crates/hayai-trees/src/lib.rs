@@ -95,6 +95,8 @@ impl OrchardFrontier {
 
 /// The frontier of the Ironwood note commitment tree (NU6.3). The Ironwood tree has the
 /// node type and the hash of the Orchard tree (MerkleCRH^Orchard).
+///
+/// ZIP 258: the capacity of the Ironwood tree is 2^MerkleDepth^Orchard leaves.
 pub type IronwoodFrontier = OrchardFrontier;
 
 /// The Sapling note commitment frontier.

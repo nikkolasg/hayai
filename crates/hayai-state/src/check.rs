@@ -31,9 +31,9 @@
 //! nullifier.rs`, `anchors.rs`, `zakura-chain/src/value_balance.rs`).
 //!
 //! Zcash rule sources: zcashd `ContextualCheckBlock`, `ContextualCheckTransaction`,
-//! `ConnectBlock` and `IsFinalTx`; the protocol specification §4.1.? (anchors must refer to
-//! some earlier block's final treestate, so a root produced inside this block is not valid
-//! for its own transactions).
+//! `ConnectBlock` and `IsFinalTx`; the protocol specification §3.5 to §3.7 (anchors must
+//! refer to some earlier block's final treestate, so a root produced inside this block is
+//! not valid for its own transactions).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -344,6 +344,9 @@ fn inputs_of(
 /// The first rule: `raw` extends the view's tip. Returns the height the block will have.
 /// The validator runs it before it reads the block's inputs, so a block for another tip
 /// costs no state round and no cryptography.
+///
+/// Spec §7.6: `hashPrevBlock` names the parent; the parent is the tip, so the height is
+/// the height of the parent plus 1.
 pub fn check_parent(view: &ChainView, raw: &RawBlock) -> Result<u32, ContextError> {
     let tip = view.tip();
     if raw.header.prev_hash != tip.hash {
@@ -369,11 +372,15 @@ pub fn contextual_check(
 
 /// The coinbase rules that need only the coinbase and the height: placement, the height
 /// commitment of the scriptSig, and the expiry height from NU5.
+///
+/// Spec §7.1.2: the coinbase script starts with the height (BIP 34 encoding). ZIP 203: from
+/// NU5 the coinbase expiry height is the block height.
 fn check_coinbase(
     coinbase: Option<&Arc<PreparedTx>>,
     height: u32,
     rules: &RuleSet,
 ) -> Result<(), ContextError> {
+    // Spec §7.6: the first transaction is a coinbase.
     let Some(coinbase) = coinbase.filter(|t| t.is_coinbase) else {
         return Err(ContextError::NoCoinbase);
     };
@@ -458,6 +465,8 @@ fn check_txs(
     assert_eq!(inputs.len(), txs.len(), "one input list per transaction");
     let input_count: usize = txs.iter().map(|t| t.spent.len()).sum();
     let mut spent: Set<OutPoint> = Set::with_capacity_and_hasher(input_count, Default::default());
+    // Spec §7.1.2: each prevout is a unique unspent output of an earlier block or of an
+    // earlier transaction of this block.
     for (k, tx) in txs.iter().enumerate() {
         if tx.is_coinbase {
             continue;
@@ -488,6 +497,7 @@ fn check_txs(
             if !coin.is_coinbase {
                 continue;
             }
+            // Spec §7.1.2: no spend of a coinbase output less than 100 blocks old.
             if height < coin.height.saturating_add(COINBASE_MATURITY) {
                 return Err(ContextError::ImmatureCoinbase {
                     tx: i,
@@ -496,7 +506,8 @@ fn check_txs(
                     height,
                 });
             }
-            // zcashd `bad-txns-coinbase-spend-has-transparent-outputs` (coinbase outputs
+            // Spec §7.1.2: a transaction that spends a coinbase output has no transparent
+            // output. zcashd `bad-txns-coinbase-spend-has-transparent-outputs` (coinbase outputs
             // must be shielded on Mainnet and Testnet); Zakura `DisallowCoinbaseSpend`,
             // which Regtest does not have (`zakura-chain/src/transaction.rs:552-564`).
             let bundle = tx.raw.tx.transparent_bundle();
@@ -507,6 +518,7 @@ fn check_txs(
     }
 
     // Nullifiers: unique within the block, then absent from the view, one round per pool.
+    // Spec §3.9: a nullifier never repeats in the chain; each pool has its own set.
     let mut nullifiers: [Set<[u8; 32]>; 4] = Default::default();
     let mut owners: [Vec<usize>; 4] = Default::default();
     for (k, tx) in txs.iter().enumerate() {
@@ -562,6 +574,8 @@ fn check_txs(
     let mut time_lock: Option<(u32, usize)> = None;
     for (k, tx) in txs.iter().enumerate() {
         let i = first + k;
+        // ZIP 203, Spec §7.1.2: a non-coinbase transaction is not mined above its nonzero
+        // expiry height.
         if !tx.is_coinbase && tx.expiry_height != 0 && height > tx.expiry_height {
             return Err(ContextError::Expired {
                 tx: i,
@@ -675,10 +689,13 @@ fn add_totals(
     tx: &PreparedTx,
     limits: &BlockLimits,
 ) -> Result<(), ContextError> {
+    // zcashd `MAX_BLOCK_SIGOPS` (20,000); ZIP 218: the shielded limits of NU7.
     totals.sigops = totals.sigops.saturating_add(tx.sigops);
     if totals.sigops > limits.sigops {
         return Err(ContextError::TooManySigops(totals.sigops));
     }
+    // ZIP 218: per-block limits of Orchard actions, Ironwood actions, Sapling spends and
+    // outputs, and the shielded budget.
     totals.orchard_actions = totals.orchard_actions.saturating_add(tx.orchard_actions);
     if totals.orchard_actions > limits.orchard_actions {
         return Err(ContextError::TooManyOrchardActions(totals.orchard_actions));
@@ -722,6 +739,8 @@ fn add_totals(
 
 /// The value that the JoinSplits of `bundle` take out of the Sprout pool: `vpub_new` minus
 /// `vpub_old` of each JoinSplit.
+///
+/// ZIP 209: `vpub_old` enters the Sprout pool and `vpub_new` leaves it.
 fn sprout_balance(bundle: &sprout::Bundle) -> i128 {
     bundle
         .joinsplits
@@ -737,6 +756,7 @@ fn coinbase_terms(
     height: u32,
     pools: ValuePools,
 ) -> Result<CoinbaseTerms, ContextError> {
+    // ZIP 237: the total of the pools after the parent gives NSMValueBalance(height - 1).
     Ok(CoinbaseTerms::after(cfg.network, height, pools.total()).map_err(CoinbaseError::from)?)
 }
 
@@ -765,12 +785,19 @@ fn check_coinbase_value(
             .ironwood_bundle()
             .map_or(0, |b| i64::from(*b.value_balance())),
     };
+    // ZIP 2001: the total output value is the transparent outputs minus the shielded value
+    // balances.
     Ok(terms.check(&outputs, shielded, fees)?)
 }
 
 /// The chain value pools after a block with the changes of `totals` and the coinbase
 /// `terms`, from the pools `pools` of its parent. Each pool that the block changes must
 /// stay at or above zero, and the total of the pools must stay at or below `MAX_MONEY`.
+///
+/// ZIP 209: no chain value pool is negative after the block, and the total of the pools is
+/// at most `MAX_MONEY`.
+/// Spec §4.17: the same rules for the transparent, Sprout, Sapling, Orchard, deferred and
+/// Ironwood pools, and for `IssuedSupply`.
 fn value_pools_after(
     pools: ValuePools,
     totals: &Totals,
@@ -800,7 +827,10 @@ fn value_pools_after(
         sprout: shielded(pools.sprout, totals.sprout_balance, Pool::Sprout)?,
         sapling: shielded(pools.sapling, totals.sapling_balance, Pool::Sapling)?,
         orchard: shielded(pools.orchard, totals.orchard_balance, Pool::Orchard)?,
+        // ZIP 258: the Ironwood pool is a chain value pool of ZIP 209.
         ironwood: shielded(pools.ironwood, totals.ironwood_balance, Pool::Ironwood)?,
+        // ZIP 2001, ZIP 271: the deferred pool gains totalDeferredOutput, loses
+        // totalDeferredInput, and stays at or above 0.
         deferred: terms.deferred_pool_after(pools.deferred)?,
     };
     checked_sum(
@@ -828,6 +858,7 @@ fn block_pools_after(
     terms: &CoinbaseTerms,
 ) -> Result<ValuePools, ContextError> {
     let after = value_pools_after(pools, totals, terms)?;
+    // ZIP 237: the seed at NU7 - 1, and no negative NSMValueBalance from NU7.
     nsm::check_balance(cfg.network, height, after.total()).map_err(CoinbaseError::from)?;
     Ok(after)
 }
@@ -848,6 +879,10 @@ fn append_trees(view: &ChainView, txs: &[Arc<PreparedTx>]) -> Result<Frontiers, 
 
 /// The note commitment trees after appending `leaves`, the commitments of a block or of a
 /// body in block order, to the view's.
+///
+/// Spec §3.4: the treestates chain transaction by transaction, so the commitments go to the
+/// trees in block order.
+/// Spec §3.8: a commitment past the capacity of a tree is an error (`TreeError::Full`).
 fn append_leaves(view: &ChainView, leaves: &Commitments) -> Result<Frontiers, ContextError> {
     let parent = view.frontiers();
     let Commitments {
@@ -903,6 +938,8 @@ fn append_leaves(view: &ChainView, leaves: &Commitments) -> Result<Frontiers, Co
 
 /// The header commitment to the parent's history tree, then the history tree after the
 /// block. `branch` is the epoch of the block's coinbase.
+///
+/// ZIP 221: the header field of the block commits to the history tree of its parent.
 fn check_history(
     view: &ChainView,
     raw: &RawBlock,
@@ -923,6 +960,8 @@ fn check_history(
         }
         // `ParentUnknown`: the rule needs the parent's peaks. The layer then records an
         // unknown history (`Layer::history` is `None`).
+        // ZIP 221: not checked on an unknown parent tree (a shadow seed: docs/hayaid.md,
+        // Trust limits).
         HeaderCommitment::Expected(_)
         | HeaderCommitment::Reserved
         | HeaderCommitment::ParentUnknown => {}
@@ -953,8 +992,10 @@ pub fn contextual_check_with_outputs(
     let height = check_parent(view, raw)?;
     let block_time = raw.header.time;
 
-    // Coinbase placement, height commitment and expiry.
+    // Coinbase placement, height commitment and expiry. zcashd `bad-cb-missing`,
+    // `bad-cb-multiple`: the first transaction is the only coinbase.
     check_coinbase(txs.first(), height, cfg.rules)?;
+    // Spec §7.6: no transaction after the first is a coinbase.
     if let Some(i) = txs.iter().skip(1).position(|t| t.is_coinbase) {
         return Err(ContextError::ExtraCoinbase(i + 1));
     }
@@ -979,6 +1020,7 @@ pub fn contextual_check_with_outputs(
         cfg,
     )?;
     let terms = coinbase_terms(cfg, height, view.value_pools())?;
+    // ZIP 235: the coinbase rule takes the aggregate fees of the block.
     check_coinbase_value(coinbase, totals.fees, &terms)?;
     let value_pools = block_pools_after(cfg, height, view.value_pools(), &totals, &terms)?;
     let context = started.elapsed();
@@ -1036,7 +1078,7 @@ pub fn contextual_check_with_outputs(
 
 /// The position of each txid of `txs` (the transactions of a block from position `first`
 /// on), with the duplicate rule. `raw`, when given, is the block the transactions must
-/// match in order.
+/// match in order. zcashd `bad-txns-duplicate` (CVE-2012-2459): no txid twice in a block.
 fn positions_of(
     txs: &[Arc<PreparedTx>],
     first: usize,
@@ -1246,6 +1288,7 @@ impl PrebuiltBody {
         check_pools(coinbase, 0, &cfg.rules.pools)?;
         add_totals(&mut totals, coinbase, &cfg.rules.limits)?;
         let terms = coinbase_terms(cfg, height, view.value_pools())?;
+        // ZIP 235: the coinbase rule takes the aggregate fees of the block.
         check_coinbase_value(coinbase, totals.fees, &terms)?;
         let value_pools = block_pools_after(cfg, height, view.value_pools(), &totals, &terms)?;
         let context = started.elapsed();

@@ -1,10 +1,10 @@
-//! The Network Sustainability Mechanism (NSM) of NU7, as Zakura implements it.
+//! The Network Sustainability Mechanism (NSM) of NU7: ZIP 235 and ZIP 237, which ZIP 259
+//! deploys. NU7 does not deploy ZIP 233 or ZIP 234.
 //!
-//! - Fee share (NU7 deployment draft, `draft-valargroup-deploy-nu7`; Zakura
-//!   `zakura-chain/src/parameters/network/subsidy/fees.rs`): from NU7 the coinbase gets the
-//!   fees of the block minus `floor(6 * fees / 10)`. The rest stays out of the chain value
-//!   pools.
-//! - NSM value balance (zips#1354; Zakura `Block::nsm_value_balance_change`,
+//! - Fee share (ZIP 235; Zakura `zakura-chain/src/parameters/network/subsidy/fees.rs`):
+//!   from NU7 the coinbase gets the fees of the block minus `floor(6 * fees / 10)`. The
+//!   rest stays out of the chain value pools.
+//! - NSM value balance (ZIP 237; Zakura `Block::nsm_value_balance_change`,
 //!   `zakura-chain/src/block.rs:359-416`): the value that the halving schedule issued and
 //!   that the chain value pools do not hold. Zakura sets the balance in the block before
 //!   NU7 to the scheduled issuance minus the total of the pools, and each later block adds
@@ -14,13 +14,12 @@
 //! - Seed check (Zakura `ValueBalance::initial_nsm_value_balance`,
 //!   `zakura-chain/src/value_balance.rs:377-414`): on Mainnet and Testnet the balance in
 //!   the block before NU7 must be the constant of the network ([`expected_seed`]).
-//! - Non-negative balance (Zakura `nsm_value_balance_is_non_negative`,
+//! - Non-negative balance (ZIP 237; Zakura `nsm_value_balance_is_non_negative`,
 //!   `zakura-state/src/service/check.rs:46-98`): from NU7 a block that makes the balance
 //!   negative is not valid.
-//! - Reissuance (the halving-preserving NSM draft,
-//!   `draft-judah-nsm-halving-preserving-issuance`; Zakura `subsidy.rs:565-797`): from
-//!   [`reissuance_height`] the block subsidy is the subsidy of the halving schedule plus
-//!   [`reissuance_bonus`] of the balance after the parent block.
+//! - Reissuance (ZIP 237; Zakura `subsidy.rs:565-797`): from [`reissuance_height`] the
+//!   block subsidy is the subsidy of the halving schedule plus [`reissuance_bonus`] of the
+//!   balance after the parent block.
 
 use hayai_crypto::zcash_protocol::value::MAX_MONEY;
 
@@ -31,15 +30,23 @@ use crate::{subsidy, ConsensusError, Network, Upgrade};
 const MAX_HEIGHT: u32 = u32::MAX / 2;
 /// `BLOCK_SUBSIDY_FRACTION` of the reissuance: 1,375 / 10,000,000,000 of the balance for
 /// each block (Zakura `subsidy.rs:586,591`).
+///
+/// ZIP 237: `BLOCK_SUBSIDY_FRACTION` from NU7 is `floor(LN2_SCALED / 5,040,000) / 10^10`.
+/// The reissuance height is at or above NU7, so the fraction is a constant.
 const REISSUANCE_NUMERATOR: u128 = 1_375;
 const REISSUANCE_DENOMINATOR: u128 = 10_000_000_000;
 /// The reissuance starts in the era of this halving index (Zakura
 /// `NSM_REISSUANCE_START_HALVING`).
+///
+/// ZIP 237: the reissuance height is after `H_3`, the first height of halving 3.
 const REISSUANCE_HALVING: u32 = 3;
 
 /// The part of `fees`, the total fees of a block, that the coinbase of a block with the
 /// NSM fee share gets: `fees - floor(6 * fees / 10)`. The division rounds one time, on
 /// the total.
+///
+/// ZIP 235: `MinerFees = TransactionFees - NSMFeeContribution`, with
+/// `NSMFeeContribution = floor(6 * TransactionFees / 10)` on the aggregate fees.
 pub const fn miner_fee_share(fees: u64) -> u64 {
     fees - (fees as u128 * 6 / 10) as u64
 }
@@ -48,6 +55,8 @@ pub const fn miner_fee_share(fees: u64) -> u64 {
 /// (`INITIAL_NSM_VALUE_BALANCE`; Zakura `subsidy/constants/mainnet.rs:44`,
 /// `subsidy/constants/testnet.rs:27`). `None` on Regtest: the balance there is the
 /// balance that the chain gives.
+///
+/// ZIP 237: `NSMValueBalance(NU7ActivationHeight - 1)` is `INITIAL_NSM_VALUE_BALANCE`.
 pub const fn expected_seed(network: Network) -> Option<u64> {
     match network {
         Network::Mainnet => Some(36_858_445_520),
@@ -62,6 +71,10 @@ pub const fn expected_seed(network: Network) -> Option<u64> {
 /// It fails with [`ConsensusError::NegativeNsmBalance`] when the pools hold more than the
 /// schedule issued, or when the balance is above `MAX_MONEY` (Zakura holds the balance in
 /// an amount).
+///
+/// ZIP 237: `NSMValueBalance(height)`. The recursion of the ZIP sums to this closed form
+/// from `NU7ActivationHeight - 1`, because each block changes the pools by
+/// `ScheduledBlockSubsidy + AdditionalBlockSubsidy - removed` (ZIP 235, ZIP 236).
 pub fn balance(network: Network, height: u32, issued: u64) -> Result<u64, ConsensusError> {
     let scheduled = subsidy::scheduled_issuance(network, height);
     scheduled
@@ -81,6 +94,8 @@ pub fn balance(network: Network, height: u32, issued: u64) -> Result<u64, Consen
 /// - The block before NU7 on a network with [`expected_seed`]: the balance is the seed.
 /// - A block from NU7: the balance is not negative.
 /// - Every other block has no NSM rule.
+///
+/// ZIP 237: [NU7 onward] a block that makes `NSMValueBalance` negative is not valid.
 pub fn check_balance(network: Network, height: u32, issued: u64) -> Result<(), ConsensusError> {
     let Some(nu7) = network.activation_height(Upgrade::Nu7) else {
         return Ok(());
@@ -107,6 +122,10 @@ pub fn check_balance(network: Network, height: u32, issued: u64) -> Result<(), C
 /// `first_nsm_crossing_in_subsidy_run`, `subsidy.rs:609-684`). It depends on the network
 /// parameters only. A Regtest configuration of a test can name the height
 /// (`RegtestConfig::with_test_reissuance_height`).
+///
+/// ZIP 237: `DEPLOYMENT_BLOCK_HEIGHT` (ZIP 259 `NSM_REISSUANCE_HEIGHT`), the first `h` in
+/// `max(A, H_3 + 1) <= h < H_4` with `ceil(1,375 * (MAX_MONEY - S_A(h - 1)) / 10^10) <
+/// B_A(h)`, by the closed form of the ZIP.
 pub fn reissuance_height(network: Network) -> Option<u32> {
     let nu7 = network.activation_height(Upgrade::Nu7)?;
     if let Network::ConfiguredRegtest(config) = network {
@@ -143,6 +162,9 @@ pub fn reissuance_active(network: Network, height: u32) -> bool {
 
 /// The reissuance bonus of a block whose parent leaves an NSM value balance of `balance`
 /// zatoshis: `ceil(balance * 1,375 / 10,000,000,000)` (Zakura `reissuance_bonus`).
+///
+/// ZIP 237: `AdditionalBlockSubsidy(height)` is the ceiling of `BLOCK_SUBSIDY_FRACTION`
+/// times `NSMValueBalance(height - 1)`.
 pub const fn reissuance_bonus(balance: u64) -> u64 {
     (balance as u128 * REISSUANCE_NUMERATOR).div_ceil(REISSUANCE_DENOMINATOR) as u64
 }
@@ -175,6 +197,19 @@ mod tests {
             miner_fee_share(u64::MAX),
             u64::MAX - (u64::MAX / 10 * 6 + 3)
         );
+    }
+
+    /// ZIP 237: `BLOCK_SUBSIDY_FRACTION` is `floor(LN2_SCALED / HalvingInterval)` over
+    /// 10^10. From NU7 the interval is 3 post-Blossom intervals (5,040,000 blocks), and the
+    /// numerator is 1,375. The 75 s interval gives the 4,126 of ZIP 234.
+    #[test]
+    fn the_reissuance_fraction_is_the_one_of_zip_237() {
+        const LN2_SCALED: u128 = 6_931_680_000;
+        let interval = Network::Testnet.params().post_blossom_halving_interval();
+        assert_eq!(interval, 1_680_000);
+        assert_eq!(LN2_SCALED / u128::from(3 * interval), REISSUANCE_NUMERATOR);
+        assert_eq!(LN2_SCALED / u128::from(interval), 4_126);
+        assert_eq!(REISSUANCE_DENOMINATOR, 10_000_000_000);
     }
 
     #[test]

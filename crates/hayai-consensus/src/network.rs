@@ -347,6 +347,9 @@ impl Upgrade {
 
     /// The consensus branch id of the upgrade. `None` when the crypto backend does not know
     /// the upgrade: NU7 on the upstream backend.
+    ///
+    /// ZIP 200: `CONSENSUS_BRANCH_ID` of each upgrade, 0 for Sprout. The values are those
+    /// of the deployment ZIPs (the test `the_deployment_constants_of_the_zips`).
     pub fn branch_id(self) -> Option<BranchId> {
         Some(match self {
             Upgrade::Sprout => BranchId::Sprout,
@@ -390,13 +393,15 @@ pub struct NetworkParams {
     /// The network waives the proof of work (Zakura's `disable_pow`, Regtest only): a
     /// header has no hash filter, no Equihash verification and no expected `nBits`.
     pub disable_pow: bool,
-    /// First height at which a block more than 6 target spacings after its parent can use
-    /// the proof-of-work limit (ZIP 205, ZIP 208; zcashd
+    /// First height at which a block whose time is more than the minimum-difficulty gap
+    /// after its parent must have the proof-of-work limit as `nBits`
+    /// ([`crate::DifficultyParams::min_difficulty_gap_spacings`]; zcashd
     /// `nPowAllowMinDifficultyBlocksAfterHeight` plus 1). `None`: the network has no such
-    /// rule.
+    /// rule. ZIP 205: Testnet height 299,188.
     pub min_difficulty_start_height: Option<u32>,
     /// First height at which the time of a block is at most its median-time-past plus
     /// 90 min (protocol specification §7.6; Zakura `is_max_block_time_enforced`).
+    /// Spec §7.6: height 2 on Mainnet, height 653,606 on Testnet.
     pub max_time_start_height: u32,
     /// First height of the soft fork that removes the Orchard pool for a time: from this
     /// height until the NU6.2 activation, a transaction has no Orchard bundle (Zakura
@@ -467,8 +472,9 @@ const MAINNET: NetworkParams = NetworkParams {
         "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
     ),
     genesis_time: 1_477_641_360,
+    // Spec §7.7.1: Equihash n = 200, k = 9 on Mainnet and Testnet.
     pow: PowParams::MAINNET,
-    // zcashd `chainparams.cpp`: `0x0007ffff…ff`.
+    // zcashd `chainparams.cpp`: `0x0007ffff…ff`. Spec §5.3: `PoWLimit` of Mainnet.
     pow_limit: ones(243),
     pow_limit_bits: 0x1f07_ffff,
     disable_pow: false,
@@ -489,13 +495,15 @@ const TESTNET: NetworkParams = NetworkParams {
     ),
     genesis_time: 1_477_648_033,
     pow: PowParams::TESTNET,
-    // zcashd `chainparams.cpp`: `0x07ffff…ff`.
+    // zcashd `chainparams.cpp`: `0x07ffff…ff`. Spec §5.3: `PoWLimit` of Testnet.
     pow_limit: ones(251),
     pow_limit_bits: 0x2007_ffff,
     disable_pow: false,
-    // Zakura `TESTNET_MINIMUM_DIFFICULTY_START_HEIGHT`.
+    // Zakura `TESTNET_MINIMUM_DIFFICULTY_START_HEIGHT`. ZIP 205: minimum-difficulty
+    // blocks from Testnet height 299,188.
     min_difficulty_start_height: Some(299_188),
-    // Zakura `TESTNET_MAX_TIME_START_HEIGHT`.
+    // Zakura `TESTNET_MAX_TIME_START_HEIGHT`. Spec §7.6: the 90 min rule from Testnet
+    // height 653,606.
     max_time_start_height: 653_606,
     // Zakura `TESTNET_TEMPORARY_ORCHARD_DISABLING_SOFT_FORK_HEIGHT`.
     orchard_disabled_start_height: Some(4_048_500),
@@ -626,10 +634,15 @@ impl Network {
 /// the last funding stream, a P2PKH address (Zakura `subsidy/constants/mainnet.rs:196-221`).
 /// The test `funding::tests::zip_2008_has_no_code_while_mainnet_has_no_nu7_height` fails
 /// when Mainnet gets a height.
+///
+/// ZIP 259: `ACTIVATION_HEIGHT (NU7)` on Testnet is 4,465,026, a multiple of 3.
 const TESTNET_NU7_HEIGHT: u32 = 4_465_026;
 
 /// The activation height of `upgrade` in the backend's `zcash_protocol` parameters. The
 /// NU7 height is [`TESTNET_NU7_HEIGHT`] on every backend.
+///
+/// ZIP 205, 206, 250, 251, 252, 253, 255, 257, 258: the `ACTIVATION_HEIGHT` of each
+/// upgrade on Mainnet and Testnet (the test `the_deployment_constants_of_the_zips`).
 fn protocol_height<P: Parameters>(params: &P, upgrade: Upgrade) -> Option<u32> {
     let protocol = match upgrade {
         Upgrade::Sprout => return Some(0),
@@ -730,6 +743,52 @@ mod tests {
         if let Some(height) = hayai_crypto::nu7_activation(NetworkType::Test) {
             assert_eq!(height, 4_465_026);
         }
+    }
+
+    /// The `CONSENSUS_BRANCH_ID` and the `ACTIVATION_HEIGHT` of each deployment ZIP: 201
+    /// (Overwinter), 205, 206, 250, 251, 252, 253, 255, 257, 258 and 259.
+    /// The Testnet NU5 height is the second activation of ZIP 252. ZIP 259 requires an NU7
+    /// height that is a multiple of 3.
+    #[test]
+    fn the_deployment_constants_of_the_zips() {
+        let zips: [(Upgrade, u32, u32, u32); 10] = [
+            (Upgrade::Overwinter, 0x5ba8_1b19, 207_500, 347_500),
+            (Upgrade::Sapling, 0x76b8_09bb, 280_000, 419_200),
+            (Upgrade::Blossom, 0x2bb4_0e60, 584_000, 653_600),
+            (Upgrade::Heartwood, 0xf5b9_230b, 903_800, 903_000),
+            (Upgrade::Canopy, 0xe9ff_75a6, 1_028_500, 1_046_400),
+            (Upgrade::Nu5, 0xc2d6_d0b4, 1_842_420, 1_687_104),
+            (Upgrade::Nu6, 0xc8e7_1055, 2_976_000, 2_726_400),
+            (Upgrade::Nu6_1, 0x4dec_4df0, 3_536_500, 3_146_400),
+            (Upgrade::Nu6_2, 0x5437_f330, 4_052_000, 3_364_600),
+            (Upgrade::Nu6_3, 0x37a5_165b, 4_134_000, 3_428_143),
+        ];
+        for (upgrade, branch, testnet, mainnet) in zips {
+            assert_eq!(
+                upgrade.branch_id().map(u32::from),
+                Some(branch),
+                "{upgrade:?}"
+            );
+            assert_eq!(
+                Network::Testnet.activation_height(upgrade),
+                Some(testnet),
+                "{upgrade:?}"
+            );
+            assert_eq!(
+                Network::Mainnet.activation_height(upgrade),
+                Some(mainnet),
+                "{upgrade:?}"
+            );
+        }
+        assert_eq!(Upgrade::Sprout.branch_id().map(u32::from), Some(0));
+        if let Some(nu7) = Upgrade::Nu7.branch_id() {
+            assert_eq!(u32::from(nu7), 0x7719_0ad9);
+        }
+        let Some(nu7) = Network::Testnet.activation_height(Upgrade::Nu7) else {
+            panic!("ZIP 259 gives Testnet an NU7 height");
+        };
+        assert_eq!((nu7, nu7 % 3), (4_465_026, 0));
+        assert_eq!(Network::Mainnet.activation_height(Upgrade::Nu7), None);
     }
 
     #[test]

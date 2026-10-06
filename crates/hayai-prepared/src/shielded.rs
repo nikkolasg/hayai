@@ -237,6 +237,7 @@ impl<'k> ScopedBatch<'k> {
             queued.push((slot(version), kind));
         }
         if let Some(bundle) = tx.sprout_bundle() {
+            // Spec §4.3: a BCTV14 proof (v2, v3) has no verifier here; checkpoint path only.
             for joinsplit in &bundle.joinsplits {
                 let Some(_) = joinsplit.groth_proof_bytes() else {
                     return Err(PrepareError::Unsupported(

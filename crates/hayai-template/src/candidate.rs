@@ -102,6 +102,9 @@ impl Candidate {
 /// Total order of candidates: highest weight ratio first, then smallest size, then WtxId.
 /// Every candidate that pays the conventional fee (weight ratio of 1 or more) comes before
 /// every candidate that does not.
+///
+/// ZIP 317: the two passes of the block production algorithm. The pick in a pass follows
+/// this order: it differs from the RECOMMENDED random pick by weight ratio.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OrderKey {
     pub ratio: Reverse<WeightRatio>,

@@ -30,6 +30,9 @@ impl Disbursement {
 }
 
 /// 78,750 ZEC in ten outputs of 7,875 ZEC.
+///
+/// ZIP 271: `ZIP271DisbursementAmount` is 78,750 ZEC on Mainnet and Testnet, in
+/// `ZIP271DisbursementChunks` = 10 equal outputs.
 const fn nu6_1_disbursement(address: &'static str) -> Disbursement {
     Disbursement {
         count: 10,
@@ -41,6 +44,10 @@ const fn nu6_1_disbursement(address: &'static str) -> Disbursement {
 /// The lockbox disbursements that the coinbase at `height` must pay. Empty at every height
 /// but the NU6.1 activation height, and empty at that height on a Regtest network without
 /// a configured disbursement.
+///
+/// Spec §7.10: [NU6.1 onward] the disbursement outputs are in the block at
+/// `ZIP271ActivationHeight` only. ZIP 271: `ZIP271DisbursementAddress` of Mainnet and
+/// Testnet.
 pub fn disbursements(network: Network, height: u32) -> Vec<Disbursement> {
     if network.activation_height(Upgrade::Nu6_1) != Some(height) {
         return Vec::new();
@@ -64,6 +71,10 @@ pub fn disbursements(network: Network, height: u32) -> Vec<Disbursement> {
 /// The deferred pool after a block that adds `deferred` zatoshis and pays `disbursed`
 /// zatoshis out of the pool, from a pool of `before` zatoshis. `None` when the block pays
 /// out more than the pool holds.
+///
+/// ZIP 2001: the deferred pool gains `totalDeferredOutput`. ZIP 271: it loses
+/// `totalDeferredInput` and must not become negative. The check is on the pool after the
+/// block, as in Spec §4.17 and in Zakura. ZIP 271 orders the deduction before the gain.
 pub fn deferred_pool_after(before: u64, deferred: u64, disbursed: u64) -> Option<u64> {
     before.checked_add(deferred)?.checked_sub(disbursed)
 }

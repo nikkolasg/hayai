@@ -1,29 +1,33 @@
 //! Difficulty adjustment: the `nBits` that a block must have (protocol specification
-//! §7.7.3, `ThresholdBits`), the Testnet minimum-difficulty rule (ZIP 205 and ZIP 208) and
-//! the work of a block (§7.7.5).
+//! §7.7.3, `ThresholdBits`), the Testnet minimum-difficulty rule (ZIP 205, ZIP 208 and
+//! ZIP 218) and the work of a block (§7.7.5).
 //!
 //! References: zcashd `pow.cpp` (`GetNextWorkRequired`, `CalculateNextWorkRequired`) and
 //! Zakura `zakura-header-chain/src/validation/contextual/adjusted_difficulty.rs`.
 //!
-//! The rule for the block at `height` with time `time`:
+//! The parameters come from the rule set of `height` ([`DifficultyParams`]). The averaging
+//! window `W` is 17 blocks before NU7 and 102 blocks from NU7 (ZIP 218). The rule for the
+//! block at `height` with time `time`:
 //!
-//! 1. Testnet only, from height 299,188: when `time` is more than 6 target spacings after
-//!    the time of the parent, the result is the proof-of-work limit.
-//! 2. When `height <= PoWAveragingWindow` (17), the result is the proof-of-work limit.
-//! 3. `MeanTarget` is the mean of the targets of the 17 blocks before `height`.
-//! 4. `ActualTimespan` is `MedianTime(height) - MedianTime(height - 17)`. `MedianTime(h)`
+//! 1. Testnet only, from height 299,188: when `time` is more than 450 s after the time of
+//!    the parent (6 target spacings before NU7, 18 from NU7; 900 s before Blossom), the
+//!    block must have the proof-of-work limit.
+//! 2. When `height <= W`, the result is the proof-of-work limit.
+//! 3. `MeanTarget` is the mean of the targets of the `W` blocks before `height`.
+//! 4. `ActualTimespan` is `MedianTime(height) - MedianTime(height - W)`. `MedianTime(h)`
 //!    is the median of the times of the 11 blocks before `h`.
 //! 5. `ActualTimespanDamped` is `AveragingWindowTimespan + (ActualTimespan -
 //!    AveragingWindowTimespan) / 4`, with a division that truncates toward zero.
-//!    `AveragingWindowTimespan` is 17 target spacings of `height`.
+//!    `AveragingWindowTimespan` is `W` target spacings of `height`.
 //! 6. `ActualTimespanBounded` keeps the damped value between 84 % and 132 % of
 //!    `AveragingWindowTimespan`.
 //! 7. The target is `floor(MeanTarget / AveragingWindowTimespan) * ActualTimespanBounded`,
 //!    at most the proof-of-work limit. The result is its compact form.
 //!
-//! The rule reads the times of the 28 blocks before `height` and the `nBits` of the 17
-//! blocks before it. A shorter context is [`DifficultyError::ContextTooShort`]: the
-//! function never computes a value from a part of the window.
+//! The rule reads the times of the `W + 11` blocks before `height` and the `nBits` of the
+//! `W` blocks before it: 28 and 17 before NU7, 113 and 102 from NU7. A shorter context is
+//! [`DifficultyError::ContextTooShort`]: the function never computes a value from a part
+//! of the window.
 
 use hayai_crypto::primitive_types::U256;
 use hayai_wire::header::{compact_from_target, expand_target};
@@ -72,11 +76,15 @@ pub enum DifficultyError {
 
 /// The target that `bits` encodes. `None` when `bits` encode no target (negative, zero or
 /// overflow).
+///
+/// Spec §7.7.4: `ToTarget`.
 pub fn target_from_compact(bits: u32) -> Option<U256> {
     expand_target(bits).map(|target| U256::from_little_endian(&target))
 }
 
 /// The compact form of `target` (zcashd `arith_uint256::GetCompact`).
+///
+/// Spec §7.7.4: `ToCompact`.
 pub fn compact_from_u256(target: U256) -> u32 {
     let mut bytes = [0u8; 32];
     target.to_little_endian(&mut bytes);
@@ -86,6 +94,8 @@ pub fn compact_from_u256(target: U256) -> u32 {
 /// The work of a block with target `bits`: `floor(2^256 / (target + 1))` (protocol
 /// specification §7.7.5, the ZIP 221 field `nSubTreeTotalWork`). The cumulative work of a
 /// chain is the sum of the work of its blocks. `None` when `bits` encode no target.
+///
+/// Spec §7.7.5: the work of a block is `floor(2^256 / (ToTarget(nBits) + 1))`.
 pub fn block_work(bits: u32) -> Option<U256> {
     let target = target_from_compact(bits)?;
     // `expand_target` bounds the target below 2^256 - 1, so `target + 1` does not overflow.
@@ -96,6 +106,8 @@ pub fn block_work(bits: u32) -> Option<U256> {
 
 /// The median of `times` as the specification defines it: the element at index
 /// `floor(len / 2)` of the sorted list. `None` for an empty list.
+///
+/// Spec §7.7.3: `median(S)` is `sorted(S)` at the 1-based index `ceiling((len + 1) / 2)`.
 pub fn median_time(times: &[u32]) -> Option<u32> {
     let mut sorted = times.to_vec();
     sorted.sort_unstable();
@@ -136,8 +148,9 @@ pub fn expected_bits(
         needed_bits,
     };
 
-    // ZIP 205 and ZIP 208: a Testnet block more than 6 target spacings after its parent
-    // can use the limit (zcashd `nPowAllowMinDifficultyBlocksAfterHeight`).
+    // ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more
+    // than 6 target spacings (18 from NU7) after its parent has `nBits` =
+    // ToCompact(PoWLimit) (zcashd `nPowAllowMinDifficultyBlocksAfterHeight`).
     if matches!(net.min_difficulty_start_height, Some(start) if height >= start) {
         let Some(parent_time) = chain.times.first() else {
             return Err(short(1, 0).into());
@@ -149,6 +162,9 @@ pub fn expected_bits(
     }
 
     let window = params.averaging_window as usize;
+    // Spec §7.7.3: `MeanTarget` is `PoWLimit` up to `PoWAveragingWindow`. hayai gives
+    // `PoWLimit` as the threshold there, as zcashd and Zakura do (`adjusted_difficulty.rs:
+    // 227-235`): the specification leaves `ActualTimespan` without a value at these heights.
     if height <= params.averaging_window {
         return Ok(net.pow_limit_bits);
     }
@@ -158,13 +174,19 @@ pub fn expected_bits(
         return Err(short(needed_times, window).into());
     }
     let times = &chain.times[..needed_times];
+    // Spec §7.7.3: `MeanTarget` is the mean target of the `PoWAveragingWindow` blocks
+    // before the height.
     let mean = mean_target(&chain.bits[..window])?;
+    // Spec §7.7.3: `ActualTimespan` is `MedianTime(height) - MedianTime(height - W)`.
     let (Some(newer), Some(older)) = (median_time_past(times), median_time(&times[window..]))
     else {
         unreachable!("the height is above the window, so both spans hold a time");
     };
     let timespan = bounded_timespan(params, i64::from(newer) - i64::from(older));
 
+    // Spec §7.7.3: `Threshold` is `min(PoWLimit, floor(MeanTarget /
+    // AveragingWindowTimespan) * ActualTimespanBounded)`, and `ThresholdBits` its compact
+    // form.
     let limit = U256::from_little_endian(&net.pow_limit);
     let scaled = mean / U256::from(averaging_window_timespan(params));
     // A product above 2^256 - 1 is above the limit.
@@ -199,6 +221,9 @@ fn mean_target(bits: &[u32]) -> Result<U256, DifficultyError> {
 }
 
 /// `ActualTimespanBounded` of `actual` (`ActualTimespan`, in seconds).
+///
+/// Spec §7.7.3: `ActualTimespanDamped` with `trunc`, then the bounds `MinActualTimespan`
+/// and `MaxActualTimespan` (84 % and 132 % of `AveragingWindowTimespan`, rounded down).
 fn bounded_timespan(params: &DifficultyParams, actual: i64) -> u64 {
     let window = i64::from(averaging_window_timespan(params));
     // Rust's integer division truncates toward zero, as the specification requires.

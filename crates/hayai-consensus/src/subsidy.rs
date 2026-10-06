@@ -32,6 +32,8 @@ pub struct Subsidy {
 }
 
 /// 12.5 ZEC in zatoshis (`MaxBlockSubsidy`).
+///
+/// Spec §7.8: `MaxBlockSubsidy` of `SlowStartRate` and `BlockSubsidy`.
 const MAX_BLOCK_SUBSIDY: u64 = 1_250_000_000;
 
 /// The target spacing of each era, with the upgrade that starts the era (Zakura
@@ -75,6 +77,9 @@ pub fn block_subsidy(network: Network, height: u32) -> Result<Subsidy, Consensus
 /// Each target spacing era adds its blocks times its spacing to a total of block seconds.
 /// The index is that total over the pre-Blossom halving interval in seconds. The total
 /// starts at the slow start shift. This is Zakura's `halving` (`subsidy.rs:523-563`).
+///
+/// Spec §7.8: `Halving(height)`, 0 below `SlowStartShift`, with the 75 s era from Blossom.
+/// ZIP 218 adds the 25 s era from NU7.
 pub fn halving(network: Network, height: u32) -> u32 {
     let params = network.params();
     let shift = params.slow_start_interval / 2;
@@ -144,9 +149,11 @@ pub(crate) fn halving_height(network: Network, index: u32, max_height: u32) -> O
     Some(low)
 }
 
-/// The sum of [`total_subsidy`] of the heights 0 to `height` (zips#1354,
-/// `ExpectedIssuedSupply` without the limit of `MAX_MONEY`; Zakura
+/// The sum of [`total_subsidy`] of the heights 0 to `height` (Zakura
 /// `scheduled_issuance_zatoshis`, `subsidy.rs:800-869`).
+///
+/// ZIP 237: `S_A(height)`, the sum of `ScheduledBlockSubsidy` from height 0, without
+/// `AdditionalBlockSubsidy`.
 ///
 /// The slow start part is a closed form that holds while the halving index is 0, which is
 /// true on every network of this crate: the slow start ends before the first halving.
@@ -183,6 +190,11 @@ pub fn scheduled_issuance(network: Network, height: u32) -> u128 {
 /// `subsidy.rs:948-984`).
 ///
 /// The genesis block has no subsidy on any network: no rule reads its coinbase.
+///
+/// Spec §7.8: `BlockSubsidy(height)`: the slow start ramp below `SlowStartInterval`, then
+/// `MaxBlockSubsidy` over the spacing ratio and `2^Halving(height)`. ZIP 218: from NU7 the
+/// subsidy is `MaxBlockSubsidy * 25 / 150` over `2^Halving(height)`. ZIP 237: this is
+/// `ScheduledBlockSubsidy(height)`.
 pub(crate) fn total_subsidy(network: Network, height: u32) -> u64 {
     if height == 0 {
         return 0;
@@ -194,7 +206,8 @@ pub(crate) fn total_subsidy(network: Network, height: u32) -> u64 {
     }
     let params = network.params();
     if height < params.slow_start_interval {
-        // Slow start: a linear ramp. The ramp skips one step at the slow start shift.
+        // Spec §7.8: SlowStartRate * height below SlowStartShift, SlowStartRate * (height +
+        // 1) from it. The ramp skips one step at the slow start shift.
         let rate = MAX_BLOCK_SUBSIDY / u64::from(params.slow_start_interval);
         return if height < params.slow_start_interval / 2 {
             rate * u64::from(height)

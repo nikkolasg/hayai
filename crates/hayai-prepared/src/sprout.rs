@@ -72,10 +72,10 @@ fn zatoshis(value: ZatBalance) -> u64 {
 
 /// The structural rules of the JoinSplits of a transaction under `rules`:
 ///
-/// - `vpub_old` or `vpub_new` is zero (Zakura `joinsplit_has_vpub_zero`,
+/// - Spec §4.3: `vpub_old` or `vpub_new` is zero (Zakura `joinsplit_has_vpub_zero`,
 ///   `zakura-consensus/src/transaction/check.rs:279`);
-/// - from Canopy `vpub_old` is zero (ZIP 211, Zakura `disabled_add_to_sprout_pool`,
-///   `check.rs:304`);
+/// - ZIP 211, Spec §4.3: from Canopy `vpub_old` is zero (Zakura
+///   `disabled_add_to_sprout_pool`, `check.rs:304`);
 /// - no nullifier is revealed twice in the transaction.
 ///
 /// Returns the nullifiers and the note commitments, in transaction order.
@@ -156,6 +156,9 @@ fn joinsplit_proof_is_valid(
 /// are valid. The signature is on the shielded sighash of the transaction. The public key
 /// must be the encoding of a point of the curve, and the signature must be valid by the
 /// ZIP 215 rules.
+///
+/// Spec §7.1.2: `joinSplitPubKey` is a valid key and `joinSplitSig` is valid. Spec §4.3:
+/// each JoinSplit proof is valid. ZIP 215: the Ed25519 rules, at every height.
 pub(crate) fn verify_sprout(key: &SproutKey, item: &Item) -> bool {
     let Some(bundle) = item.tx.sprout_bundle() else {
         unreachable!("queued under the Sprout group");

@@ -79,7 +79,7 @@ Status values:
 | B13 | NU6 onward: coinbase output + deferred = subsidy + fees (ZIP 236) | same, lines 388-396 | WRONG (`>` only) | A2 |
 | B14 | Coinbase output includes `-valueBalanceIronwood` | same, lines 341-366 | ABS | A6 |
 | B15 | NU7: miner share = fees - floor(6 x fees / 10) | `ZCH/parameters/network/subsidy/fees.rs:21` | ABS | A7 |
-| B16 | ZIP 234: subsidy = halving subsidy + ceil(NSM(parent) x 1375 / 10^10) from the reissuance height | `subsidy.rs` (`block_subsidy`, `reissuance_bonus`, `nsm_reissuance_height`) | ABS | A7 |
+| B16 | ZIP 237: subsidy = halving subsidy + ceil(NSM(parent) x 1375 / 10^10) from the reissuance height | `subsidy.rs` (`block_subsidy`, `reissuance_bonus`, `nsm_reissuance_height`) | ABS | A7 |
 | B17 | NU7: NSM value balance >= 0 after the block | `ZS/check.rs:65` | ABS | A7 |
 | B18 | ZIP 213: coinbase Sapling/Orchard/Ironwood outputs decrypt with the zero OVK; lead byte 0x02 from Canopy | `ZC/transaction/check.rs:503`; `ZCH/primitives/zcash_note_encryption.rs:12` | ABS | A3 |
 | B19 | NU6.3: coinbase has no Orchard bundle | `ZC/transaction/check.rs:367` | ABS | A6 |
@@ -278,7 +278,7 @@ Rules in Zakura's code:
    - the seed at NU7 − 1 = scheduled issuance − issued supply. A check compares the seed with the constant (Mainnet 36,858,445,520, Testnet 55,768,414,957 zatoshis);
    - for each block, `nsm += halving_subsidy − (change of the six pools)`;
    - the balance must stay >= 0.
-8. ZIP 234 bonus from the reissuance height. The height is a derived value: the first block after the third halving and after NU7 at which the reserve condition is true (`nsm_reissuance_crossing_height`).
+8. ZIP 237 bonus from the reissuance height. The height is a derived value: the first block after the third halving and after NU7 at which the reserve condition is true (`nsm_reissuance_crossing_height`).
 9. Protocol version 170,180 (Testnet) / 170,190 (Mainnet) (`zakura-network/src/protocol/external/types.rs:130`).
 10. In Zakura's consensus code, the coinbase maturity stays 100 and the expiry threshold stays 500,000,000. Confirm this against the ZIP 218 text: the brief says that they scale, but Zakura does not scale them in consensus. The default expiry delta of wallets and of the template is policy.
 
@@ -616,7 +616,7 @@ Sizes: S <= 2 days, M <= 1 week, L > 1 week (one agent). Each item lists the fil
 - **W12 = B6 restart during sync** (S–M). It comes after W10.
 - **W13 = B11 snapshot** (M). It comes after W1 and W7 (the state record must be final).
 - **W14 = C2 completion** (new vectors NU6–NU6.3) (S) and **C4 full-history replay** (M + machine time). It comes after W10.
-- **W15 = docs** (S): `docs/consensus-rules.md` regenerated from section 1, `docs/architecture.md` (hayai-consensus, hayai-sync), `docs/hayaid.md` limits, `CHANGES.md`.
+- **W15 = docs** (S): `docs/consensus.md` regenerated from section 1, `docs/architecture.md` (hayai-consensus, hayai-sync), `docs/hayaid.md` limits, `CHANGES.md`.
 
 Dependency summary: W0 → {W1, W2, W3, W4, W6c}; W2 → W6 → W9(B2) → W10 → {W12, W14}; W1 → {W7, W8, W9(B7), W13}; W3 → W8; W5 and W11 are independent.
 

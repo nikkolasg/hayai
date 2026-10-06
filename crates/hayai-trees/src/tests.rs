@@ -161,6 +161,26 @@ fn full_tree_is_an_error_not_a_panic() {
     ));
 }
 
+/// Spec §3.8: the Sapling tree takes 2^32 leaves and not one more.
+#[test]
+fn a_full_sapling_tree_is_an_error() {
+    let mut rng = StdRng::seed_from_u64(10);
+    let mut leaf = || sapling_leaf(&mut rng);
+    let capacity = 1u64 << DEPTH;
+    let mut hayai = SaplingFrontier::from_frontier(frontier_at(Some(capacity - 2), &mut leaf));
+    let two = [leaf(), leaf()];
+    let before = hayai.clone();
+    let Err(TreeError::Full { requested, .. }) = hayai.append_many(&two) else {
+        panic!("two leaves do not fit");
+    };
+    assert_eq!(requested, capacity + 1);
+    assert_eq!(hayai, before);
+    hayai.append_many(&two[..1]).expect("the last leaf fits");
+    let Err(TreeError::Full { .. }) = hayai.append_many(&two[1..]) else {
+        panic!("a full tree takes no leaf");
+    };
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(6))]
     #[test]

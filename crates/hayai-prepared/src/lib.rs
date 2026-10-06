@@ -1,6 +1,6 @@
 //! Prepared transactions: every context-free result of a transaction, computed once.
 //!
-//! Contract: `docs/architecture.md`, section hayai-prepared, and `docs/consensus-rules.md`.
+//! Contract: `docs/architecture.md`, section hayai-prepared, and `docs/consensus.md`.
 //!
 //! - [`prepare`] turns a parsed transaction into a [`PreparedTx`]: spent coins, fee, sigops,
 //!   nullifiers, note commitments, anchors, transparent script results and the shielded
@@ -89,6 +89,7 @@ impl RuleEpoch {
     /// The flags zcashd applies to every transaction of a block
     /// (`ConnectBlock`: `SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY`), which
     /// Zakura's verifier also uses (`zakura-script/src/lib.rs:173-174`).
+    /// Spec §7.12: BIP 16 and BIP 65 apply from the genesis block.
     pub const CONSENSUS_FLAGS: Flags = Flags::P2SH.union(Flags::CHECKLOCKTIMEVERIFY);
 
     /// The epoch of block validation for `branch_id`.

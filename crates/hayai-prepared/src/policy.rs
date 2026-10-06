@@ -26,7 +26,8 @@ use zcash_script::Opcode;
 use crate::{PreparedTx, RuleEpoch};
 
 /// The mempool rejects a transaction whose expiry height is less than the next block
-/// height plus this value (zcashd `TX_EXPIRING_SOON_THRESHOLD`).
+/// height plus this value (zcashd `TX_EXPIRING_SOON_THRESHOLD`). ZIP 204: do not relay a
+/// transaction that expires within 3 blocks.
 pub const TX_EXPIRING_SOON_THRESHOLD: u32 = 3;
 /// Largest standard scriptSig in bytes (zcashd `IsStandardTx`: a 15-of-15 P2SH multisig).
 pub const MAX_STANDARD_SCRIPTSIG_SIZE: usize = 1_650;
@@ -48,7 +49,8 @@ pub const ONE_THIRD_DUST_THRESHOLD_RATE: u64 = 100;
 const DUST_SPEND_BYTES: u64 = 148;
 /// The minimum relay fee rate, in zatoshis per 1,000 bytes (zcashd
 /// `DEFAULT_MIN_RELAY_TX_FEE`; Zakura `zip317.rs:56`, `MIN_MEMPOOL_TX_FEE_RATE`). It is
-/// also the minimum relay fee of a transaction.
+/// also the minimum relay fee of a transaction. ZIP 204: do not relay a transaction below
+/// the minimum relay fee.
 pub const MIN_RELAY_FEE_RATE: u64 = 100;
 /// The upper bound of the minimum relay fee of a transaction, in zatoshis: the value of
 /// Zakura (`zakura-chain/src/transaction/unmined/zip317.rs:62`,
@@ -385,7 +387,8 @@ impl MempoolPolicy {
         Ok(())
     }
 
-    /// ZIP 317 unpaid actions and the minimum relay fee.
+    /// ZIP 317 unpaid actions and the minimum relay fee. ZIP 317: a node can drop a
+    /// transaction with more unpaid actions than its limit (0 here, 50 in ZIP 317).
     fn check_fee(&self, tx: &PreparedTx) -> Result<(), PolicyReject> {
         let conventional_fee = self.zip317.conventional_fee(logical_actions(&tx.raw.tx));
         let unpaid = self.zip317.unpaid_actions(tx.fee, conventional_fee);

@@ -23,10 +23,11 @@ pub struct ParentInfo {
     /// Height of the parent.
     pub height: u32,
     /// `nTime` of the parent and of the blocks before it, newest first. The rules read
-    /// 28 times at most.
+    /// 28 times at most before NU7 and 113 from NU7
+    /// (`hayai_consensus::DIFFICULTY_CONTEXT_BLOCKS`).
     pub times: Vec<u32>,
     /// `nBits` of the parent and of the blocks before it, newest first. The rules read
-    /// 17 values at most.
+    /// 17 values at most before NU7 and 102 from NU7 (ZIP 218).
     pub bits: Vec<u32>,
 }
 
@@ -78,6 +79,7 @@ impl<C: HeaderContext> HeaderCheck for StandardHeaderCheck<C> {
             bits: &parent.bits,
         };
         let now = Some(self.context.now());
+        // Spec §7.6: every header rule, and the rule against the clock of the node.
         match check_header(self.network, header, &chain, now)? {
             HeaderVerdict::Checked => Ok(()),
             HeaderVerdict::ContextTooShort(unchecked) => {

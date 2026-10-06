@@ -54,6 +54,7 @@ use crate::submission::TemplateStore;
 use crate::zip317::BLOCK_UNPAID_ACTION_LIMIT;
 
 /// Block version of every template that this crate produces.
+/// Spec §7.6: a miner creates blocks of version 4 only.
 pub const BLOCK_VERSION: u32 = 4;
 /// Consensus block size limit.
 pub const MAX_BLOCK_BYTES: usize = 2_000_000;

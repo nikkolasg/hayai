@@ -7,7 +7,7 @@ Everything above `hayai-crypto` builds on either backend.
 - `docs/architecture.md` — crates, data flow, principles.
 - `docs/protocol-compact-relay.md` — block and transaction relay (short ids, batch lanes).
 - `docs/protocol-template-push.md` — template delivery to pools.
-- `docs/consensus-rules.md` — consensus rules implemented and their status.
+- `docs/consensus.md` — consensus rules implemented and their status.
 - `docs/report.html` — benchmarks against Zakura. `scripts/report.py` renders it from `bench-results/`.
 - `docs/hayaid.md` — the node binary: modes, configuration, traces, metrics, limits.
 - `docs/install.md` — installation with Docker Compose, systemd or Terraform on AWS; checks, upgrade, backup.
