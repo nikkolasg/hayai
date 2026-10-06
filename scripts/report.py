@@ -423,6 +423,16 @@ def headline(bench, relay_bytes):
         for fid, kind, title, text, big, detail in items
     )
     return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It validates a new full block <b>{times(zak, warm)} faster</b> than Zakura and stays compatible with every Zcash node.</p>
+<div class="live">
+<span class="eyebrow">First run on a public network &middot; preliminary</span>
+<p class="livehead">hayai synced the whole public Testnet from genesis in <b>59 min</b>, and reached the height where Zakura stood after 82 min in <b>24 min</b>, with its wallet index on: <b>3.4&times; faster</b>.</p>
+<div class="scroll"><table class="livet"><thead><tr><th>Testnet, from genesis</th><th>zakurad 1.6.0</th><th>hayaid</th><th>hayaid with wallet index</th></tr></thead><tbody>
+<tr><td>To height 2,447,471</td><td class="num">78.1 min</td><td class="num">25.8 min</td><td class="num h">23.0 min</td></tr>
+<tr><td>To height 2,565,600</td><td class="num">81.9 min</td><td class="num">27.4 min</td><td class="num h">24.2 min</td></tr>
+<tr><td>To the tip, height 4,468,749, across NU7</td><td class="num">&ndash;</td><td class="num h">59.5 min</td><td class="num">&ndash;</td></tr>
+</tbody></table></div>
+<p class="note">Preliminary. One machine (16 cores, NVMe), the three runs one after the other, so the peers and the hour differ; the gap between the two hayai runs is within that variation. zakurad ran its default configuration: legacy network stack and archive database. Both nodes use checkpoint sync. On Testnet, Zakura has no embedded frontier for its fast path below the last checkpoint, so it recomputes the note trees of each block there; Mainnet has that frontier. The Zakura run was stopped at height 2,565,600. The fair comparison on two equal machines is the next step (<code>docs/sync-race.md</code>).</p>
+</div>
 <h2 class="new">What is new</h2>
 <div class="nfs">{cells}</div>
 <p class="note">The figures compare hayai with Zakura code on the same machine. The figure of the speculative tip compares hayai with and without that feature. A miner node receives almost every transaction before the block that contains it, so the validation figure is the normal case; with transactions that the node never saw, hayai is {times(zak, cold)} faster ({fmt_time(cold)}, not {fmt_time(zak)}). The Zakura validation time is a model of its scheduling with the same cryptography. Open a feature for its method and its measurements.</p>
@@ -1241,10 +1251,11 @@ def status_section():
         ("done", "Deployment", "Docker, systemd, Terraform for AWS, Prometheus and Grafana."),
         ("done", "Continuous integration", "Format, lints, tests, license check and the checks of the deployment files run on each push."),
         ("progress", "Sync race on Testnet", "The package for two machines is ready: one Zakura node, one hayai node, one dashboard. It is not deployed yet."),
-        ("todo", "Testnet", "A sync from genesis and 24 h at the tip, next to a Zakura node."),
+        ("done", "Testnet sync", "The whole public Testnet from genesis to the tip in 59.5 min on one machine, across NU7, then 10 h at the tip with reorgs. The first runs found 5 defects that no test had shown; all are fixed."),
+        ("progress", "Testnet comparison with Zakura", "Preliminary result on one machine: 3.4 times faster to the same height. The run on two equal machines, next to a Zakura node, is to do."),
         ("todo", "Mainnet replay", "10,000 Mainnet blocks in shadow mode with zero disagreements."),
         ("todo", "Live latency measurement", "Block and template latency against Zakura on Testnet (docs/testnet-benchmark-plan.md)."),
-        ("todo", "Index for wallets", "Transaction and address indexes, so that lightwalletd or Zaino can use hayai as a full node."),
+        ("progress", "Index for wallets", "Transaction and address indexes in RocksDB, off by default, with the RPC methods that lightwalletd uses. Built and measured on Testnet: 2.8 GB of index at height 2.57 million, no measurable cost on the sync. Not merged yet."),
         ("todo", "TLS for the RPC port", "The port has cookie authentication and no encryption. It must stay on the loopback address or behind a tunnel."),
         ("todo", "NU7 with the official crates", "It waits for the NU7 branch id in the official Zcash crates."),
         ("todo", "Log compaction", "The state log and the header log grow without a limit today."),
@@ -1365,6 +1376,10 @@ table.cmp th {{ text-align:right; }}
 .fact {{ border-left:3px solid var(--accent); padding:4px 0 4px 12px; font-size:14px; }}
 .fact .big {{ font-family:var(--display); font-weight:700; font-size:28px; color:var(--accent); font-variant-numeric:tabular-nums; }}
 .lead {{ font-size:clamp(18px,2.4vw,21px); line-height:1.45; margin:28px 0 8px; max-width:62ch; }}
+.live {{ border:1px solid var(--accent); border-radius:8px; background:var(--card); padding:18px 20px; margin:24px 0 8px; }}
+.livehead {{ font-family:var(--display); font-size:clamp(18px,2.6vw,22px); line-height:1.35; margin:8px 0 12px; max-width:none; text-wrap:balance; }}
+.livehead b {{ color:var(--accent); }}
+table.livet td.num {{ font-size:15px; }}
 h2.new {{ margin-top:36px; }}
 .toc {{ border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:14px 0; margin:24px 0 8px; }}
 .toc ol {{ list-style:decimal; display:flex; flex-direction:column; gap:4px; padding:0 0 0 22px; margin:8px 0 0; font-size:15px; }}
