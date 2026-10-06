@@ -22,6 +22,7 @@ Every number on the page comes from the input files. A missing value shows as a 
 
 import html
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -177,7 +178,7 @@ def chart(title, unit_fmt, series, rows, note="", worse="slower"):
         f'<div class="scroll"><svg viewBox="0 0 {width} {y + 4}" width="{width}" height="{y + 4}" role="img" aria-label="{esc(title)}">'
         + "".join(out)
         + "</svg></div>"
-        + (f'<p class="note">{esc(note)}</p>' if note else "")
+        + (f'<p class="note">{note}</p>' if note else "")
         + "</figure>"
     )
 
@@ -248,136 +249,6 @@ CASES = [
 ]
 
 
-def latency_rows(inp, block_key, rtt, hops, bw, spacing):
-    block = inp[block_key]
-    out = []
-    for key, label, color in CASES:
-        parts = latency(key, block, inp, rtt, hops, bw)
-        total = sum(parts.values())
-        out.append((key, label, color, parts, total, total / (spacing * 1000) * 100))
-    return out
-
-
-def bars_html(rows):
-    vmax = max(r[4] for r in rows) or 1
-    html_rows = []
-    for key, label, color, parts, total, pct in rows:
-        segs = "".join(
-            f'<span class="seg {name}" style="width:{parts[name] / vmax * 100:.2f}%" title="{name}: {parts[name]:.1f} ms"></span>'
-            for name in ("network", "validation", "template")
-        )
-        html_rows.append(
-            f'<div class="lrow" data-case="{key}"><div class="llabel">{esc(label)}</div>'
-            f'<div class="ltrack">{segs}</div>'
-            f'<div class="lval"><b>{total:,.0f} ms</b><span class="sub"> · {pct:.2f} % of hash power</span></div></div>'
-        )
-    return "".join(html_rows)
-
-
-def miners_section(bench, relay_bytes):
-    inp = model_inputs(bench, relay_bytes)
-    if inp["full"]["vz"] is None or inp["full"]["vh"] is None:
-        return ""
-    rtt, hops, bw, spacing = 100, 3, 100, 25
-    rows = latency_rows(inp, "full", rtt, hops, bw, spacing)
-    legacy, you, all_h = rows[0], rows[1], rows[2]
-    tf_h, tf_z = inp["template_full_hayai"], inp["template_full_zakura"]
-    data = json.dumps(inp)
-    return f"""
-<section id="miners">
-<h2>For miners: less hash power on an outdated block</h2>
-<p>When a competitor finds a block, your pool keeps hashing on the old block until your node has received the new block, validated it, and sent a new template. A block that your pool finds in that time competes with a block the network already has, and it usually loses. The time is the sum of three parts: the network path, the validation at each node, and the template. At 25 s per block, each 250 ms of that time is 1 % of your hash power.</p>
-<div class="calc" id="calc">
-<div class="controls">
-<label>Block <select id="c-block"><option value="full">{esc(inp['full']['label'])}</option><option value="small">{esc(inp['small']['label'])}</option></select></label>
-<label>Round trip between nodes <input id="c-rtt" type="number" min="1" max="1000" value="{rtt}"> ms</label>
-<label>Hops from the finder to your node <input id="c-hops" type="number" min="1" max="10" value="{hops}"></label>
-<label>Bandwidth <input id="c-bw" type="number" min="1" max="10000" value="{bw}"> Mbit/s</label>
-<label>Block spacing <input id="c-spacing" type="number" min="1" max="600" value="{spacing}"> s</label>
-</div>
-<div class="lkey"><span><i class="seg network"></i>network</span><span><i class="seg validation"></i>validation</span><span><i class="seg template"></i>template</span></div>
-<div id="c-rows">{bars_html(rows)}</div>
-<p class="note">Model. Measured inputs: validation of the block at each node (hayai with prepared transactions; Zakura's scheduling model), the forward check of hayai, and the template time. Assumed inputs: the values above. The transactions are already in the memory pools. Zakura's commit time is not counted, its empty template is counted as free, and its validation time is the lower-bound model of its scheduling; all three choices favour Zakura. With these inputs the network time is the largest part for both nodes, so most of the gain comes from the relay and not from validation speed.</p>
-</div>
-<div class="facts">
-<div class="fact"><div class="big">{legacy[5] - you[5]:.1f} %</div><div>of your hash power stops working on outdated blocks when only your node switches to hayai (full block, values above).</div></div>
-<div class="fact"><div class="big">{legacy[5]:.1f} % → {all_h[5]:.2f} %</div><div>hash power on outdated blocks when the network switches.</div></div>
-<div class="fact"><div class="big">{esc(fmt_ms(tf_h))}</div><div>to a full template with fees after a new block. Zakura rebuilds the selection on each request: {esc(fmt_ms(tf_z))} for 8,000 candidates.</div></div>
-</div>
-<p>The same model applies to a block that your pool finds. The faster your block reaches the other miners, the less often a competing block wins.</p>
-<script type="application/json" id="c-data">{data}</script>
-<script>
-(function () {{
-  var inp = JSON.parse(document.getElementById('c-data').textContent);
-  var names = {{legacy: 'Every node runs Zakura', you: 'Your node runs hayai, the other nodes run Zakura', hayai: 'Every node runs hayai'}};
-  function latency(c, b, rtt, hops, bw) {{
-    var full = b.size * 8 / (bw * 1000);
-    var compact = (1487 + 6 * b.ntx + 50) * 8 / (bw * 1000);
-    var th = inp.template_hayai;
-    if (c === 'legacy') return {{network: hops * (1.5 * rtt + full), validation: hops * b.vz, template: 0}};
-    if (c === 'you') return {{network: hops * (1.5 * rtt + full), validation: (hops - 1) * b.vz + b.vh, template: th}};
-    return {{network: hops * (0.5 * rtt + compact), validation: (hops - 1) * (b.fwd || 1) + b.vh, template: th}};
-  }}
-  function num(id, d) {{ var v = parseFloat(document.getElementById(id).value); return isFinite(v) && v > 0 ? v : d; }}
-  function render() {{
-    var b = inp[document.getElementById('c-block').value];
-    var rtt = num('c-rtt', 100), hops = Math.round(num('c-hops', 3)), bw = num('c-bw', 100), sp = num('c-spacing', 25);
-    var rows = ['legacy', 'you', 'hayai'].map(function (c) {{
-      var p = latency(c, b, rtt, hops, bw); var t = p.network + p.validation + p.template;
-      return {{c: c, p: p, t: t, pct: t / (sp * 1000) * 100}};
-    }});
-    var vmax = Math.max.apply(null, rows.map(function (r) {{ return r.t; }})) || 1;
-    var out = rows.map(function (r) {{
-      var segs = ['network', 'validation', 'template'].map(function (n) {{
-        return '<span class="seg ' + n + '" style="width:' + (r.p[n] / vmax * 100).toFixed(2) + '%" title="' + n + ': ' + r.p[n].toFixed(1) + ' ms"></span>';
-      }}).join('');
-      return '<div class="lrow"><div class="llabel">' + names[r.c] + '</div><div class="ltrack">' + segs + '</div><div class="lval"><b>' +
-        Math.round(r.t).toLocaleString('en-US') + ' ms</b><span class="sub"> · ' + r.pct.toFixed(2) + ' % of hash power</span></div></div>';
-    }}).join('');
-    document.getElementById('c-rows').innerHTML = out;
-  }}
-  ['c-block', 'c-rtt', 'c-hops', 'c-bw', 'c-spacing'].forEach(function (id) {{
-    document.getElementById(id).addEventListener('input', render);
-  }});
-}})();
-</script>
-</section>"""
-
-
-def network_section(bench, system, relay_bytes):
-    inp = model_inputs(bench, relay_bytes)
-    if inp["full"]["vz"] is None:
-        return ""
-    rtt, hops, bw = 100, 3, 100
-
-    def spacing_for(case, key, stale_pct):
-        t = sum(latency(case, inp[key], inp, rtt, hops, bw).values())
-        return t / (stale_pct / 100) / 1000
-
-    vz = inp["full"]["vz"]
-    vc = bench.get("validate/block", "hayai-cold", "transparent-6500x1")
-    vc = None if vc is None else vc / 1e6
-    cpu_h = system.get("validate_block_cold", "transparent-6500x1", "hayai", "cpu_ms")
-    cpu_z = system.get("validate_block_cold", "transparent-6500x1", "zakura", "cpu_ms")
-    rows = [
-        ("Blocks that lose because they arrive late (stale blocks), at 25 s spacing, full blocks", f"{sum(latency('legacy', inp['full'], inp, rtt, hops, bw).values()) / 250:.1f} %",
-         f"{sum(latency('hayai', inp['full'], inp, rtt, hops, bw).values()) / 250:.2f} %"),
-        ("Shortest block spacing that keeps stale blocks at 1 %, full blocks", f"{spacing_for('legacy', 'full', 1):.0f} s", f"{spacing_for('hayai', 'full', 1):.0f} s"),
-        ("Shortest block spacing that keeps stale blocks at 1 %, typical blocks", f"{spacing_for('legacy', 'small', 1):.0f} s", f"{spacing_for('hayai', 'small', 1):.0f} s"),
-        ("Full blocks a node can validate per second, transactions not seen before", f"{1000 / vz:.0f}", f"{1000 / vc:.0f}" if vc else "–"),
-        ("CPU time per full block, transactions not seen before", fmt_ms(cpu_z), fmt_ms(cpu_h)),
-    ]
-    trs = "".join(f"<tr><td>{esc(a)}</td><td class='num'>{esc(z)}</td><td class='num h'>{esc(h)}</td></tr>" for a, z, h in rows)
-    return f"""
-<section id="network">
-<h2>For the Zcash network: room to scale</h2>
-<p>A stale block is a valid block that loses, because another miner found a block before this one arrived. A block that needs a long time to reach the miners makes more stale blocks. Stale blocks waste hash power, favour the largest miners, and limit how short the block spacing and how large the blocks can be. ZIP 218 brings the spacing to 25 s with NU7. The relay time of a full block then decides how much of the network's work is lost.</p>
-<div class="scroll"><table><thead><tr><th>Measure</th><th>Zakura network</th><th>hayai network</th></tr></thead><tbody>{trs}</tbody></table></div>
-<p class="note">The first three rows use the latency model of the miners section with a 100 ms round trip, 3 hops and 100 Mbit/s. The stale rate is the relay time divided by the block spacing. The last two rows are measurements.</p>
-<p>A node that validates and relays faster also syncs faster after a restart, and the same hardware can follow a chain with more transactions.</p>
-</section>"""
-
-
 def headline(bench, relay_bytes):
     """The opening of the page: one sentence, then the new features with one figure each."""
     T = "transparent-6500x1"
@@ -402,7 +273,7 @@ def headline(bench, relay_bytes):
          "A new block travels as a header and references to transactions that the peer already holds. The peer rebuilds the block and forwards it at once.",
          times(full, ref), f"fewer bytes: {fmt_bytes(ref)}, not {fmt_bytes(full)}"),
         ("lane", "New protocol", "Transaction lanes",
-         "A miner chooses the transactions of its next block, then searches for the proof of work. hayai shares that choice with peers during the search. When the proof of work is found, the block goes out as one short reference.",
+         "A miner chooses the transactions of its next block, then searches for the proof of work. hayai shares that choice with peers during the search, and the solved block goes out as one short reference.",
          "61 B", "to name a block that equals its published candidate"),
         ("verify-once", "Performance", "Each transaction is verified one time",
          "The node checks a transaction when it arrives and keeps the result. A new block needs only the checks that depend on the chain.",
@@ -414,38 +285,56 @@ def headline(bench, relay_bytes):
          "The pool gets a template on the new block as soon as the node has built it in memory. The node takes it back if a check fails.",
          times(se, sp), f"sooner on a shielded block of unseen transactions: {fmt_time(sp)}, not {fmt_time(se)} without this feature"),
         ("state", "Performance", "Chain state in memory",
-         "The coin set and the newest 1,000 blocks stay in memory. A block reads all its coins in one batch.",
+         "The coin set and <b>the newest 1,000 blocks</b> stay in memory. A block reads all its coins in one batch.",
          times(c_z, c_h), f"faster coin lookup: {fmt_time(c_h)}, not {fmt_time(c_z)}"),
     ]
     cells = "".join(
         f"<a class='nf' href='#{fid}'><span class='eyebrow'>{esc(kind)}</span><span class='nft'>{esc(title)}</span>"
-        f"<span class='nfd'>{esc(text)}</span><span class='nfv'><b>{esc(big)}</b> {esc(detail)}</span></a>"
+        f"<span class='nfd'>{text}</span><span class='nfv'><b>{esc(big)}</b> {esc(detail)}</span></a>"
         for fid, kind, title, text, big, detail in items
     )
-    return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It validates a new full block <b>{times(zak, warm)} faster</b> than Zakura and stays compatible with every Zcash node.</p>
+    return f"""<p class="lead">hayai is a new Zcash node for miners, written apart from Zakura and Zebra. It syncs Testnet in <b>70 % less time</b> than Zakura and validates a new full block <b>{times(zak, warm)} faster</b>.</p>
+<p class="lead">It brings a new block relay protocol, transactions that are verified one time, and a mining template that is always ready. It stays compatible with every Zcash node. Source: <a href="https://github.com/nikkolasg/hayai">github.com/nikkolasg/hayai</a>.</p>
 <div class="live">
 <span class="eyebrow">First run on a public network &middot; preliminary</span>
-<p class="livehead">hayai synced the whole public Testnet from genesis in <b>59 min</b>, and reached the height where Zakura stood after 82 min in <b>24 min</b>, with its wallet index on: <b>3.4&times; faster</b>.</p>
-<div class="scroll"><table class="livet"><thead><tr><th>Testnet, from genesis</th><th>zakurad 1.6.0</th><th>hayaid</th><th>hayaid with wallet index</th></tr></thead><tbody>
-<tr><td>To height 2,447,471</td><td class="num">78.1 min</td><td class="num">25.8 min</td><td class="num h">23.0 min</td></tr>
-<tr><td>To height 2,565,600</td><td class="num">81.9 min</td><td class="num">27.4 min</td><td class="num h">24.2 min</td></tr>
-<tr><td>To the tip, height 4,468,749, across NU7</td><td class="num">&ndash;</td><td class="num h">59.5 min</td><td class="num">&ndash;</td></tr>
+<p class="livehead">On Testnet, hayai reached the same height as Zakura in <b>70 % less time</b>, with its wallet index on.</p>
+<div class="scroll"><table class="livet"><thead><tr><th>Testnet sync from genesis to height 2,565,600</th><th>zakurad 1.6.0</th><th>hayaid with wallet index</th></tr></thead><tbody>
+<tr><td>Time</td><td class="num">81.9 min</td><td class="num h">24.2 min</td></tr>
 </tbody></table></div>
-<p class="note">Preliminary. One machine (16 cores, NVMe), the three runs one after the other, so the peers and the hour differ; the gap between the two hayai runs is within that variation. zakurad ran its default configuration: legacy network stack and archive database. Both nodes use checkpoint sync. On Testnet, Zakura has no embedded frontier for its fast path below the last checkpoint, so it recomputes the note trees of each block there; Mainnet has that frontier. The Zakura run was stopped at height 2,565,600. The fair comparison on two equal machines is the next step (<code>docs/sync-race.md</code>).</p>
+<p class="note"><b>Preliminary:</b> one machine, the runs one after the other, so the peers differ. Both nodes ran their default configuration with checkpoint sync. hayai then synced the <b>whole Testnet to the tip in 59.5 min</b>, across NU7. The run on two equal machines is the next step (<code>docs/sync-race.md</code>).</p>
 </div>
 <h2 class="new">What is new</h2>
 <div class="nfs">{cells}</div>
-<p class="note">The figures compare hayai with Zakura code on the same machine. The figure of the speculative tip compares hayai with and without that feature. A miner node receives almost every transaction before the block that contains it, so the validation figure is the normal case; with transactions that the node never saw, hayai is {times(zak, cold)} faster ({fmt_time(cold)}, not {fmt_time(zak)}). The Zakura validation time is a model of its scheduling with the same cryptography. Open a feature for its method and its measurements.</p>
+<p class="note">The figures compare hayai with Zakura code on the same machine. The figure of the speculative tip compares hayai with and without that feature.</p>
+<p class="note">A miner node receives almost every transaction before the block that contains it. So the validation figure is the normal case.</p>
+<p class="note">With transactions that the node never saw, hayai is <b>{times(zak, cold)} faster</b> ({fmt_time(cold)}, not {fmt_time(zak)}). The Zakura validation time is a model of its scheduling with the same cryptography.</p>
+<p class="note">Open a feature for its method and its measurements.</p>
 <nav class="toc" aria-label="Contents"><span class="eyebrow">Contents</span><ol>
-<li><a href="#miners">For miners</a></li>
-<li><a href="#network">For the Zcash network</a></li>
+<li><a href="#approach">How hayai is fast</a></li>
 <li><a href="#general">General benchmarks</a></li>
 <li><a href="#features">Features in detail</a></li>
 <li><a href="#compatibility">Compatibility</a></li>
 <li><a href="#safety">Hardening</a></li>
 <li><a href="#method">Method</a></li>
 <li><a href="#status">Status</a></li>
-</ol></nav>"""
+</ol></nav>
+<section id="approach">
+<h2>How hayai is fast</h2>
+<p>Cryptography is not the main cost of a Zcash node. Proofs and signatures are already verified in batches and in parallel, and most of them when the transaction enters the mempool.</p>
+<p>With the same cryptography, a new full block takes <b>3.6 ms</b> in hayai and <b>41.8 ms</b> in the Zakura model, when the node has seen its transactions. The rest of the time goes to checks done twice, state reads, data copies, steps done one after another, and round trips between nodes.</p>
+<p>hayai removes these costs with the methods of production Bitcoin and Ethereum clients and of research systems. It adds new protocols that deliver blocks and template updates with fewer bytes and fewer round trips.</p>
+<div class="scroll"><table class="approach"><thead><tr><th>Method</th><th>Origin</th><th>Use in hayai</th></tr></thead><tbody>
+<tr><td>Verify each transaction once and keep the result</td><td>Bitcoin Core signature and script caches</td><td>Prepared transactions, keyed by their signatures, proofs and rule set</td></tr>
+<tr><td>The block is its own access list: read all state in one batch</td><td>Bitcoin Core coins cache; Ethereum block-level access lists (EIP-7928)</td><td>One batched read of the spent coins, from an in-memory coin set</td></tr>
+<tr><td>Parallel work off the critical path, with bounded queues</td><td>Bitcoin Core parallel script checks; staged sync of Erigon and Reth</td><td>Parallel validation, speculative tip, background index writer</td></tr>
+<tr><td>Block relay by reference</td><td>Bitcoin compact blocks (BIP 152)</td><td>Short ids and batch references in place of the full block</td></tr>
+<tr><td>Forward a block before its full validation</td><td>High-bandwidth mode of BIP 152; the FIBRE relay network</td><td>Forward to hayai peers after the header and transaction list check</td></tr>
+<tr><td>Separate data dissemination from ordering</td><td>Narwhal (Danezis et al., EuroSys 2022); Autobahn (Giridharan et al., SOSP 2024)</td><td>Transaction lanes and candidate blocks, shared during the proof-of-work search</td></tr>
+<tr><td>Faster arithmetic, same results</td><td>Bernstein and Yang, safegcd (TCHES 2019)</td><td>A faster implementation of the Sinsemilla hash of the note tree. Its output equals the official Orchard crate on all 32 levels, and each inversion is checked</td></tr>
+<tr><td>Write-optimized storage</td><td>LSM trees (O&#x27;Neil et al., Acta Informatica 1996); RocksDB</td><td>Coin log and wallet index, with batched writes and merge operators</td></tr>
+</tbody></table></div>
+<p class="note">The time for a block to reach the other miners sets the rate of stale blocks (Decker and Wattenhofer, IEEE P2P 2013). At the 25 s spacing of NU7, each second of delay costs about 4 % of the blocks.</p>
+</section>"""
 
 
 def audience_cards(bench, system, relay_bytes):
@@ -483,10 +372,11 @@ def audience_cards(bench, system, relay_bytes):
          fmt_bytes(next((r["batch_ref_bytes"] for r in relay_bytes if r["fixture"].startswith("orchard")), None))),
     ])
     return f"""<div class="aud">
-<a class="audc" href="#miners"><span class="eyebrow">For miners</span><span class="ah">Less hash power on outdated blocks, and fees from the first seconds of a new block.</span>{miners}</a>
-<a class="audc" href="#network"><span class="eyebrow">For the Zcash network</span><span class="ah">Fewer stale blocks at 25 s spacing, and room for larger blocks.</span>{network}</a>
+<div class="audc"><span class="eyebrow">For miners</span><span class="ah">Less hash power on outdated blocks, and fees from the first seconds of a new block.</span>{miners}</div>
+<div class="audc"><span class="eyebrow">For the Zcash network</span><span class="ah">Fewer stale blocks at 25 s spacing, so less mining work is lost and small miners keep their fair share. Room for larger blocks, so the chain can carry more transactions.</span>{network}</div>
 </div>
-<p class="note">Full block: 6,500 transactions. Network values: 100 ms round trip, 3 hops, 100 Mbit/s; the sections below explain the model and let you change these values.</p>"""
+<p class="note">Full block: <b>6,500 transactions</b>. Network values: <b>100 ms round trip, 3 hops, 100 Mbit/s</b>.</p>
+<p class="note">The network values come from a latency model with measured inputs.</p>"""
 
 
 # ---------------------------------------------------------------- general benchmarks
@@ -523,7 +413,7 @@ def general_table(bench, system, relay_bytes):
             zakura=bench.get("validate/block", "zakura-model-cold", T6500),
             zebra=bench.first("validate/block", ["zebra-model-cold", "zebra-model"], T6500),
             kind="model",
-            foot="Zakura and Zebra keep no result of transparent checks from their memory pools, so their path for known transparent transactions is their cold path. The baseline is a model with the same cryptography and no runtime overhead, so the real nodes take longer.",
+            foot="Zakura and Zebra keep no result of transparent checks from their memory pools, so known transparent transactions take their cold path. The baseline is a model with the same cryptography and no runtime overhead, so the real nodes take longer.",
         ),
         dict(
             what="Validate the same block when the node saw none of its transactions before",
@@ -543,7 +433,7 @@ def general_table(bench, system, relay_bytes):
             zakura=relay("orchard", "full_bytes"),
             zebra=relay("orchard", "full_bytes"),
             kind="protocol",
-            foot="Legacy relay sends the full block. hayai sends the header and references when the peer runs hayai; legacy peers get the full block.",
+            foot="Legacy relay sends the full block. When the peer runs hayai, hayai sends the header and references; legacy peers get the full block.",
         ),
         dict(
             what="Parse a 2 MB block and compute its transaction ids",
@@ -610,7 +500,7 @@ def general_table(bench, system, relay_bytes):
             zakura=system.get("validate_block_cold", T6500, "zakura", "max_rss_kb"),
             zebra=system.get("validate_block_cold", T6500, "zebra", "max_rss_kb"),
             kind="model",
-            foot="hayai holds the prepared form of every transaction of the block; this costs memory and saves the work when the block is seen again.",
+            foot="hayai holds the prepared form of every transaction of the block. This costs memory and saves the work when the block is seen again.",
         ),
     ]
     trs = []
@@ -645,11 +535,12 @@ def general_table(bench, system, relay_bytes):
         "" if zebra_measured
         else "<li>Zebra baselines other than protocol-defined values are not measured yet. The live comparison on Testnet adds them.</li>"
     )
-    foot_html = "".join(f"<li><sup>{i + 1}</sup> {esc(t)}</li>" for i, t in enumerate(feet))
+    foot_html = "".join(f"<li><sup>{i + 1}</sup> {t}</li>" for i, t in enumerate(feet))
     return f"""
 <section id="general">
 <h2>General benchmarks</h2>
-<p>These operations exist in every Zcash node. Lower is better in every row. The difference column compares hayai with Zakura. Open a feature below to see the measurements of that feature.</p>
+<p>These operations exist in every Zcash node. Lower is better in every row.</p>
+<p>The difference column compares hayai with Zakura. Open a feature below to see the measurements of that feature.</p>
 <div class="scroll"><table class="general">
 <thead><tr><th>Operation</th><th>hayai</th><th>Zakura</th><th>Zebra</th><th>Difference</th><th>How the baseline is obtained</th></tr></thead>
 <tbody>{''.join(trs)}</tbody></table></div>
@@ -692,34 +583,74 @@ def system_details(system):
     return f"""
 <details class="sys">
 <summary>All system measurements: CPU time, memory, cache misses</summary>
-<p>Each scenario runs in a fresh process. In each cell, the first line is hayai and the second line is the Zakura baseline. Hardware counters come from <code>perf_event_open</code> in user space.</p>
+<p>Each scenario runs in a fresh process, and hardware counters come from <code>perf_event_open</code> in user space. In each cell, the first line is hayai and the second line is the Zakura baseline.</p>
 <div class="scroll"><table>
 <thead><tr><th>Scenario</th><th>Wall</th><th>CPU time</th><th>Peak memory</th><th>Allocated</th><th>Cache misses</th></tr></thead>
 <tbody>{''.join(trs)}</tbody></table></div>
-<p class="note">Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads. Peak memory includes the benchmark fixtures. Both implementations share one allocator in a benchmark process. {esc(system.note)}</p>
+<p class="note">Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads.</p>
+<p class="note">Peak memory includes the benchmark fixtures. Both implementations share one allocator in a benchmark process. {esc(system.note)}</p>
 </details>"""
 
 
 # ---------------------------------------------------------------- features
 
 
+SENTENCE_END = re.compile(r"[.!?](?:</b>)?(?=\\s|$)")
+
+
+def sentences(text):
+    return len(SENTENCE_END.findall(re.sub(r"<(?!/b>)[^>]+>", "", text)))
+
+
+def group(items):
+    """Joins consecutive short items into paragraphs of at least two sentences. A list
+    item (<ul>) stays alone."""
+    out, cur = [], []
+    for item in items:
+        if item.startswith("<ul"):
+            if cur:
+                out.append(" ".join(cur))
+                cur = []
+            out.append(item)
+            continue
+        cur.append(item)
+        if sum(sentences(c) for c in cur) >= 2:
+            out.append(" ".join(cur))
+            cur = []
+    if cur:
+        if out and not out[-1].startswith("<ul"):
+            out[-1] = out[-1] + " " + " ".join(cur)
+        else:
+            out.append(" ".join(cur))
+    return out
+
+
+def paras(items):
+    """Paragraphs of at least two sentences; an item that is already a list stays as it is."""
+    return "".join(p if p.startswith("<ul") else f"<p>{p}</p>" for p in group(items))
+
+
 def card(fid, title, summary, problem, context, solution, related, compat, benches):
+    """summary, problem and context are lists of short paragraphs; related is (name, [paragraphs])."""
     sol = "".join(f"<li>{s}</li>" for s in solution)
     rel = (
-        "<h4>Related systems</h4><dl>" + "".join(f"<dt>{esc(n)}</dt><dd>{esc(d)}</dd>" for n, d in related) + "</dl>"
+        "<h4>Related systems</h4><dl>"
+        + "".join(f"<dt>{esc(n)}</dt><dd>{' '.join(ds)}</dd>" for n, ds in related)
+        + "</dl>"
         if related
         else ""
     )
     ben = f"<h4>Measurements</h4>{''.join(benches)}" if any(benches) else ""
+    summ = f'<span class="summary">{" ".join(summary)}</span>'
     return f"""
 <details class="feature" id="{fid}">
-<summary><span class="title">{esc(title)}</span><span class="summary">{summary}</span></summary>
+<summary><span class="title">{esc(title)}</span>{summ}</summary>
 <div class="body">
-<h4>Problem</h4><p>{problem}</p>
-<h4>Context</h4><p>{context}</p>
+<h4>Problem</h4>{paras(problem)}
+<h4>Context</h4>{paras(context)}
 <h4>Solution</h4><ul>{sol}</ul>
 {rel}
-<h4>Who must run hayai</h4><p>{esc(compat)}</p>
+<h4>Who must run hayai</h4><p>{compat}</p>
 {ben}
 </div>
 </details>"""
@@ -758,18 +689,34 @@ def features(bench, relay_bytes):
     cards.append(card(
         "relay",
         "A new block crosses each network hop as about 2 kB of references, not up to 2 MB of data.",
-        f"Peers rebuild the block from transactions they already hold, and forward it before they have all its bytes. A 2 MB shielded block becomes {ratio} times smaller on the wire, and a hop with one missing transaction forwards in {esc(fmt_time(fwd_v2))} instead of {esc(fmt_time(fwd_v1))}.",
-        "Zakura and Zebra forward a block only after they validate and store it. They send a short notice to one third of their peers. Each peer asks for the block and then receives all of it. One hop costs one and a half network round trips, the transfer of up to 2 MB, and one full validation.",
-        "From NU7, Zcash makes a block every 25 s. When a block needs <i>d</i> seconds to reach the other miners, the probability that a competing block appears in that time is about <i>d</i>&nbsp;/&nbsp;25. One second of delay costs the miner about 4&nbsp;% of its blocks. Most transactions of a block are already in each peer's memory pool, because peers exchange transactions before a miner includes them.",
         [
-            "The sender transmits the block header and a 6-byte fingerprint for each transaction. The receiver finds the matching transactions in its own memory pool.",
-            "Miners can publish the transactions of their next block in advance, as batches. A block then names a batch with one 32-byte identifier.",
-            "A receiver checks the proof of work in the header and checks the list of transaction identifiers against the header. Then it forwards the block at once and requests the missing transactions in parallel.",
-            "Every hayai node keeps the normal Zcash protocol on the same connection. The new messages start only when both peers agree on a protocol version. The specification is the draft ZIP in <code>zip/</code>.",
+            "Peers rebuild the block from transactions they already hold. They forward it before they have all its bytes.",
+            f"A 2 MB shielded block becomes <b>{ratio} times smaller</b> on the wire. A hop with one missing transaction forwards in <b>{esc(fmt_time(fwd_v2))} instead of {esc(fmt_time(fwd_v1))}</b>.",
         ],
         [
-            ("Bitcoin compact blocks (BIP 152, 2016)", "Bitcoin nodes send a block as its header plus short fingerprints of its transactions. The receiver rebuilds the block from its own memory pool and asks only for what it lacks."),
-            ("Narwhal and Autobahn (research systems, 2022 and 2024)", "In these designs, nodes send batches of transactions to each other all the time, and the agreement on block order uses only the identifiers of the batches. hayai uses the same split: batches travel ahead of the block, and the block names them."),
+            "Zakura and Zebra forward a block only after they validate and store it.",
+            "They send a short notice to one third of their peers. Each peer asks for the block and then receives all of it.",
+            "One hop costs one and a half network round trips, the transfer of <b>up to 2 MB</b>, and one full validation.",
+        ],
+        [
+            "From NU7, Zcash makes <b>a block every 25 s</b>.",
+            "<i>d</i> is the time in seconds for a block to reach the other miners. The probability that a competing block appears in that time is about <b><i>d</i>&nbsp;/&nbsp;25</b>.",
+            "One second of delay costs the miner <b>about 4&nbsp;% of its blocks</b>.",
+            "Most transactions of a block are already in each peer's memory pool, because peers exchange transactions before a miner includes them.",
+        ],
+        [
+            "The sender transmits <b>the block header and a 6-byte fingerprint</b> for each transaction. The receiver finds the matching transactions in its own memory pool.",
+            "Miners can publish the transactions of their next block in advance, as batches. A block then names a batch with <b>one 32-byte identifier</b>.",
+            "A receiver checks the proof of work in the header and checks the list of transaction identifiers against the header. Then it forwards the block at once and requests the missing transactions in parallel.",
+            "Every hayai node keeps the normal Zcash protocol on the same connection. The new messages start only when both peers agree on a protocol version.",
+            "The specification is the draft ZIP in <code>zip/</code>.",
+        ],
+        [
+            ("Bitcoin compact blocks (BIP 152, 2016)", ["Bitcoin nodes send a block as its header plus short fingerprints of its transactions. The receiver rebuilds the block from its own memory pool and asks only for what it lacks."]),
+            ("Narwhal and Autobahn (research systems, 2022 and 2024)", [
+                "In these designs, nodes send batches of transactions to each other all the time. The agreement on block order uses only the identifiers of the batches.",
+                "hayai uses the same split: batches travel ahead of the block, and the block names them.",
+            ]),
         ],
         "Peers that also run hayai, or that implement the draft ZIP. Legacy peers receive every block by the normal protocol, after hayai validates it.",
         [bytes_chart, rec_chart, fwd_chart],
@@ -795,15 +742,28 @@ def features(bench, relay_bytes):
     cards.append(card(
         "verify-once",
         "A transaction is verified once, when it arrives, and never again.",
-        f"When a block contains transactions that the node already knows, only the checks that depend on the chain run. A known 2 MB block takes {esc(fmt_time(warm))}. The Zakura scheduling model, with the same cryptography and no runtime overhead, takes {esc(fmt_time(zmodel))} for the same block, because it has no result of the transparent checks. For a block of transactions that the node has not seen, hayai is {esc(fmt_ratio(zmodel / cold) if zmodel and cold else '–')} faster and uses more peak memory.",
-        "Zakura keeps only the proof results of shielded transactions from its memory pool. When the same transactions arrive in a block, it parses each transaction again, computes its identifiers and signature hashes again, reads every spent coin again, and runs every transparent script again. Zebra keeps none of these results.",
-        "A transaction has two kinds of checks. Some checks depend only on the transaction and the coins it spends: signatures, proofs, fees. Other checks depend on the chain at that block: the coins must be unspent, the nullifiers must be new, the time limits must hold. A miner at the tip has seen almost every transaction of a new block before the block arrives.",
         [
-            "The node keeps a prepared transaction for each transaction in its memory pool: the parsed form, the identifiers, the spent coins, and the result of every check that does not depend on the chain.",
+            f"When a block contains transactions that the node already knows, only the checks that depend on the chain run. A known 2 MB block takes <b>{esc(fmt_time(warm))}</b>.",
+            f"Because it has no result of the transparent checks, the Zakura scheduling model takes <b>{esc(fmt_time(zmodel))}</b> for the same block. The model has the same cryptography and no runtime overhead.",
+            f"For a block of transactions that the node has not seen, hayai is <b>{esc(fmt_ratio(zmodel / cold) if zmodel and cold else '–')} faster</b> and uses more peak memory.",
+        ],
+        [
+            "Zakura keeps only the proof results of shielded transactions from its memory pool, and Zebra keeps none of these results. When the same transactions arrive in a block, Zakura does this work again for each one:",
+            "<ul><li>it parses the transaction;</li><li>it computes its identifiers and signature hashes;</li><li>it reads every spent coin;</li><li>it runs every transparent script.</li></ul>",
+        ],
+        [
+            "A miner at the tip has seen almost every transaction of a new block before the block arrives. A transaction has two kinds of checks:",
+            "<ul><li>Some checks depend only on the transaction and the coins it spends: signatures, proofs, fees.</li><li>Other checks depend on the chain at that block: the coins must be unspent, the nullifiers must be new, the time limits must hold.</li></ul>",
+        ],
+        [
+            "The node keeps a prepared transaction for each transaction in its memory pool. It holds the parsed form, the identifiers, the spent coins, and the result of every check that does not depend on the chain.",
             "Block validation finds each transaction by its full identifier: the transaction id plus the hash of its signatures and proofs. A transaction with a changed signature or proof never matches.",
             "For a known transaction, only the checks that depend on the chain run.",
         ],
-        [("Bitcoin Core script cache", "Bitcoin Core stores the result of each script check that it does for its memory pool. When a block contains the same transaction, it does not run the script again. hayai applies the same idea to every check that does not depend on the chain.")],
+        [("Bitcoin Core script cache", [
+            "Bitcoin Core stores the result of each script check that it does for its memory pool. When a block contains the same transaction, it does not run the script again.",
+            "hayai applies the same idea to every check that does not depend on the chain.",
+        ])],
         "Nobody else. The memory pool fills from normal transaction exchange with any peer.",
         [warm_chart, win_chart],
     ))
@@ -818,9 +778,19 @@ def features(bench, relay_bytes):
     cards.append(card(
         "bulk",
         "Transactions that the node has not seen are checked in bulk and in parallel.",
-        "A block of unknown transactions costs one read of the state, one parallel pass over all scripts, and one batch of proofs. One invalid proof does not force the node to check every proof alone.",
-        "Zakura drives all transactions of a block from one task. It reads each input with a separate request, starts one task for each script, and decodes Sapling proofs one after another. When a batch of proofs fails, it checks every proof of the batch alone.",
-        "Proof systems such as Groth16 and Halo 2 can check many proofs together for close to the cost of one. A failed batch tells only that at least one proof is bad, not which one.",
+        [
+            "A block of unknown transactions costs one read of the state, one parallel pass over all scripts, and one batch of proofs.",
+            "One invalid proof does not force the node to check every proof alone.",
+        ],
+        [
+            "Zakura drives all transactions of a block from one task.",
+            "It reads each input with a separate request and starts one task for each script. It decodes Sapling proofs one after another.",
+            "When a batch of proofs fails, it checks every proof of the batch alone.",
+        ],
+        [
+            "Proof systems such as Groth16 and Halo 2 can check many proofs together for close to the cost of one.",
+            "A failed batch tells only that at least one proof is bad, not which one.",
+        ],
         [
             "The node collects every input of the block and reads all of them in one batch.",
             "It runs all script checks of the block as one flat parallel array.",
@@ -828,7 +798,7 @@ def features(bench, relay_bytes):
             "Scripts, proofs and the chain checks run at the same time.",
         ],
         [],
-        "Nobody else.",
+        "Nobody else. The node of the miner gives the gain alone.",
         [bis_chart],
     ))
 
@@ -858,21 +828,31 @@ def features(bench, relay_bytes):
     cards.append(card(
         "state",
         "Each spent coin costs one memory lookup, and a new block is one entry added to a list.",
-        "The node reads the coins of a whole block in one batch and keeps recent changes in memory. Coins that are created and spent within a short time never reach the disk.",
-        "Zakura finds a coin with two database reads, and it reads the same coin up to three times for one block. It has no coin cache. For each new block, it copies its in-memory maps of the recent blocks once or twice.",
-        "A block reads two kinds of state: the set of unspent transparent coins, and the sets of nullifiers that mark spent shielded notes. The node keeps the most recent blocks in memory so that it can switch to a competing chain.",
+        [
+            "The node reads the coins of a whole block in one batch and keeps recent changes in memory.",
+            "Coins that are created and spent within a short time never reach the disk.",
+        ],
+        [
+            "Zakura finds a coin with two database reads. It reads the same coin up to three times for one block.",
+            "It has no coin cache. For each new block, it copies its in-memory maps of the recent blocks once or twice.",
+        ],
+        [
+            "The node keeps the most recent blocks in memory so that it can switch to a competing chain. A block reads two kinds of state:",
+            "<ul><li>the set of unspent transparent coins;</li><li>the sets of nullifiers that mark spent shielded notes.</li></ul>",
+        ],
         [
             "The node keys each coin by its outpoint, so one read finds the coin.",
             "A cache in memory holds recent coins. A coin that is created and spent before the next write to disk is never written.",
-            "Each recent block is one layer of changes on top of a shared base. A new block adds a layer. A switch to a competing chain removes layers.",
+            "Each recent block is one layer of changes on top of a shared base.",
+            "A new block adds a layer. A switch to a competing chain removes layers.",
             "One index over all layers answers each lookup with one probe.",
             "Writes to disk run outside the lock that readers use. Each write records the last block that it contains, so the node can recover after a crash.",
         ],
         [
-            ("Bitcoin Core coins cache", "Bitcoin Core keeps unspent coins in memory and writes them to disk in large batches. A coin that is spent before the write never reaches the disk."),
-            ("Geth and Reth (Ethereum nodes)", "These nodes keep each recent block as a set of changes over a shared state. A new block or a chain switch does not copy the state."),
+            ("Bitcoin Core coins cache", ["Bitcoin Core keeps unspent coins in memory and writes them to disk in large batches. A coin that is spent before the write never reaches the disk."]),
+            ("Geth and Reth (Ethereum nodes)", ["These nodes keep each recent block as a set of changes over a shared state. A new block or a chain switch does not copy the state."]),
         ],
-        "Nobody else.",
+        "Nobody else. The node of the miner gives the gain alone.",
         [look, writes, push, walk],
     ))
 
@@ -890,16 +870,24 @@ def features(bench, relay_bytes):
     cards.append(card(
         "wire",
         "The node parses each block once and never encodes it again.",
-        "The node keeps the exact bytes it received, splits the block into transactions without a parse, and parses the transactions in parallel. Hashing, storage, relay and serving all use the same bytes.",
-        "Zakura parses a block into objects and drops the bytes. It then encodes the block again to hash it, to store it, to measure it and to serve it. Its storage keeps one database row per transaction, so a request from a peer rebuilds the block.",
-        "A Zcash block is at most 2 MB. A parsed block uses 3 to 4 times more memory than its bytes, according to Zakura's own measurement.",
+        [
+            "The node keeps the exact bytes it received, splits the block into transactions without a parse, and parses the transactions in parallel.",
+            "Hashing, storage, relay and serving all use the same bytes.",
+        ],
+        [
+            "Zakura parses a block into objects and drops the bytes. It then encodes the block again to hash it, to store it, to measure it and to serve it.",
+            "Its storage keeps one database row per transaction, so a request from a peer rebuilds the block.",
+        ],
+        [
+            "A Zcash block is <b>at most 2 MB</b>. A parsed block uses <b>3 to 4 times more memory</b> than its bytes, according to Zakura's own measurement.",
+        ],
         [
             "A scanner finds the boundary of each transaction with length arithmetic only.",
             "The node parses the transactions in parallel and keeps the bytes of each one.",
             "The node stores blocks in flat files exactly as received. To serve a block, it reads one file range.",
         ],
-        [("Bitcoin Core block files", "Bitcoin Core stores blocks in append-only files, exactly as received, and serves them from these files.")],
-        "Nobody else.",
+        [("Bitcoin Core block files", ["Bitcoin Core stores blocks in append-only files, exactly as received, and serves them from these files."])],
+        "Nobody else. The node of the miner gives the gain alone.",
         [parse, serve],
     ))
 
@@ -915,15 +903,26 @@ def features(bench, relay_bytes):
     cards.append(card(
         "template",
         "Your pool hashes on the new block a few milliseconds after your node accepts it, and the template carries fees from the start.",
-        f"After a new block, a template with only the coinbase goes out in {esc(fmt_time(empty))} and the full template with fees in {esc(fmt_time(full))}. New fee-paying transactions reach the pool in milliseconds, not after a 5 s poll.",
-        "Zakura builds the template again on every request and checks its memory pool for changes every 5 s. Its selection draws transactions at random and computes its weights again after each draw, so a full rebuild takes tens of milliseconds with a full memory pool. A fee-paying transaction can wait up to 5 s before it reaches the pool.",
-        "A pool asks its node for a template: the block it will mine, without the proof of work. Until the pool has a template on the new block, all its hash power works on an outdated block. A template without the latest transactions loses their fees. The section <a href='#miners'>For miners</a> shows the full time from a competitor's block to your pool, of which the template is the last part.",
+        [
+            f"After a new block, a template with only the coinbase goes out in <b>{esc(fmt_time(empty))}</b>. The full template with fees goes out in <b>{esc(fmt_time(full))}</b>.",
+            "New fee-paying transactions reach the pool <b>in milliseconds, not after a 5 s poll</b>.",
+        ],
+        [
+            "Zakura builds the template again on every request. It checks its memory pool for changes <b>every 5 s</b>.",
+            "Its selection draws transactions at random and computes its weights again after each draw. So a full rebuild takes tens of milliseconds with a full memory pool.",
+            "A fee-paying transaction can wait <b>up to 5 s</b> before it reaches the pool.",
+        ],
+        [
+            "A pool asks its node for a template: the block it will mine, without the proof of work.",
+            "Until the pool has a template on the new block, all its hash power works on an outdated block. A template without the latest transactions loses their fees.",
+            "The section <a href='#miners'>For miners</a> shows the full time from a competitor's block to your pool. The template is the last part of that time.",
+        ],
         [
             "The node keeps one template and applies each new transaction, each removed transaction and each new block as a small change.",
             "The selection is deterministic: transactions in order of fee per unit of cost (ZIP 317), parents before children. Two pool servers receive the same template.",
             "The node pushes each change to the subscribed pools. Pools that use <code>getblocktemplate</code> receive the same template through a compatible interface with long polling.",
         ],
-        [("Stratum V2 template provider", "In Bitcoin mining, Stratum V2 lets the node push new templates to the pool when they change, instead of waiting for a request.")],
+        [("Stratum V2 template provider", ["In Bitcoin mining, Stratum V2 lets the node push new templates to the pool when they change, instead of waiting for a request."])],
         "The pool connects to a hayai node. Existing pool software works through the getblocktemplate interface.",
         [tmpl],
     ))
@@ -949,16 +948,27 @@ def features(bench, relay_bytes):
     cards.append(card(
         "crypto",
         "The cryptography comes from the official Zcash crates or from Zakura's faster versions, at build time.",
-        "One build switch selects the cryptography, and every other improvement on this page works with both. hayai's own kernels follow the specification exactly.",
-        "Zakura is fast partly because of its own versions of the Zcash cryptographic libraries. A second node that uses the same libraries shares their bugs. A node that uses only the official libraries is slower where they are slower.",
-        "The official libraries take Zakura's improvements over time. For example, Zakura's Equihash improvements are being ported to the official crate.",
+        [
+            "One build switch selects the cryptography, and every other improvement on this page works with both.",
+            "hayai's own kernels follow the specification exactly.",
+        ],
+        [
+            "Zakura is fast partly because of its own versions of the Zcash cryptographic libraries.",
+            "A second node that uses the same libraries shares their bugs. A node that uses only the official libraries is slower where they are slower.",
+        ],
+        [
+            "The official libraries take Zakura's improvements over time. For example, Zakura's Equihash improvements are being ported to the official crate.",
+        ],
         [
             "All hayai crates use the cryptography through one interface crate. A build feature selects the official crates or Zakura's crates.",
             "hayai has its own MerkleCRH with precomputed tables, and its own fast field inversion that checks each result with one multiplication.",
             "hayai's MerkleCRH handles every special case that the specification defines. Zakura's version omits some of these checks and relies on a mathematical argument that they cannot occur.",
         ],
-        [("Bernstein–Yang inversion (2019)", "A method to compute modular inverses with few operations. The Bitcoin signature library libsecp256k1 uses it. hayai uses it for the field of the Pallas curve.")],
-        "Nobody else.",
+        [("Bernstein–Yang inversion (2019)", [
+            "A method to compute modular inverses with few operations.",
+            "The Bitcoin signature library <b>libsecp256k1</b> uses it. hayai uses it for the field of the Pallas curve.",
+        ])],
+        "Nobody else. The node of the miner gives the gain alone.",
         [crypto_val, crh, tree],
     ))
 
@@ -978,17 +988,31 @@ def features(bench, relay_bytes):
     cards.append(card(
         "speculative",
         "Your pool mines on a new block while the node still checks its proofs, and a failed check restores the old template.",
-        f"For a block with many shielded transactions that the node has not seen, the full template is ready after {esc(fmt_time(sp_cold))} instead of {esc(fmt_time(se_cold))}. The node commits the block only after all checks pass.",
-        "Block validation is one serial step in front of the template. A block with 165 Orchard bundles needs about 140 ms for its proofs. During this time the pool hashes on the old block.",
-        "A template on a new block must contain the block's effect on the chain history tree (ZIP 221): the header of the next block commits to it. The tree needs the new block's final note commitment roots, which the node computes in a few milliseconds. The proofs and scripts are the slow part, and they do not change the roots.",
         [
-            "The node splits validation in two. The first part builds the new chain state: roots, history tree, coin changes, and all rules that depend on the chain. The second part checks scripts and proofs.",
+            f"For a block with many shielded transactions that the node has not seen, the full template is ready after <b>{esc(fmt_time(sp_cold))} instead of {esc(fmt_time(se_cold))}</b>.",
+            "The node commits the block only after all checks pass.",
+        ],
+        [
+            "Block validation is one serial step in front of the template.",
+            "A block with 165 Orchard bundles needs <b>about 140 ms</b> for its proofs. During this time the pool hashes on the old block.",
+        ],
+        [
+            "A template on a new block must contain the block's effect on the chain history tree (ZIP 221). The header of the next block commits to it.",
+            "The tree needs the new block's final note commitment roots. The node computes them in a few milliseconds.",
+            "The proofs and scripts are the slow part, and they do not change the roots.",
+        ],
+        [
+            "The node splits validation in two:<ul><li>The first part builds the new chain state: roots, history tree, coin changes, and all rules that depend on the chain.</li><li>The second part checks scripts and proofs.</li></ul>",
             "When the first part succeeds, the node publishes the new state as a speculative tip and builds the template on it. The second part runs at the same time.",
-            "When the second part succeeds, the node confirms the block. When it fails, the node removes the speculative state and every block built on it, restores the old template, and penalizes the sender.",
+            "When the second part succeeds, the node confirms the block.",
+            "When the second part fails, the node removes the speculative state and every block built on it, restores the old template, and penalizes the sender.",
             "The node never commits or relays a block as valid before all checks pass. The window of work on an invalid block is at most the proof check time, under 150 ms with the NU7 limits.",
         ],
-        [("Optimistic execution in Ethereum clients", "Some clients start to build on a new block before they finish all checks, and they roll back when a check fails. The idea is the same. The chain state of Zcash lets the node know which part is cheap.")],
-        "Nobody else.",
+        [("Optimistic execution in Ethereum clients", [
+            "Some clients start to build on a new block before they finish all checks, and they roll back when a check fails.",
+            "The idea is the same. The chain state of Zcash lets the node know which part is cheap.",
+        ])],
+        "Nobody else. The node of the miner gives the gain alone.",
         [sw_chart],
     ))
 
@@ -1002,7 +1026,7 @@ def features(bench, relay_bytes):
         "Bytes to announce one block that equals a published candidate", fmt_bytes,
         [("full", "full block (legacy relay)", ZAKURA), ("short", "short ids", HAYAI_ALT), ("batch", "one batch reference", OTHER), ("cand", "candidate reference", HAYAI)],
         cand_rows, worse="more",
-        note="The header (1,487 bytes) and the coinbase transaction are in every compact form.",
+        note="The header (<b>1,487 bytes</b>) and the coinbase transaction are in every compact form.",
     )
     pre_chart = chart(
         "Commit a block that the node prepared before it arrived", fmt_time,
@@ -1017,17 +1041,30 @@ def features(bench, relay_bytes):
     cards.append(card(
         "lane",
         "A miner publishes its block candidate as it changes, so a solved block is a 61-byte reference and a diff.",
-        "Every template change goes out as a small batch. A solved block names the candidate and lists only what changed. Your own block commits by a swap of state the node prepared in advance.",
-        "A compact block names every transaction by a short fingerprint, so its size grows with the transaction count. A receiver that lacks one transaction needs one more round trip. The template order follows fee weight, so one new transaction in the middle breaks every batch reference after it.",
-        "Pool servers know their candidate block long before they find a solution. They can tell their peers about it at no cost, as they do for their own hashers.",
         [
-            "The block order is canonical: parents before children, then by transaction id. The same set of transactions always gives the same bytes. Selection by fee weight stays unchanged.",
-            "Each template change goes out as one batch of the added transactions and one candidate announcement, which names the lane, the revision, the parent, and the removed positions.",
-            "A solved block carries the header, the coinbase, the candidate reference, and a diff. A block that equals its candidate costs 61 bytes besides the header and the coinbase.",
-            "A receiver that holds the candidate can prepare the new chain state in advance. A block that equals the candidate then commits by a swap. This is off by default for received candidates, because the preparation costs as much as the validation that it saves. For the node's own template it is on.",
+            "Every template change goes out as a small batch. A solved block names the candidate and lists only what changed.",
+            "Your own block commits by a swap of state the node prepared in advance.",
+        ],
+        [
+            "A compact block names every transaction by a short fingerprint, so its size grows with the transaction count. A receiver that lacks one transaction needs one more round trip.",
+            "The template order follows fee weight. So one new transaction in the middle breaks every batch reference after it.",
+        ],
+        [
+            "Pool servers know their candidate block long before they find a solution. They can tell their peers about it at no cost, as they do for their own hashers.",
+        ],
+        [
+            "The block order is canonical: parents before children, then by transaction id. The same set of transactions always gives the same bytes.",
+            "Selection by fee weight stays unchanged.",
+            "Each template change goes out as one batch of the added transactions and one candidate announcement. The announcement names the lane, the revision, the parent, and the removed positions.",
+            "A solved block carries the header, the coinbase, the candidate reference, and a diff. A block that equals its candidate costs <b>61 bytes</b> besides the header and the coinbase.",
+            "A receiver that holds the candidate can prepare the new chain state in advance. A block that equals the candidate then commits by a swap.",
+            "The preparation in advance is off by default for received candidates, because it costs as much as the validation that it saves. For the node's own template it is on.",
             "A peer without the candidate feature sees none of this. It receives the normal compact block, or the legacy announcement.",
         ],
-        [("Narwhal and Autobahn (research systems, 2022 and 2024)", "Nodes in these systems spread batches of transactions continuously, and the block only names them. The candidate reference goes one step further: it names the whole block that the miner is working on.")],
+        [("Narwhal and Autobahn (research systems, 2022 and 2024)", [
+            "Nodes in these systems spread batches of transactions continuously, and the block only names them.",
+            "The candidate reference goes one step further: it names the whole block that the miner is working on.",
+        ])],
         "The peer, and the miner who publishes the lane. Peers without the feature receive the normal announcement.",
         [cand_chart, pre_chart, own_chart],
     ))
@@ -1049,18 +1086,32 @@ def features(bench, relay_bytes):
     cards.append(card(
         "memcoins",
         "The whole coin set lives in memory, at 80 bytes per coin, and a restart loads it in seconds.",
-        f"Mainnet needs about 3.8 GB of memory for 27 million coins and 56 million nullifiers. A snapshot of 2 million coins writes in {esc(fmt_time(snap_w))} and loads in {esc(fmt_time(snap_l))}.",
-        "A database on disk makes every cold coin lookup a random read, and the database rewrites uniform keys during its compaction. A node must also be able to restart after a crash without a long resync.",
-        "Coins are write-once and delete-once. A miner node can rebuild its state from its block files. The Zcash chain has about 27 million unspent transparent coins and about 56 million nullifiers (Blockchair and the Orchard tree size, October 2026). The sizes of the Sapling and Sprout nullifier sets are estimates.",
         [
-            "The node keeps coins and nullifiers in memory, in 256 shards. A shard stores a dense array of fixed-size entries and a small position index. P2PKH and P2SH scripts are stored as a 20-byte hash.",
+            "Mainnet needs <b>about 3.8 GB of memory</b> for 27 million coins and 56 million nullifiers.",
+            f"A snapshot of 2 million coins writes in <b>{esc(fmt_time(snap_w))}</b> and loads in <b>{esc(fmt_time(snap_l))}</b>.",
+        ],
+        [
+            "A database on disk makes every cold coin lookup a random read. The database rewrites uniform keys during its compaction.",
+            "A node must also be able to restart after a crash without a long resync.",
+        ],
+        [
+            "Coins are write-once and delete-once. A miner node can rebuild its state from its block files.",
+            "The Zcash chain has <b>about 27 million unspent transparent coins</b> and <b>about 56 million nullifiers</b> (Blockchair and the Orchard tree size, October 2026). The sizes of the Sapling and Sprout nullifier sets are estimates.",
+        ],
+        [
+            "The node keeps coins and nullifiers in memory, in <b>256 shards</b>. A shard stores a dense array of fixed-size entries and a small position index.",
+            "P2PKH and P2SH scripts are stored as <b>a 20-byte hash</b>.",
             "Every block flush appends one checksummed record to a log. A snapshot writes the whole set in one sequential file, and then the log restarts.",
-            "At start, the node loads the newest valid snapshot and replays the log. A torn last record is cut. Any other damage stops the start with an explicit error.",
+            "At start, the node loads the newest valid snapshot and replays the log.",
+            "A torn last record is cut. Any other damage stops the start with an explicit error.",
             "A second log records the chain state: frontiers, anchors, history tree, and times. After a crash, the node replays the block files above the last record.",
             "The RocksDB backing stays available for nodes with less memory.",
         ],
-        [("Bitcoin Core UTXO snapshots (assumeutxo)", "Bitcoin Core can start from a snapshot of the coin set. hayai uses its own snapshot for fast restart. A snapshot for first synchronization needs a trusted hash of the state, as in assumeutxo.")],
-        "Nobody else.",
+        [("Bitcoin Core UTXO snapshots (assumeutxo)", [
+            "Bitcoin Core can start from a snapshot of the coin set. hayai uses its own snapshot for fast restart.",
+            "A snapshot for first synchronization needs a trusted hash of the state, as in assumeutxo.",
+        ])],
+        "Nobody else. The node of the miner gives the gain alone.",
         [mem_lookup, mem_commit],
     ))
 
@@ -1068,18 +1119,28 @@ def features(bench, relay_bytes):
     cards.append(card(
         "hayaid",
         "hayaid runs on Regtest, on Testnet next to a Zakura node, and on Mainnet, with traces and metrics from the first start.",
-        "In shadow mode the node follows a local Zakura node, validates every block, and writes traces with the same event names. Docker, systemd and Terraform files install it with Prometheus and Grafana.",
-        "A new implementation needs a safe way to prove that it agrees with the nodes that miners trust, and a way to compare its speed with theirs on the same blocks.",
-        "Zakura writes JSONL traces and Prometheus metrics. Testnet blocks are small, so the shadow comparison shows the typical case. The Regtest pair shows full blocks.",
         [
-            "Shadow mode reads each block from the local Zakura node, validates it with hayai, and compares the verdict. A disagreement stops the node and writes an error row. The node never announces blocks and never serves templates in this mode.",
+            "In shadow mode the node follows a local Zakura node, validates every block, and writes traces with the same event names.",
+            "Docker, systemd and Terraform files install it with Prometheus and Grafana.",
+        ],
+        [
+            "A new implementation needs a safe way to prove that it agrees with the nodes that miners trust. It also needs a way to compare its speed with theirs on the same blocks.",
+        ],
+        [
+            "Zakura writes JSONL traces and Prometheus metrics.",
+            "Testnet blocks are small, so the shadow comparison shows the typical case. The Regtest pair shows full blocks.",
+        ],
+        [
+            "Shadow mode reads each block from the local Zakura node, validates it with hayai, and compares the verdict. A disagreement stops the node and writes an error row.",
+            "In this mode, the node never announces blocks and never serves templates.",
             "The shadow node trusts a short list of facts from the upstream node. Each one has a counter in the metrics: coins before the start height, old nullifiers, old anchors, difficulty bits.",
-            "Full mode on Regtest produces blocks and interoperates with Zakura Regtest: both use 36-byte Equihash solutions.",
+            "Full mode on Regtest produces blocks and interoperates with Zakura Regtest: both use <b>36-byte Equihash solutions</b>.",
             "The traces use Zakura's event names for block receipt and commit, so one script joins the traces of both nodes by block hash. The metrics use Zakura's names where the meaning is the same.",
-            "A Dockerfile, a compose stack with Prometheus, Grafana and Alertmanager, a systemd unit, an install script, and an AWS Terraform module install the node. CI runs the checks on both cryptography backends.",
+            "A Dockerfile, a compose stack with Prometheus, Grafana and Alertmanager, a systemd unit, an install script, and an AWS Terraform module install the node.",
+            "CI runs the checks on both cryptography backends.",
         ],
         [],
-        "Nobody else.",
+        "Nobody else. The node of the miner gives the gain alone.",
         [],
     ))
 
@@ -1101,16 +1162,24 @@ def features(bench, relay_bytes):
     cards.append(card(
         "compat",
         "Every hayai node speaks the normal Zcash protocol, so miners who do not switch lose nothing.",
-        "No feature changes which blocks are valid. The new relay messages start only when both peers ask for them.",
-        "Most miners now run one implementation. One bug in it can stop or split most of the hash power at the same time.",
-        "A second implementation helps only if miners use it, and miners use it only if it is faster and if it does not isolate them from the rest of the network.",
+        [
+            "No feature changes which blocks are valid. The new relay messages start only when both peers ask for them.",
+        ],
+        [
+            "Most miners now run one implementation. One bug in it can stop or split most of the hash power at the same time.",
+        ],
+        [
+            "A second implementation helps only if miners use it.",
+            "Miners use it only if it is faster and if it does not isolate them from the rest of the network.",
+        ],
         [
             "hayai implements the consensus rules of Zcash and changes none of them. The list of rules and their status is in <code>docs/consensus-rules.md</code>.",
-            "On every connection, hayai speaks the legacy protocol. A peer that sets a service bit and sends a version message for the extension gets the compact relay; every other peer gets the legacy messages.",
+            "On every connection, hayai speaks the legacy protocol.",
+            "A peer that sets a service bit and sends a version message for the extension gets the compact relay. Every other peer gets the legacy messages.",
             "The extension has a version range and feature bits, so it can change without a coordinated upgrade.",
         ],
         [],
-        "Nobody else.",
+        "Nobody else. The node of the miner gives the gain alone.",
         [table],
     ))
     order = ["relay", "lane", "speculative", "verify-once", "template", "state", "memcoins", "bulk", "wire", "crypto", "hayaid", "compat"]
@@ -1410,12 +1479,10 @@ a {{ color:var(--accent); }}
 {headline(bench, relay_bytes)}
 {audience_cards(bench, system, relay_bytes)}
 </header>
-{miners_section(bench, relay_bytes)}
-{network_section(bench, system, relay_bytes)}
 {general_table(bench, system, relay_bytes)}
 <section id="features">
 <h2>Features</h2>
-<p>Open a feature to see the problem, the solution, and its measurements.</p>
+<p>Each feature below opens to show the problem, the context and the solution. Its measurements are inside the card.</p>
 {features(bench, relay_bytes)}
 </section>
 {compatibility_section()}
@@ -1423,6 +1490,7 @@ a {{ color:var(--accent); }}
 <section id="method">
 <h2>Method</h2>
 <ul>
+<li>Source code, benchmarks and deployment files: <a href="https://github.com/nikkolasg/hayai">github.com/nikkolasg/hayai</a>.</li>
 <li>Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads, Linux.</li>
 <li>A Zakura baseline is one of four kinds, named in each row: Zakura's published crates run in the same process; Zakura's data layout on the same storage engine; Zakura's scheduling rebuilt around the same cryptography; or Zakura's algorithm ported line by line. Each port cites the Zakura source lines in <code>crates/hayai-bench/src/</code>.</li>
 <li>Test blocks are synthetic and deterministic, with real ECDSA signatures and real Orchard proofs (<code>crates/hayai-bench/src/fixtures.rs</code>).</li>

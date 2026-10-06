@@ -13,3 +13,6 @@ target/
 /docker/race/.env
 /race-results/
 /.claude/worktrees/
+
+# Task tracker export: local only, it holds the owner email.
+/.beads/issues.jsonl
