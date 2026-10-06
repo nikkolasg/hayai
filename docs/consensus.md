@@ -49,7 +49,7 @@ correct without it, or the open issue.
 | [ZIP 259: Deployment of the NU7 Network Upgrade](#zip-259-deployment-of-the-nu7-network-upgrade) | ✅ |  |
 | [ZIP 271: Dev Fund Extension and One-Time Disbursement](#zip-271-dev-fund-extension-and-one-time-disbursement) | ✅ |  |
 | [ZIP 317: Proportional Transfer Fee Mechanism](#zip-317-proportional-transfer-fee-mechanism) | ✅ |  |
-| [ZIP 401: Addressing Mempool Denial-of-Service](#zip-401-addressing-mempool-denial-of-service) | ⚠️ | 1 rule open: the memory time of evicted transactions (issue hayai-6iw) |
+| [ZIP 401: Addressing Mempool Denial-of-Service](#zip-401-addressing-mempool-denial-of-service) | ⚠️ | hayai remembers an evicted transaction for a fixed 60 min ([`EVICTION_MEMORY`](https://github.com/nikkolasg/hayai/blob/163279a80427e8555ece8a17b577f4f554f4ba69/crates/hayai-prepared/src/store.rs#L63)). ZIP 401 also asks for a setting `mempoolevictionmemoryminutes` to change that time, and hayai has no such setting ([rule](#zip-401-addressing-mempool-denial-of-service)). |
 | [ZIP 1014: Establishing a Dev Fund for ECC, ZF, and Major Grants](#zip-1014-establishing-a-dev-fund-for-ecc-zf-and-major-grants) | ✅ | The consensus part; the other rules govern the funds, not nodes |
 | [ZIP 1015: Block Subsidy Allocation for Non-Direct Development Funding](#zip-1015-block-subsidy-allocation-for-non-direct-development-funding) | ✅ | The consensus part; the other rules govern the funds, not nodes |
 | [ZIP 1016: Community and Coinholder Funding Model](#zip-1016-community-and-coinholder-funding-model) | ✅ | The consensus part; the other rules govern the funds, not nodes |
