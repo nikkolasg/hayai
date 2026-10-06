@@ -1153,19 +1153,15 @@ fn getdeprecationinfo_has_no_end_of_service() {
     a.shutdown().expect("a shuts down");
 }
 
-/// `stop` asks the owner of the node to stop it. The methods that need an index of the
-/// transactions or a change of the state are unknown methods.
+/// `stop` asks the owner of the node to stop it. The methods that change the state, and the
+/// methods that hayaid does not serve, are unknown methods. The methods of the wallet index
+/// exist; `the_methods_of_the_wallet_index_refuse_without_the_index` (hayai-rpc) checks
+/// their answer when the index is off.
 #[test]
 fn stop_asks_for_the_shutdown_and_unserved_methods_are_unknown() {
     let dir = scratch();
     let (a, call) = rpc_node(dir.path());
     for method in [
-        "getrawtransaction",
-        "gettxout",
-        "getaddressbalance",
-        "getaddresstxids",
-        "getaddressutxos",
-        "z_getsubtreesbyindex",
         "z_listunifiedreceivers",
         "invalidateblock",
         "reconsiderblock",

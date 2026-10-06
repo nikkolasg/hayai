@@ -47,7 +47,7 @@ mining template, and the first sync. "Hayai" (速い) means "fast" in Japanese.
 | ⛏️ Update of the mining template after a new transaction | **29×** faster |
 | 📦 Bytes to send a 2 MB block to another hayai node | **1,134×** fewer (1.64 kB, not 1.86 MB) |
 
-The [report](docs/report.html) gives each measurement, its method and its limits.
+The [report](https://claude.ai/artifact/5327dSHbfSeuXnKxuicNsW) gives each measurement, its method and its limits.
 
 ## 🤔 Why a second node implementation
 
@@ -163,7 +163,7 @@ python3 scripts/report.py
 ```
 
 The benchmarks compare hayai with Zakura's and Zebra's code on the same machine. The
-[report](docs/report.html) presents the results. The [sync race runbook](docs/sync-race.md)
+[report](https://claude.ai/artifact/5327dSHbfSeuXnKxuicNsW) presents the results. The [sync race runbook](docs/sync-race.md)
 describes a comparison of a Zakura node and a hayai node on 2 equal machines.
 
 ## 🗂️ Project layout
@@ -243,8 +243,8 @@ priority.
 
 ## 📄 License
 
-hayai is available under the terms of either the MIT license or the Apache License 2.0, at
-your option.
+hayai is available under the terms of either the [MIT license](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), at your option.
 
 ## 🙏 Acknowledgements
 
