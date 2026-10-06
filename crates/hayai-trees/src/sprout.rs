@@ -115,6 +115,7 @@ impl SproutFrontier {
 
     /// Appends `commitments` in order and returns the new root.
     pub fn append_many(&mut self, commitments: &[[u8; 32]]) -> Result<[u8; 32], TreeError> {
+        // Spec §3.8: a block must not add commitments past the capacity of 2^29 leaves.
         let capacity = 1u64 << SPROUT_DEPTH;
         let requested = self.inner.tree_size() + commitments.len() as u64;
         if requested > capacity {

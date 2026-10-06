@@ -29,10 +29,11 @@
 //! An append for an upgrade without a rule set is [`HistoryError::Unsupported`].
 //!
 //! The peaks cannot be derived from headers: each leaf holds the final note commitment roots
-//! of its block, and an inner node holds only hashes and sums. A node that starts from a
-//! state after Heartwood seeds the tree with [`HistoryState::from_peaks`] (for example from
-//! the peaks that Zebra or Zakura keep). Before Heartwood the tree is empty, so a node that
-//! starts there needs no seed ([`HistoryState::empty`]).
+//! of its block, and an inner node holds only hashes and sums. A state after Heartwood
+//! comes back with [`HistoryState::from_peaks`] (hayaid reads the peaks from its state log).
+//! The start state of a shadow node has no peaks: its tree is unknown, and the header rule
+//! does not run ([`HeaderCommitment::ParentUnknown`]). Before Heartwood the tree is empty,
+//! so a node that starts there needs no seed ([`HistoryState::empty`]).
 
 use hayai_consensus::{HistoryVersion, RuleSet};
 use hayai_crypto::primitive_types::U256;
@@ -93,12 +94,16 @@ impl HistoryLeaf {
         let mut orchard_tx = 0u64;
         let mut ironwood_tx = 0u64;
         for t in &raw.txs {
+            // ZIP 221: nSaplingTxCount counts the transactions with Sapling spends or
+            // outputs.
             if let Some(b) = t.tx.sapling_bundle() {
                 if !b.shielded_spends().is_empty() || !b.shielded_outputs().is_empty() {
                     sapling_tx += 1;
                 }
             }
             // An Orchard or Ironwood bundle always has at least one action.
+            // ZIP 221: nOrchardTxCount counts the transactions with Orchard actions.
+            // ZIP 258: nIronwoodTxCount counts the transactions with Ironwood actions.
             orchard_tx += t.tx.orchard_bundle().map_or(0, |_| 1);
             ironwood_tx += t.tx.ironwood_bundle().map_or(0, |_| 1);
         }
@@ -120,6 +125,8 @@ impl HistoryLeaf {
 /// The work of a block with target `bits` (ZIP 221 field `nSubTreeTotalWork`):
 /// `hayai_consensus::difficulty::block_work`, with the history error for `bits` that encode
 /// no target.
+///
+/// ZIP 221: nSubTreeTotalWork of a leaf is `floor(2^256 / (ToTarget(nBits) + 1))`.
 pub fn block_work(bits: u32) -> Result<U256, HistoryError> {
     hayai_consensus::difficulty::block_work(bits).ok_or(HistoryError::InvalidBits(bits))
 }
@@ -139,6 +146,12 @@ pub enum HeaderCommitment {
 /// The rule for the header field of a block of `branch` on top of a parent whose history
 /// state is `parent`. `final_sapling_root` is the Sapling root after the block itself,
 /// `auth_data_root` the ZIP 244 root of the block's authorizing data.
+///
+/// Spec §7.6: the field at offset 68 is the Sapling root (Sapling, Blossom),
+/// hashChainHistoryRoot (Heartwood, Canopy) or hashBlockCommitments (from NU5).
+/// ZIP 221: Sapling and Blossom: the final Sapling root of the block. Heartwood and Canopy:
+/// `hashChainHistoryRoot` of the tree of the parent, all zeros in the Heartwood activation
+/// block (the tree of the parent is empty).
 pub fn header_commitment(
     branch: BranchId,
     parent: Option<&HistoryState>,
@@ -191,6 +204,7 @@ trait LeafVersion: Version {
 }
 
 fn leaf_v1(branch: u32, leaf: &HistoryLeaf, work: U256) -> NodeData {
+    // ZIP 221: leaf fields 1 to 11; the personalization takes the branch of the block.
     NodeData {
         consensus_branch_id: branch,
         subtree_commitment: leaf.hash,
@@ -214,6 +228,7 @@ impl LeafVersion for TreeV1 {
 }
 
 fn leaf_v2(branch: u32, leaf: &HistoryLeaf, work: U256) -> NodeDataV2 {
+    // ZIP 221: [NU5 onward] leaf fields 12 to 14, the Orchard root and count.
     NodeDataV2 {
         v1: leaf_v1(branch, leaf, work),
         start_orchard_root: leaf.orchard_root,
@@ -230,6 +245,7 @@ impl LeafVersion for TreeV2 {
 
 impl LeafVersion for TreeV3 {
     fn leaf(branch: u32, leaf: &HistoryLeaf, work: U256) -> NodeDataV3 {
+        // ZIP 258: [NU6.3 onward] leaf fields 15 to 17, the Ironwood root and count.
         NodeDataV3 {
             v2: leaf_v2(branch, leaf, work),
             start_ironwood_root: leaf.ironwood_root,
@@ -362,6 +378,9 @@ impl HistoryState {
     /// The state after a block of `branch` with `leaf`. A block of another upgrade than the
     /// tree's starts a new tree. A block before Heartwood gives the empty state of its
     /// upgrade.
+    ///
+    /// ZIP 221: the tree holds the blocks from the last upgrade activation, so the first
+    /// block of an upgrade starts a new tree.
     pub fn append(&self, branch: BranchId, leaf: &HistoryLeaf) -> Result<Self, HistoryError> {
         let fresh = branch != self.upgrade || self.length == 0;
         if !fresh {

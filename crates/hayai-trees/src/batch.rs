@@ -60,6 +60,7 @@ where
     H: Hashable + Clone + Send + Sync,
     C: Combine<H> + Sync,
 {
+    // Spec §3.8: a block must not add commitments past the capacity of 2^MerkleDepth leaves.
     let capacity = 1u64 << DEPTH;
     let size = frontier.tree_size();
     let requested = size + leaves.len() as u64;

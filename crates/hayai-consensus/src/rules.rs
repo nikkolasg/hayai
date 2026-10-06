@@ -89,13 +89,17 @@ pub struct DifficultyParams {
     pub max_adjust_down_percent: u32,
     /// `PoWDampingFactor`.
     pub damping_factor: u32,
-    /// Testnet minimum-difficulty rule (ZIP 205, ZIP 208): a block whose time is more than
-    /// this number of target spacings after its parent can use the proof-of-work limit.
-    /// The gap is 450 s from Blossom: 6 spacings of 75 s, and 18 spacings of 25 s from NU7.
+    /// Testnet minimum-difficulty rule (ZIP 205, ZIP 208, ZIP 218): a block whose time is
+    /// more than this number of target spacings after its parent must have the
+    /// proof-of-work limit as `nBits`. The gap is 450 s from Blossom: 6 spacings of 75 s,
+    /// and 18 spacings of 25 s from NU7.
     pub min_difficulty_gap_spacings: u32,
 }
 
 impl DifficultyParams {
+    /// Spec §7.7.3 with the constants of §5.3: `PoWAveragingWindow` 17, `PoWMaxAdjustUp`
+    /// 16 %, `PoWMaxAdjustDown` 32 %, `PoWDampingFactor` 4. ZIP 205: the minimum-difficulty
+    /// gap is 6 spacings.
     pub const PRE_BLOSSOM: Self = Self {
         target_spacing: PRE_BLOSSOM_TARGET_SPACING,
         averaging_window: 17,
@@ -104,11 +108,14 @@ impl DifficultyParams {
         damping_factor: 4,
         min_difficulty_gap_spacings: 6,
     };
+    /// ZIP 208: the target spacing is 75 s from Blossom, and the averaging window and the
+    /// minimum-difficulty gap of 6 spacings do not change.
     pub const POST_BLOSSOM: Self = Self {
         target_spacing: POST_BLOSSOM_TARGET_SPACING,
         ..Self::PRE_BLOSSOM
     };
-    /// ZIP 218: `PostNU7PoWTargetSpacing`, `PostNU7PoWAveragingWindow` (Zakura
+    /// ZIP 218: `PostNU7PoWTargetSpacing` 25 s, `PostNU7PoWAveragingWindow` 102 blocks,
+    /// the Testnet minimum-difficulty gap of 18 spacings (Zakura
     /// `zakura-chain/src/parameters/network_upgrade.rs:257,285,336`).
     pub const POST_NU7: Self = Self {
         target_spacing: POST_NU7_TARGET_SPACING,
@@ -212,6 +219,7 @@ const CANOPY: RuleSet = RuleSet {
 const NU5: RuleSet = RuleSet {
     upgrade: Upgrade::Nu5,
     branch_id: BranchId::Nu5,
+    // ZIP 252: an NU5 node accepts the v4 and the v5 transaction formats.
     tx_versions: TxVersions::of(&[4, 5]),
     pools: ShieldedPools {
         orchard: true,
@@ -344,6 +352,10 @@ impl RuleSet {
 /// Orchard soft fork until the NU6.2 activation the result is the NU6.1 rule set with the
 /// Orchard pool off. A caller that checks a block must take the rule set from this
 /// function, not from the branch id of the block.
+///
+/// ZIP 200: a block of a known height is validated under the rules of the consensus
+/// branch of that height. The block at `ACTIVATION_HEIGHT - 1` has the rules before the
+/// upgrade.
 pub fn rules_at(network: Network, height: u32) -> Result<&'static RuleSet, ConsensusError> {
     let upgrade = network.upgrade_at(height);
     if network.orchard_disabled(height) {

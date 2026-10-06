@@ -263,7 +263,7 @@ also uses:
 - `Checkpoints` and `Network::checkpoints()`: the checkpoint list of a network, with
   `hash_at(height)`, `last_height()` and `last_at_or_below(height)`. The Mainnet and Testnet
   lists are Zakura's files (`src/checkpoints/*.txt`; source and revision in
-  `docs/consensus-rules.md`, section Checkpoints). `build.rs` converts each file to 36 bytes
+  `docs/consensus.md`, section Checkpoints). `build.rs` converts each file to 36 bytes
   for each checkpoint (880 kB in the binary for both lists), and the first use of a list
   decodes it. `Checkpoints::new` makes a list for a chain of generated blocks.
   `Network::mandatory_checkpoint_height()` is the last height before Canopy.
@@ -292,7 +292,7 @@ also uses:
   parts are `check_contextual`, `check_local_time` and `check_proof_of_work`. `check_version`
   is the version rule, for a caller that has no context (the header chain). The result
   `HeaderVerdict::ContextTooShort` names the rules that did not run because the context
-  holds fewer blocks than they read (`docs/consensus-rules.md`, Header). `NetworkParams`
+  holds fewer blocks than they read (`docs/consensus.md`, Header rule paths). `NetworkParams`
   holds the values that the rules read: `disable_pow` (Regtest), `min_difficulty_start_height`
   (Testnet 299,188), `max_time_start_height` (Mainnet 2, Testnet 653,606, Regtest 2).
 - NU7 has a rule set when the crypto backend has the NU7 branch id
@@ -519,7 +519,7 @@ also uses:
   the coinbase terms (required outputs and value rule), the six chain value pools, and the
   header commitment to the parent's history tree. It appends the block to the
   history tree.
-  `docs/consensus-rules.md` lists every rule with its status. `block_outputs(raw, height)` is
+  `docs/consensus.md` lists every rule with its status. `block_outputs(raw, height)` is
   the set of the block's own coins keyed by outpoint. `resolve_inputs(view, raw, &created)` is
   the coin of every transparent input of the block, from that map or from one view round. The
   validator builds both once, prepares the unknown transactions from them, and then hands them
@@ -553,7 +553,7 @@ also uses:
   prepared transaction: it reads the inputs in one round, collects the spent outpoints, the
   nullifiers and the note commitments, computes the value pools, appends the trees, and
   applies the header commitment rule with the history append. The layer equals the layer of
-  `validate_block` for a valid block. `docs/consensus-rules.md`, section Checkpoints, lists
+  `validate_block` for a valid block. `docs/consensus.md`, section Checkpoints, lists
   what the path checks.
 - `validate_block`, `build_layer` and `commit_prebuilt` refuse a block at or below
   `Network::mandatory_checkpoint_height()` (`BlockError::BelowMandatoryCheckpoint`).
@@ -980,5 +980,5 @@ Caveats:
 
 - Header and block synchronisation in the node (hayai-net relays and serves blocks, and it
   does not sync), the use of the peer manager by hayaid, the RPC surface beyond mining, full consensus rule
-  coverage, Sprout, checkpoint sync, snapshots. `docs/consensus-rules.md` lists what is
+  coverage, Sprout, checkpoint sync, snapshots. `docs/consensus.md` lists what is
   implemented.

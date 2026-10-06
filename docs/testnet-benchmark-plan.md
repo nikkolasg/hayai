@@ -153,7 +153,7 @@ The second half of the gain needs both ends. Phase 2 measures this curve directl
 
 ## Controls
 
-- Do not mine on Testnet with hayai before `docs/consensus-rules.md` has no `deferred` row
+- Do not mine on Testnet with hayai before `docs/consensus.md` has no `not implemented` row
   that a Testnet block can hit.
 - Keep the compact-relay extension off in Phase 1. Turn it on in Phase 2 and Phase 3.
 - Pin both binaries by commit hash in every result file. Record the CPU model, the thread count,

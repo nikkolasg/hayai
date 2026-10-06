@@ -132,6 +132,8 @@ impl CoinbaseTerms {
     fn terms(network: Network, height: u32, issued: Option<u64>) -> Result<Self, ConsensusError> {
         let rules = rules_at(network, height)?;
         let mut total = subsidy::total_subsidy(network, height);
+        // ZIP 237: from DEPLOYMENT_BLOCK_HEIGHT, BlockSubsidy adds AdditionalBlockSubsidy of
+        // NSMValueBalance(height - 1).
         if nsm::reissuance_active(network, height) {
             let Some(issued) = issued else {
                 return Err(ConsensusError::IssuedSupplyUnknown { height });
@@ -145,7 +147,9 @@ impl CoinbaseTerms {
             exact_value: rules.coinbase.exact_value,
             nsm_fee_share: rules.coinbase.nsm_fee_share,
         };
-        // A block without a subsidy has no required output (Zakura `subsidy_is_valid`).
+        // A block without a subsidy has no required output (Zakura `subsidy_is_valid`). The
+        // NU6.1 disbursement rule of Spec §7.10 does not depend on the subsidy: only a
+        // Regtest NU6.1 height after the last subsidy reaches this difference.
         if total == 0 {
             return Ok(terms);
         }
@@ -156,9 +160,13 @@ impl CoinbaseTerms {
                 script: address_script(network, address),
             })
         };
+        // Spec §7.9: the founders' reward output before Canopy.
         if let Some(reward) = founders::founders_reward(network, height) {
             require(OutputKind::FoundersReward, reward.value, reward.address);
         }
+        // Spec §7.10: one output for each active stream with an address; DEFERRED_POOL adds
+        // to totalDeferredOutput. ZIP 237: the streams take their share of the subsidy with
+        // the reissuance bonus.
         for stream in funding::funding_streams(network, height, total) {
             match stream.address {
                 Some(address) => require(
@@ -169,6 +177,8 @@ impl CoinbaseTerms {
                 None => terms.subsidy.deferred += stream.value,
             }
         }
+        // Spec §7.10, ZIP 271: ZIP271DisbursementChunks outputs at ZIP271ActivationHeight,
+        // paid from the deferred pool (totalDeferredInput).
         let mut disbursed = 0;
         if network.activation_height(Upgrade::Nu6_1) == Some(height) {
             let disbursements = lockbox::disbursements(network, height);
@@ -195,6 +205,8 @@ impl CoinbaseTerms {
     /// The part of the subsidy that the miner can pay to outputs of its choice: the
     /// subsidy without the deferred part, the founders' reward and the funding streams.
     /// The miner adds the fees of the block to it.
+    ///
+    /// Spec §7.8: `MinerSubsidy(height)`.
     pub fn miner_subsidy(&self) -> u64 {
         let required: u64 = self.required.iter().map(|output| output.value).sum();
         // The disbursement outputs are paid from the deferred pool, not from the subsidy.
@@ -204,6 +216,8 @@ impl CoinbaseTerms {
     /// The part of `fees`, the total fees of the block, that the coinbase gets: all of
     /// them before NU7, the miner share from NU7 (Zakura `miner_fee_share`,
     /// `zakura-chain/src/parameters/network/subsidy/fees.rs:20-41`).
+    ///
+    /// ZIP 235: from NU7 the total input value has `MinerFees(height)` in place of the fees.
     pub fn miner_fees(&self, fees: u64) -> u64 {
         match self.nsm_fee_share {
             true => nsm::miner_fee_share(fees),
@@ -214,6 +228,10 @@ impl CoinbaseTerms {
     /// The value that the coinbase takes out of the block with `fees` zatoshis of fees: the
     /// subsidy and the fees of the miner, without the deferred part, plus the lockbox
     /// disbursement.
+    ///
+    /// ZIP 2001, ZIP 271, ZIP 235: the total input value (`BlockSubsidy` plus the fees or
+    /// `MinerFees`, plus `totalDeferredInput`) minus `totalDeferredOutput` of the total
+    /// output value.
     fn payable(&self, fees: u64) -> i128 {
         i128::from(self.subsidy.total) + i128::from(self.miner_fees(fees))
             - i128::from(self.subsidy.deferred)
@@ -229,6 +247,9 @@ impl CoinbaseTerms {
     ///   its shielded value balances. From NU6 it equals the subsidy plus the fees of the
     ///   miner, without the deferred part, plus the lockbox disbursement. Before NU6 it is
     ///   at most that value.
+    ///
+    /// Spec §7.10: at least one distinct output for each required payment, also for equal
+    /// payments.
     pub fn check(
         &self,
         outputs: &[(u64, &[u8])],
@@ -252,6 +273,8 @@ impl CoinbaseTerms {
             - i128::from(shielded.orchard)
             - i128::from(shielded.ironwood);
         let payable = self.payable(fees);
+        // ZIP 236: from NU6 the total output value equals the total input value. Spec
+        // §7.1.2: before NU6 it is at most the total input value.
         if self.exact_value {
             if paid != payable {
                 return Err(CoinbaseError::ValueNotExact {
@@ -307,8 +330,11 @@ fn unmatched_error(required: &RequiredOutput, unmatched: &[&(u64, &[u8])]) -> Co
     }
 }
 
-/// The `scriptPubKey` that pays the Base58Check P2SH `address` in the prescribed way
-/// (protocol specification §7.10): `OP_HASH160 <script hash> OP_EQUAL`. The address is an
+/// The `scriptPubKey` that pays the Base58Check P2SH `address` in the prescribed way:
+/// `OP_HASH160 <script hash> OP_EQUAL`.
+///
+/// Spec §7.10: the prescribed way to pay a P2SH address. No funding stream and no
+/// disbursement has a Sapling or Orchard recipient, and this crate pays none. The address is an
 /// address of `network`. Regtest takes an address of any network, as Zakura does for the
 /// addresses of its Regtest parameters: the script has the hash only.
 pub(crate) fn p2sh_script(network: Network, address: &str) -> Result<Vec<u8>, String> {

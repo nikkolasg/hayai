@@ -133,7 +133,7 @@ fn send(stream: &mut TcpStream, message: &LegacyMessage) -> std::io::Result<()> 
 
 fn version(start_height: u32) -> LegacyMessage {
     LegacyMessage::Version(VersionMessage {
-        version: 170_160,
+        version: hayai_net::protocol::protocol_version(),
         services: 1,
         timestamp: 0,
         addr_recv: NetAddr {

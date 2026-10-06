@@ -46,9 +46,12 @@ pub struct FundingStream {
 }
 
 /// `fs.Denominator` of every stream.
+///
+/// ZIP 214: every stream of revisions 0 to 2 has the denominator 100.
 pub(crate) const DENOMINATOR: u64 = 100;
-/// Address periods in one post-Blossom halving interval:
-/// `FSRecipientChangeInterval = PostBlossomHalvingInterval / 48`.
+/// Address periods in one post-Blossom halving interval.
+///
+/// Spec §7.10: `FSRecipientChangeInterval = PostBlossomHalvingInterval / 48`.
 const PERIODS_PER_HALVING_INTERVAL: u32 = 48;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -59,6 +62,8 @@ struct Stream {
     /// The address of each address period of the stream, from the period of the start
     /// height. A list with one address gives that address to every period. Empty for the
     /// deferred pool.
+    ///
+    /// ZIP 214: a list of one address repeated `n` times (`[a] * n`) is one entry here.
     addresses: &'static [&'static str],
 }
 
@@ -76,11 +81,16 @@ pub(crate) struct StreamSet {
 }
 
 /// `NU7PoWTargetSpacingRatio` of ZIP 218: 3.
+///
+/// ZIP 207 r2: `R` of the NU7 `AddressPeriod` is 3.
 const NU7_SPACING_RATIO: u32 = POST_BLOSSOM_TARGET_SPACING / POST_NU7_TARGET_SPACING;
 
 /// The end height `end` of a stream set that ends at the third halving, on a network with
 /// the NU7 height `nu7` (ZIP 214 revision 3; Zakura `nu7_adjusted_funding_stream_height`,
 /// `subsidy.rs:388-402`): an end above the NU7 height `A` moves to `A + 3 * (end - A)`.
+///
+/// ZIP 214 r3: the revision 2 streams end at `HeightForHalving(3)` after NU7, `A + 3 *
+/// (H_3 - A)`. An NU7 height at or after `H_3` does not reactivate an expired stream.
 fn nu7_adjusted_end(end: u32, nu7: Option<u32>) -> u32 {
     match nu7 {
         Some(nu7) if nu7 < end => {
@@ -98,6 +108,9 @@ fn nu7_adjusted_end(end: u32, nu7: Option<u32>) -> u32 {
 
 /// The streams with the deferred pool, from NU6 (ZIP 1015) and from NU6.1 (ZIP 214
 /// revision 2): 12 % to the lockbox and 8 % to Zcash Community Grants.
+///
+/// ZIP 1015, ZIP 214 r1: `FS_DEFERRED` 12 / 100 and `FS_FPF_ZCG` 8 / 100. ZIP 1016, ZIP 214
+/// r2: `FS_CCF_H3` 12 / 100 and `FS_FPF_ZCG_H3` 8 / 100.
 const fn lockbox_streams(fpf_addresses: &'static [&'static str]) -> [Stream; 2] {
     [
         Stream {
@@ -114,6 +127,9 @@ const fn lockbox_streams(fpf_addresses: &'static [&'static str]) -> [Stream; 2] 
 }
 
 /// Zakura `mainnet::FUNDING_STREAMS` (`constants/mainnet.rs:233-289`).
+///
+/// ZIP 214: the Mainnet streams of revision 0 (1,046,400 to 2,726,400), revision 1
+/// (2,726,400 to 3,146,400) and revision 2 (3,146,400 to 4,406,400 before NU7).
 static MAINNET: [StreamSet; 3] = [
     StreamSet {
         start: 1_046_400,
@@ -153,6 +169,9 @@ static MAINNET: [StreamSet; 3] = [
 
 /// Zakura `testnet::FUNDING_STREAMS` (`constants/testnet.rs:212-262`). No stream exists
 /// from 3,396,000 to the NU6.1 activation at 3,536,500.
+///
+/// ZIP 214: the Testnet streams of revision 0 (1,028,500 to 2,796,000), revision 1
+/// (2,976,000 to 3,396,000) and revision 2 (3,536,500 to 4,476,000 before NU7).
 static TESTNET: [StreamSet; 3] = [
     StreamSet {
         start: 1_028_500,
@@ -241,7 +260,10 @@ pub(crate) fn regtest_sets(sets: &[RegtestFundingStreams]) -> &'static [StreamSe
 }
 
 /// Checks that each stream with an address of the configured Regtest `network` has one
-/// address for each address period of its range. Zakura stops at the first block of a
+/// address for each address period of its range.
+///
+/// Spec §7.10: `fs.Recipients` has `fs.NumRecipients` elements. Zakura and this check
+/// accept more. Zakura stops at the first block of a
 /// period without an address (`funding_stream_address_index`,
 /// `zakura-consensus/src/block/subsidy.rs:18-43`).
 pub(crate) fn check_address_counts(network: Network) -> Result<(), RegtestConfigError> {
@@ -269,11 +291,12 @@ pub(crate) fn check_address_counts(network: Network) -> Result<(), RegtestConfig
     Ok(())
 }
 
-/// The address period of `height` (protocol specification §7.10):
-/// `floor((height + PostBlossomHalvingInterval - HeightForHalving(1)) /
-/// FSRecipientChangeInterval)`.
+/// The address period of `height`.
 ///
-/// From the NU7 height `A` a period has 3 times the blocks (ZIP 218; Zakura
+/// Spec §7.10: `FSRecipientPeriod(height) = floor((height + PostBlossomHalvingInterval -
+/// HeightForHalving(1)) / FSRecipientChangeInterval)`.
+///
+/// ZIP 207 r2: from the NU7 height `A` a period has 3 times the blocks (Zakura
 /// `funding_stream_address_period`, `subsidy.rs:341-370`):
 /// `floor((3 * (A + PostBlossomHalvingInterval - HeightForHalving(1)) + (height - A)) /
 /// (3 * FSRecipientChangeInterval))`.
@@ -294,6 +317,11 @@ fn address_period(network: Network, first_halving: u32, height: u32) -> i64 {
 /// of `subsidy` zatoshis: `fs.Value(height) = floor(subsidy * numerator / 100)`. A subsidy
 /// of 0 has no funding stream, and a height before Canopy has none (Zakura
 /// `funding_stream_values`).
+///
+/// Spec §7.8: `fs.Value(height) = floor(BlockSubsidy(height) * fs.Numerator /
+/// fs.Denominator)`, 0 before Canopy. ZIP 207: a stream is active from its start height to
+/// the height before its end height. Spec §7.10: `fs.Recipient(height)` is the address of
+/// `fs.RecipientIndex(height)`.
 pub fn funding_streams(network: Network, height: u32, subsidy: u64) -> Vec<FundingStream> {
     let canopy = network.activation_height(Upgrade::Canopy);
     if subsidy == 0 || !matches!(canopy, Some(canopy) if canopy <= height) {
@@ -332,6 +360,8 @@ pub fn funding_streams(network: Network, height: u32, subsidy: u64) -> Vec<Fundi
 
 /// The value of the stream to the deferred pool at `height` for a block subsidy of
 /// `subsidy` zatoshis. 0 when no such stream is active.
+///
+/// Spec §7.8: `totalDeferredOutput(height)`.
 pub(crate) fn deferred_value(network: Network, height: u32, subsidy: u64) -> u64 {
     funding_streams(network, height, subsidy)
         .into_iter()
@@ -341,6 +371,8 @@ pub(crate) fn deferred_value(network: Network, height: u32, subsidy: u64) -> u64
 }
 
 /// Zakura `mainnet::FUNDING_STREAM_ECC_ADDRESSES` (`constants/mainnet.rs:58-107`).
+///
+/// ZIP 214 r0: `FS_ZIP214_BP.AddressList[0..47]` of Mainnet.
 static MAINNET_ECC_ADDRESSES: [&str; 48] = [
     "t3LmX1cxWPPPqL4TZHx42HU3U5ghbFjRiif",
     "t3Toxk1vJQ6UjWQ42tUJz2rV2feUWkpbTDs",
@@ -394,6 +426,8 @@ static MAINNET_ECC_ADDRESSES: [&str; 48] = [
 
 /// Zakura `testnet::FUNDING_STREAM_ECC_ADDRESSES` (`constants/testnet.rs:57-109`). The
 /// first three periods have the same address.
+///
+/// ZIP 214 r0: `FS_ZIP214_BP.AddressList[0..50]` of Testnet.
 static TESTNET_ECC_ADDRESSES: [&str; 51] = [
     "t26ovBdKAJLtrvBsE2QGF4nqBkEuptuPFZz",
     "t26ovBdKAJLtrvBsE2QGF4nqBkEuptuPFZz",
@@ -542,6 +576,8 @@ mod tests {
     fn the_last_testnet_streams_follow_nu7() {
         let nu7 = 4_465_026;
         assert_eq!(Network::Testnet.activation_height(Upgrade::Nu7), Some(nu7));
+        // ZIP 214 r3, ZIP 259: the NU7 height is a multiple of 3.
+        assert_eq!(nu7 % 3, 0);
         let values = |height| -> Vec<(Receiver, u64)> {
             let subsidy = crate::subsidy::total_subsidy(Network::Testnet, height);
             funding_streams(Network::Testnet, height, subsidy)

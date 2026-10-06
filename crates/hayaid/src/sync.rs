@@ -1208,6 +1208,7 @@ impl Sync {
                         self.relay.misbehaved(peer, Misbehaviour::InvalidHeader);
                     }
                     RejectReason::Rule(_) => {}
+                    // ZIP 204: headers that do not form a chain cost 20 points.
                     RejectReason::Unconnected(_) => {
                         self.relay
                             .misbehaved(peer, Misbehaviour::UnconnectedHeaders);

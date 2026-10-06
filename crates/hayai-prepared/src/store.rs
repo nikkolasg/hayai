@@ -270,17 +270,6 @@ impl PreparedStore {
         self.writer.lock().evicted.contains(txid, Instant::now())
     }
 
-    /// The transactions to announce to a peer (the answer to a `mempool` message), when the
-    /// next block has height `next_height`. A transaction that expires soon is not in the
-    /// list, as in zcashd.
-    pub fn relay_ids(&self, next_height: u32) -> Vec<WtxId> {
-        self.txs
-            .iter()
-            .filter(|e| is_relayable(e.tx.expiry_height, next_height))
-            .map(|e| *e.key())
-            .collect()
-    }
-
     pub fn len(&self) -> usize {
         self.txs.len()
     }
@@ -345,6 +334,7 @@ impl PreparedStore {
         if self.txs.contains_key(&id) {
             return Err(InsertError::Duplicate(id));
         }
+        // ZIP 401: drop a transaction whose txid is in RecentlyEvicted.
         if w.evicted.contains(&tx.raw.txid, now) {
             return Err(InsertError::RecentlyEvicted(tx.raw.txid));
         }
@@ -376,9 +366,11 @@ impl PreparedStore {
                 .unpaid_actions(tx.fee, candidate.conventional_fee),
             weight_ratio: candidate.weight_ratio,
             cost,
+            // ZIP 401, ZIP 317: the low fee penalty applies below the conventional fee.
             eviction_weight: cost + if low_fee { LOW_FEE_PENALTY } else { 0 },
         };
         let protected = self.ancestors(&tx);
+        // ZIP 401: evict until the total cost fits; the new transaction is a candidate.
         while w.cost + cost > self.cost_limit {
             let Some((victim, txid)) = self.select_victim(&mut w, &protected, fees.eviction_weight)
             else {
@@ -564,6 +556,16 @@ impl TxLookup for PreparedStore {
     fn for_each_id(&self, f: &mut dyn FnMut(&WtxId)) {
         for entry in self.txs.iter() {
             f(entry.key());
+        }
+    }
+
+    /// ZIP 204: the transactions to announce in the answer to a `mempool` message leave out
+    /// a transaction that expires within 3 blocks of `next_height`, as in zcashd.
+    fn for_each_relay_id(&self, next_height: u32, f: &mut dyn FnMut(&WtxId)) {
+        for entry in self.txs.iter() {
+            if is_relayable(entry.tx.expiry_height, next_height) {
+                f(entry.key());
+            }
         }
     }
 
@@ -1000,7 +1002,8 @@ mod tests {
         for tx in [&never, &soon, &later] {
             store.insert(tx.clone()).unwrap();
         }
-        let mut ids = store.relay_ids(100);
+        let mut ids = Vec::new();
+        store.for_each_relay_id(100, &mut |id| ids.push(*id));
         ids.sort();
         let mut expected = vec![never.wtxid(), later.wtxid()];
         expected.sort();

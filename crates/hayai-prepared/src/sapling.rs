@@ -10,11 +10,12 @@
 //!
 //! Rules that the upstream code applies:
 //!
-//! - `cv` of a Spend or an Output is not of small order: the transaction parser
-//!   (`ValueCommitment::from_bytes_not_small_order`).
-//! - `rk` and `epk` are not of small order, and the proofs, the spend authorization
-//!   signatures and the binding signature are valid: `sapling_crypto::BatchValidator`.
-//! - The batch validator applies the canonical point encodings of ZIP 216 at every height.
+//! - Spec §4.4, §4.5: `cv` of a Spend or an Output is not of small order: the transaction
+//!   parser (`ValueCommitment::from_bytes_not_small_order`).
+//! - Spec §4.4, §4.5, §7.1.2: `rk` and `epk` are not of small order, and the proofs, the
+//!   spend authorization signatures and the binding signature are valid:
+//!   `sapling_crypto::BatchValidator`.
+//! - ZIP 216: the batch validator applies the canonical point encodings at every height.
 //!   ZIP 216 activates with Canopy. Zebra and Zakura use the same validator at every
 //!   height, because no earlier block has a non-canonical encoding.
 

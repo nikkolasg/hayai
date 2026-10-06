@@ -39,14 +39,15 @@ impl Zip317Params {
         weight_ratio_cap: 4,
     };
 
-    /// The values of Zakura, which the node uses (see the module documentation).
+    /// The values of Zakura, which the node uses (see the module documentation). ZIP 317:
+    /// the marginal fee 400 and the cap 13 differ from 5,000 and 4.
     pub const ZAKURA: Self = Self {
         marginal_fee: 400,
         grace_actions: 2,
         weight_ratio_cap: 13,
     };
 
-    /// `marginal_fee * max(grace_actions, logical_actions)`.
+    /// ZIP 317: `marginal_fee * max(grace_actions, logical_actions)`.
     pub fn conventional_fee(&self, logical_actions: u32) -> u64 {
         self.marginal_fee * u64::from(logical_actions.max(self.grace_actions))
     }

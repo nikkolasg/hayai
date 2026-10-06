@@ -92,6 +92,7 @@ pub struct RawTx {
 }
 
 impl RawTx {
+    /// Spec §7.1.1, ZIP 239: the wtxid is the txid and the auth digest.
     pub fn wtxid(&self) -> WtxId {
         WtxId {
             txid: self.txid,
@@ -284,6 +285,7 @@ impl RawBlock {
     /// Checks the size limit, the header and the transaction count. Returns the header, the
     /// count and the offset of the first transaction.
     fn parse_prefix(bytes: &Bytes) -> Result<(header::BlockHeader, usize, usize), ParseError> {
+        // Spec §7.6: a block has at most 2,000,000 bytes.
         if bytes.len() > MAX_BLOCK_BYTES {
             return Err(ParseError::TooLarge(MAX_BLOCK_BYTES));
         }
@@ -291,6 +293,7 @@ impl RawBlock {
         let mut cursor = Cursor::new(&bytes[..]);
         cursor.set_position(header.serialized_len() as u64);
         let count: usize = CompactSize::read_t(&mut cursor).map_err(ParseError::TxCount)?;
+        // Spec §7.6: a block has at least one transaction.
         if count == 0 {
             return Err(ParseError::Empty);
         }
@@ -475,6 +478,12 @@ pub trait TxLookup: Send + Sync {
     fn get(&self, id: &WtxId) -> Option<Arc<RawTx>>;
     /// Visits every stored id. The relay layer uses it to build the per-block short-id index.
     fn for_each_id(&self, f: &mut dyn FnMut(&WtxId));
+    /// Visits every id that the relay announces in the answer to a `mempool` message when
+    /// the next block has height `next_height`. ZIP 204: a store leaves out a transaction
+    /// that expires within 3 blocks. The default visits every id.
+    fn for_each_relay_id(&self, _next_height: u32, f: &mut dyn FnMut(&WtxId)) {
+        self.for_each_id(f)
+    }
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0

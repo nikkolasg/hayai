@@ -75,6 +75,7 @@ pub const MAX_FAILURES: u32 = 10;
 
 /// Addresses that one connection can add at once (Bitcoin Core
 /// `MAX_ADDR_PROCESSING_TOKEN_BUCKET`). A `getaddr` that the node sends adds this allowance.
+/// ZIP 204: the address rate limit of zcashd, a bucket of 1,000 at 0.1 address per second.
 pub const ADDR_BUDGET_BURST: u64 = MAX_ADDR_ENTRIES as u64;
 /// Seconds for one more address in the budget of a connection (Bitcoin Core
 /// `MAX_ADDR_RATE_PER_SECOND`: 0.1).

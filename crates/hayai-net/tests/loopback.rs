@@ -94,6 +94,15 @@ impl TxLookup for Store {
     fn for_each_id(&self, f: &mut dyn FnMut(&WtxId)) {
         self.txs.lock().unwrap().keys().for_each(f);
     }
+    /// ZIP 204: no transaction that expires within 3 blocks of `next_height`.
+    fn for_each_relay_id(&self, next_height: u32, f: &mut dyn FnMut(&WtxId)) {
+        for (id, t) in self.txs.lock().unwrap().iter() {
+            let expiry = u32::from(t.tx.expiry_height());
+            if expiry == 0 || expiry >= next_height + 3 {
+                f(id);
+            }
+        }
+    }
     fn len(&self) -> usize {
         self.txs.lock().unwrap().len()
     }
@@ -564,6 +573,24 @@ fn simulated_legacy_peer_with_the_bit_gets_zcmpctver_then_legacy_relay() {
     use std::io::Read;
     let _ = peer.stream.read_to_end(&mut rest);
     assert!(!n.relay.peers().iter().any(|p| p.established));
+    n.relay.shutdown();
+}
+
+/// ZIP 204: the answer to `mempool` leaves out a transaction that expires within 3 blocks
+/// of the next block. The tip is 7, so the next block is 8: an expiry of 10 is left out, an
+/// expiry of 11 is announced.
+#[test]
+fn the_answer_to_mempool_leaves_out_a_transaction_that_expires_soon() {
+    let n = node(None);
+    let mut peer = SimPeer::connect(n.addr, NODE_NETWORK);
+    let (soon, later) = (tx(10), tx(11));
+    n.store.insert(&soon);
+    n.store.insert(&later);
+    peer.send(&LegacyMessage::Mempool);
+    let LegacyMessage::Inv(items) = peer.recv_app() else {
+        panic!("expected inv");
+    };
+    assert_eq!(items, vec![InvItem::Wtx(later.wtxid())]);
     n.relay.shutdown();
 }
 
@@ -1412,4 +1439,59 @@ fn a_legacy_peer_gets_mempool_requests_and_its_answer_is_used() {
     wait_for("the transaction of the answer", || {
         n.store.get(&t.wtxid()).is_some()
     });
+}
+
+/// [`Chain`] before NU5: the next block has the Canopy branch.
+struct PreNu5Chain;
+
+impl ChainSource for PreNu5Chain {
+    fn tip_height(&self) -> u32 {
+        Chain.tip_height()
+    }
+    fn tip_hash(&self) -> BlockHash {
+        Chain.tip_hash()
+    }
+    fn tx_branch(&self) -> Option<BranchId> {
+        Some(BranchId::Canopy)
+    }
+    fn block_branch(&self, parent: &BlockHash) -> Option<BranchId> {
+        Chain.block_branch(parent)
+    }
+    fn headers_after(&self, locator: &[BlockHash], stop: &BlockHash, v: bool) -> Vec<BlockHeader> {
+        Chain.headers_after(locator, stop, v)
+    }
+    fn block_bytes(&self, hash: &BlockHash) -> Option<Bytes> {
+        Chain.block_bytes(hash)
+    }
+}
+
+/// ZIP 239: before NU5 a node does not fetch a transaction by its wtxid. A `MSG_WTX`
+/// announcement gets no `getdata`, and a `MSG_TX` announcement gets one.
+#[test]
+fn before_nu5_a_wtxid_announcement_is_not_fetched() {
+    let store = Arc::new(Store::default());
+    let relay = Relay::new(
+        config(None),
+        RelayDeps {
+            txs: store.clone(),
+            tx_sink: store.clone(),
+            block_sink: Arc::new(Blocks::default()),
+            chain: Arc::new(PreNu5Chain),
+            header_check: Arc::new(AcceptAll),
+            history_roots: Arc::new(Roots(None)),
+            sync: None,
+        },
+    );
+    let addr = relay.listen("127.0.0.1:0").unwrap();
+    let mut peer = SimPeer::connect(addr, NODE_NETWORK);
+    peer.send(&LegacyMessage::Inv(vec![InvItem::Wtx(tx(50).wtxid())]));
+    // The pong comes before any getdata.
+    peer.quiet(1);
+    let txid = hayai_crypto::zcash_protocol::TxId::from_bytes([5; 32]);
+    peer.send(&LegacyMessage::Inv(vec![InvItem::Tx(txid)]));
+    assert_eq!(
+        peer.recv_app(),
+        LegacyMessage::GetData(vec![InvItem::Tx(txid)])
+    );
+    relay.shutdown();
 }

@@ -101,6 +101,9 @@ impl CoinbaseSpec {
     /// reissuance height. The coinbase passes `CoinbaseTerms::check` at `height` with
     /// fees of `fees_total`. A height without a rule set is an error, and so is a height
     /// from the NSM reissuance height without `issued`.
+    ///
+    /// ZIP 236: the miner output takes the rest of the total input value, so the coinbase
+    /// pays it exactly. ZIP 235: from NU7 the miner output has `MinerFees`, not the fees.
     pub fn build_on(
         &self,
         height: u32,

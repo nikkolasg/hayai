@@ -74,6 +74,10 @@ fn ironwood_action_decrypts<A>(action: &orchard::Action<A>) -> bool {
 }
 
 /// Checks the shielded outputs of the coinbase transaction `tx` of a block under `branch`.
+///
+/// ZIP 213, Spec §7.1.2: no shielded output before Heartwood, then each output decrypts with
+/// the zero OVK. ZIP 212: Sapling lead byte 0x02 from Canopy. ZIP 2005, ZIP 258: Ironwood
+/// lead byte 0x03.
 pub(crate) fn check_shielded_outputs(
     tx: &Transaction,
     branch: BranchId,
