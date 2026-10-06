@@ -1561,7 +1561,8 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   Search for them to find the code of a rule.
 - Lesson: an upstream function that computes a digest is not a consensus check. The upstream
   v5 sighash hashes an empty output list for `SIGHASH_SINGLE` without an output, and ZIP 244
-  requires a failure. A rule that an upstream crate seems to enforce needs a refused-input
+  requires a failure. The deployed nodes (zcashd, Zebra, Zakura) apply it as a failed signature
+  check, not as a failed transaction, so `<pk> OP_CHECKSIG OP_NOT` passes; hayai does the same. A rule that an upstream crate seems to enforce needs a refused-input
   test in hayai.
 - Lesson: a setter that nothing calls hides a missing rule (`Relay::set_min_peer_version`,
   `PreparedStore::relay_ids`). A rule needs a test at the level of the node, not only of the

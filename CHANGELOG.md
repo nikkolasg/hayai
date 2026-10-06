@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `hayai-prepared`: a v5 or v6 transparent input signed with `SIGHASH_SINGLE` (or `SIGHASH_SINGLE | ANYONECANPAY`) and no output at its index fails its signature check (ZIP 244 S.2a, as Zakura). Before, hayai hashed an empty output list and accepted such a signature.
+- `hayai-prepared`: a v5 or v6 transparent input signed with `SIGHASH_SINGLE` (or `SIGHASH_SINGLE | ANYONECANPAY`) and no output at its index fails its signature check (ZIP 244 S.2a, as zcashd, Zebra and Zakura). Before, hayai hashed an empty output list and accepted such a signature.
 - `hayaid`: a peer whose protocol version is below the version of the upgrade of the tip is refused at the handshake and disconnected when the upgrade activates (ZIP 201, ZIP 204, as Zakura). Before, the minimum stayed at 170,150.
 - `hayai-net`: a `ping` before the end of the handshake gets no `pong` (ZIP 204). Before NU5 the relay does not fetch a `MSG_WTX` announcement (ZIP 239).
 - `hayai-wire`: new method `TxLookup::for_each_relay_id`. The answer to `mempool` leaves out a transaction that expires within 3 blocks of the next block (ZIP 204). `PreparedStore::relay_ids` is removed.
