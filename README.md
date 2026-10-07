@@ -246,6 +246,9 @@ priority.
 hayai is available under the terms of either the MIT license or the Apache License 2.0, at
 your option.
 
+`third-party/README.md` gives each source that the authors used, its licence and the files that
+hold its code or data. The licence files of each source are in `third-party/`.
+
 ## 🙏 Acknowledgements
 
 hayai builds on the work of the Zcash community: the protocol specification and the ZIPs, the
