@@ -1575,8 +1575,9 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   Zebra and other projects. `LICENSE-MIT`, `LICENSE-APACHE` and the folder `third-party/` fix
   that.
 - Rule: a file that copies or ports code or data of another project gets a row in
-  `third-party/README.md` in the same change. A source that the authors read gets its
-  licence files in `third-party/<source>/` in the same change.
+  `third-party/README.md` in the same change. A source that hayai takes a design from gets
+  its licence files in `third-party/<source>/` in the same change. A library that hayai only
+  calls is not a source: its crate carries its licence.
 - Lesson: the clone scan found few verbatim lines, but a model that writes code with a source
   in its context can take the structure of that source. The notices of the projects that were
   in context (Zakura, Zebra, zcashd, librustzcash) therefore apply to the whole tree.

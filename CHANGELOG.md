@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Licence: new files `LICENSE-MIT` and `LICENSE-APACHE`, and the folder `third-party/` with the licence files of each source that the authors used (Zakura, Zebra, zcashd, librustzcash, the Zcash cryptography crates, the storage engines and the other crates whose source they read). `third-party/README.md` gives the files that hold code or data of each source.
+- Licence: new files `LICENSE-MIT` and `LICENSE-APACHE`, and the folder `third-party/` with the licence files of each source that hayai takes code, data or designs from (Zakura, Zebra, zcashd, Bitcoin Core, librustzcash, zcash-test-vectors, libsecp256k1, the ZIPs). `third-party/README.md` gives the files that hold code or data of each source, and the designs.
 - `hayai-prepared`: a v5 or v6 transparent input signed with `SIGHASH_SINGLE` (or `SIGHASH_SINGLE | ANYONECANPAY`) and no output at its index fails its signature check (ZIP 244 S.2a, as zcashd, Zebra and Zakura). Before, hayai hashed an empty output list and accepted such a signature.
 - `hayaid`: a peer whose protocol version is below the version of the upgrade of the tip is refused at the handshake and disconnected when the upgrade activates (ZIP 201, ZIP 204, as Zakura). Before, the minimum stayed at 170,150.
 - `hayai-net`: a `ping` before the end of the handshake gets no `pong` (ZIP 204). Before NU5 the relay does not fetch a `MSG_WTX` announcement (ZIP 239).
