@@ -26,8 +26,6 @@ mod shadow_tests;
 #[cfg(test)]
 mod sync_tests;
 #[cfg(test)]
-mod test_support;
-#[cfg(test)]
 mod wallet_tests;
 
 pub use config::{default_toml, Config, Mode};

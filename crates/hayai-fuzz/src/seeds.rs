@@ -1,6 +1,6 @@
 //! The seed blocks: valid blocks that the mutations start from.
 //!
-//! - A fixture seed is a generated block of hayai-bench with real signatures and real
+//! - A fixture seed is a generated block of hayai-fixtures with real signatures and real
 //!   Orchard and Ironwood proofs, at its Mainnet height, on a parent with a history tree.
 //! - A synthetic seed is a block with one coinbase at a chosen height of Mainnet or
 //!   Testnet. Its coinbase pays the terms that hayai-consensus gives for the height, so
@@ -8,9 +8,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use hayai_bench::fixtures::{self, Fixture};
-use hayai_consensus::coinbase::CoinbaseTerms;
 use hayai_consensus::rules_at;
+use hayai_fixtures::{self as fixtures, Fixture};
 use hayai_prepared::RuleEpoch;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,7 +20,7 @@ use crate::model::{
 };
 use crate::{hayai_side, reference};
 
-/// A generated fixture block of hayai-bench.
+/// A generated fixture block of hayai-fixtures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FixtureId {
     /// NU6.2: 5 transparent transactions with 2 inputs each.
@@ -206,8 +205,8 @@ fn synthetic_seed(network: Net, height: u32) -> Result<Seed, SeedError> {
         return Err(SeedError::BelowMandatoryCheckpoint(mandatory));
     }
     let rules = rules_at(hayai_network, height).map_err(|e| SeedError::NoRules(e.to_string()))?;
-    let terms =
-        CoinbaseTerms::at(hayai_network, height).map_err(|e| SeedError::NoRules(e.to_string()))?;
+    let terms = hayai_consensus::coinbase::terms_at(hayai_network, height)
+        .map_err(|e| SeedError::NoRules(e.to_string()))?;
     let nu5 = RuleEpoch::of(rules).nu5_active();
     let mut coinbase = TxParts::transparent(if nu5 { 5 } else { 4 }, u32::from(rules.branch_id));
     // From NU5 the expiry height of a coinbase is the height of its block.
@@ -219,13 +218,13 @@ fn synthetic_seed(network: Net, height: u32) -> Result<Seed, SeedError> {
         sequence: u32::MAX,
     });
     coinbase.vout.push(TxOut {
-        value: terms.miner_subsidy(),
+        value: terms.miner_subsidy,
         script: miner_script(),
     });
     for required in &terms.required {
         coinbase.vout.push(TxOut {
             value: required.value,
-            script: required.script.clone(),
+            script: required.script.to_vec(),
         });
     }
     let parent = sha256(&[

@@ -21,7 +21,7 @@ use crate::sync_tests::{
     addr, config_with, disconnect_all, generate, parse, rpc_call, scratch, wait_for, wait_template,
     wait_tip,
 };
-use crate::test_support::{spend_tx, Spend};
+use hayai_fixtures::regtest::{spend_tx, Spend};
 
 /// P2SH of the redeem script `OP_TRUE`: an address that a test spends without a key.
 const P2SH_TRUE: [u8; 23] = [

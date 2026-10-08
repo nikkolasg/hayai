@@ -1,4 +1,4 @@
-//! Deterministic synthetic blocks for benchmarks.
+//! Deterministic synthetic blocks for tests, benchmarks and the differential fuzzer.
 //!
 //! Every fixture is a mainnet-shaped block, built from upstream types with real ECDSA
 //! signatures and real Orchard proofs. The fixtures of the NU6.2 epoch are at
@@ -40,6 +40,9 @@
 //!
 //! No Sapling: the Sapling Groth16 parameters are not installed; see
 //! [`sapling_params_todo`].
+//!
+//! [`regtest`] builds single Regtest transactions that spend one transparent coin, for the
+//! admission tests of the mempool and the tests of the node.
 
 use std::fs;
 use std::io::Write;
@@ -77,6 +80,8 @@ use hayai_consensus::coinbase::CoinbaseTerms;
 use hayai_consensus::Network;
 use hayai_wire::header::{BlockHash, BlockHeader, PowParams};
 use hayai_wire::{merkle_root, RawBlock};
+
+pub mod regtest;
 
 /// The network of every fixture block: the heights and the branches of the fixtures are
 /// Mainnet heights and branches, and the coinbase pays the Mainnet terms of its height.
@@ -224,7 +229,7 @@ impl Fixture {
             .vout[0]
             .value()
             .into_u64();
-        let fees = paid - coinbase_terms(self.height).miner_subsidy();
+        let fees = paid - coinbase_terms(self.height).miner_subsidy;
         let epoch = Epoch {
             height,
             branch: self.branch_id,
@@ -843,7 +848,8 @@ impl Authorization for UnsignedCoinbase {
 
 /// The coinbase terms of a fixture block at `height`: the terms of [`FIXTURE_NETWORK`].
 pub fn coinbase_terms(height: u32) -> CoinbaseTerms {
-    CoinbaseTerms::at(FIXTURE_NETWORK, height).expect("the fixture heights have a rule set")
+    hayai_consensus::coinbase::terms_at(FIXTURE_NETWORK, height)
+        .expect("the fixture heights have a rule set")
 }
 
 /// The coinbase of a block of `epoch` that pays the terms of its height and `fees`: a v5
@@ -864,7 +870,7 @@ fn coinbase(fees: u64, epoch: Epoch, shielded: bool) -> Transaction {
     let mut tb = TransparentBuilder::empty();
     tb.add_output(
         &TransparentAddress::PublicKeyHash(dest[..20].try_into().expect("20")),
-        Zatoshis::const_from_u64(terms.miner_subsidy() + fees - shielded_value),
+        Zatoshis::const_from_u64(terms.miner_subsidy + fees - shielded_value),
     )
     .expect("valid output");
     for required in &terms.required {
@@ -1099,11 +1105,11 @@ mod tests {
         let terms = coinbase_terms(FIXTURE_HEIGHT);
         assert_eq!(
             cb_bundle.vout[0].value().into_u64(),
-            terms.miner_subsidy() + fees,
+            terms.miner_subsidy + fees,
             "coinbase pays the miner's part of the subsidy plus fees"
         );
         assert_eq!(
-            (terms.miner_subsidy(), terms.required.len()),
+            (terms.miner_subsidy, terms.required.len()),
             (125_000_000, 1)
         );
         let outputs: Vec<(u64, &[u8])> = cb_bundle
@@ -1374,7 +1380,7 @@ mod tests {
 
     /// Generates (or loads) the full benchmark set. Ignored by default because first
     /// generation proves 265 Orchard bundles; run with
-    /// `cargo test -p hayai-bench --release -- --ignored standard_set`.
+    /// `cargo test -p hayai-fixtures --release -- --ignored standard_set`.
     #[test]
     #[ignore = "generates the full fixture set; run in release mode"]
     fn standard_set_parses_and_fits_the_block_limit() {

@@ -202,7 +202,7 @@ pub fn tip_on(view: &hayai_state::ChainView, time: u32) -> Tip {
 
 impl Switch {
     /// `warm`: the prepared store holds every transaction of the block.
-    pub fn new(fixture: &crate::fixtures::Fixture, warm: bool) -> Switch {
+    pub fn new(fixture: &hayai_fixtures::Fixture, warm: bool) -> Switch {
         let harness = crate::chain_fixture::harness_with_history(fixture);
         if warm {
             harness.fill_store();

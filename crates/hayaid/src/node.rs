@@ -46,14 +46,15 @@ use hayai_coins::{
 };
 use hayai_consensus::difficulty::expected_bits;
 use hayai_consensus::{ParentChain, DIFFICULTY_CONTEXT_BLOCKS};
-use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_crypto::zcash_protocol::consensus::{BranchId, NetworkType};
 use hayai_index::{BlockJob, IndexWriter, TreesBefore, WalletIndex};
+use hayai_mempool::{PreparedStore, MEMPOOL_TX_COST_LIMIT};
 use hayai_net::{
     AddrBook, BlockSink, ChainSource, CompactVer, Direction, HistoryRootSource, IncomingBlock,
     PeerConfig, PeerEnv, PeerManager, PeerProtocol, Relay, RelayConfig, RelayDeps, Source,
     SyncSink,
 };
-use hayai_prepared::{PreparedStore, VerifyingKeys, MEMPOOL_TX_COST_LIMIT};
+use hayai_prepared::VerifyingKeys;
 use hayai_relay::{LaneId, LanePublisher};
 use hayai_rpc::{
     BlockSubmitSink, Cookie, HttpServer, MetricsServer, Registry, Rpc, RpcConfig, SubmitOutcome,
@@ -806,7 +807,7 @@ impl Driver {
             if template.tip.parent_hash == tip {
                 let ids: Vec<WtxId> = template.txs.iter().map(|c| c.wtxid).collect();
                 let started = Instant::now();
-                match prebuild(&ids, &self.store, &view, &cfg) {
+                match prebuild(&ids, self.store.as_ref(), &view, &cfg) {
                     Ok(body) => self.prebuilt.own = Some(body),
                     Err(e) => {
                         self.prebuilt.own = None;
@@ -830,7 +831,7 @@ impl Driver {
                 continue;
             };
             let started = Instant::now();
-            let body = prebuild(&ids, &self.store, &view, &cfg);
+            let body = prebuild(&ids, self.store.as_ref(), &view, &cfg);
             self.metrics
                 .prebuild_duration
                 .observe_duration(started.elapsed());
@@ -1447,7 +1448,7 @@ impl Driver {
             }
         }
         (
-            validate_block((**raw).clone(), &self.store, view, cfg),
+            validate_block((**raw).clone(), self.store.as_ref(), view, cfg),
             "full",
         )
     }
@@ -1475,10 +1476,10 @@ impl Driver {
         // The `nBits` that the header rules require of a block at `next` with the time of
         // the template. On Testnet the value depends on that time (the minimum-difficulty
         // rule), so it is the value of this template time only.
-        let bits = match self.params.kind {
+        let bits = match self.params.kind.network_type() {
             // Regtest has no expected `nBits` (`NetworkParams::disable_pow`).
-            NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => REGTEST_POW_LIMIT_BITS,
-            NetworkKind::Testnet | NetworkKind::Mainnet => {
+            NetworkType::Regtest => REGTEST_POW_LIMIT_BITS,
+            NetworkType::Test | NetworkType::Main => {
                 let bits: Vec<u32> = view
                     .difficulty_context()
                     .into_iter()
@@ -2820,7 +2821,7 @@ impl Node {
     }
 
     /// Admits a transaction of this node into the mempool and announces it to the peers.
-    pub fn submit_tx(&self, tx: Arc<RawTx>) -> Result<(), crate::mempool::Reject> {
+    pub fn submit_tx(&self, tx: Arc<RawTx>) -> Result<(), hayai_mempool::Reject> {
         self.mempool.admit(tx.clone())?;
         self.relay.announce_tx(&tx);
         Ok(())
@@ -2828,7 +2829,7 @@ impl Node {
 
     /// Admits a private transaction of this node into the mempool. The node does not show
     /// it to a peer before a block contains it.
-    pub fn submit_private_tx(&self, tx: Arc<RawTx>) -> Result<(), crate::mempool::Reject> {
+    pub fn submit_private_tx(&self, tx: Arc<RawTx>) -> Result<(), hayai_mempool::Reject> {
         self.mempool.admit_private(tx)
     }
 

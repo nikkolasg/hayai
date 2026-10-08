@@ -1,14 +1,14 @@
 //! Mempool policy: the rules that decide whether the node stores and relays a valid
 //! transaction.
 //!
-//! [`prepare`](crate::prepare) rejects a transaction that breaks a context-free consensus
+//! [`prepare`](hayai_prepared::prepare) rejects a transaction that breaks a context-free consensus
 //! rule. [`MempoolPolicy::admit`] rejects a transaction that the next block cannot contain
 //! (expiry, lock time, coinbase maturity) or that the public network does not relay
 //! (ZIP 317 fee rules, zcashd standardness). `docs/mempool-policy.md` lists each rule, its
 //! source and its constant.
 //!
 //! Inputs that are not available. `prepare` fails with
-//! [`PrepareError::MissingInput`](crate::PrepareError::MissingInput) when the coins view
+//! [`PrepareError::MissingInput`](hayai_prepared::PrepareError::MissingInput) when the coins view
 //! does not hold an input. The node keeps no orphan pool, as Zebra and Zakura.
 //!
 //! The rules that need the chain state (nullifiers and anchors against the tip) are not
@@ -23,7 +23,7 @@ use zcash_script::script::{Code, Evaluable};
 use zcash_script::solver::{self, ScriptKind};
 use zcash_script::Opcode;
 
-use crate::{PreparedTx, RuleEpoch};
+use hayai_prepared::{PreparedTx, RuleEpoch};
 
 /// The mempool rejects a transaction whose expiry height is less than the next block
 /// height plus this value (zcashd `TX_EXPIRING_SOON_THRESHOLD`). ZIP 204: do not relay a
@@ -277,7 +277,7 @@ impl MempoolPolicy {
             require_standard: !network.is_regtest(),
             permit_bare_multisig: false,
             max_datacarrier_bytes: MAX_DATACARRIER_BYTES,
-            coinbase_must_be_shielded: network.params().coinbase_must_be_shielded,
+            coinbase_must_be_shielded: network.core().coinbase_must_be_shielded,
         }
     }
 

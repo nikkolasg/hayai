@@ -6,7 +6,7 @@
 //! scanner alone over every transaction of the block), `wire/merkle_root` and
 //! `wire/auth_data_root` (hayai: rayon-parallel trees; zakura: `merkle::Root` and
 //! `merkle::AuthDataRoot`). Parameters are the fixture names of
-//! `hayai_bench::fixtures::standard_set`.
+//! `hayai_fixtures::standard_set`.
 
 hayai_bench::bench_allocator!();
 
@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hayai_bench::hayai_id;
-use hayai_bench::{fixtures, zakura_wire, zebra_wire};
+use hayai_bench::{zakura_wire, zebra_wire};
+use hayai_fixtures as fixtures;
 
 fn parse_block(c: &mut Criterion) {
     let mut group = c.benchmark_group("wire/parse_block");

@@ -335,8 +335,9 @@ impl Driver {
             if let Ok(()) = checked {
                 self.sync_mut().body_checked(&job.hash)?;
             }
-            let layer = checked
-                .and_then(|()| build_layer((*job.raw).clone(), &self.store, &view, &cfgs[k]));
+            let layer = checked.and_then(|()| {
+                build_layer((*job.raw).clone(), self.store.as_ref(), &view, &cfgs[k])
+            });
             match layer {
                 Ok((mut layer, verification, timings)) => {
                     ctx.index = Some(IndexInput::take(&mut layer, &view));

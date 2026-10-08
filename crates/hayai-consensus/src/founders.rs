@@ -1,86 +1,61 @@
-//! The founders' reward (protocol specification §7.9, before Canopy).
-//!
-//! A coinbase at a height from 1 to the last height before the first halving pays 20 % of
-//! the block subsidy to the founders' address of the height. The rule ends at Canopy.
-//!
-//! Zakura and Zebra check the output in every block that the full verifier receives
-//! (`zakura-consensus/src/block/check.rs:204-224`). Their mandatory checkpoint is the last
-//! block before Canopy on Mainnet and Testnet, so there the rule runs only on a network
-//! with a configured checkpoint list.
+//! The founders' reward (protocol specification §7.9, before Canopy): the address tables
+//! of Mainnet and Testnet, and the wrapper of `hayai_consensus_core::founders` for a
+//! caller with a [`Network`].
 //!
 //! No block reaches the check in a hayai node. On Mainnet and Testnet each height with a
 //! founders' reward is at or below the mandatory checkpoint, and the checkpoint path does
 //! not check the coinbase terms. Regtest has no founders' reward: Canopy activates at
 //! height 1, and a `RegtestConfig` sets only the upgrades after NU5.
 //!
-//! The code stays for three users: [`crate::coinbase::CoinbaseTerms::at`] gives the terms
-//! of every height with one function, the coinbase builder of hayai-template pays the
-//! terms of a height before Canopy in its tests, and the conformance tests compare the
-//! amounts and the addresses with Zakura and Zebra and check the coinbase of the published
-//! Mainnet block 1.
+//! The code stays for three users: [`crate::coinbase::terms_at`] gives the terms of every
+//! height with one function, the coinbase builder of hayai-template pays the terms of a
+//! height before Canopy in its tests, and the conformance tests compare the amounts and
+//! the addresses with Zakura and Zebra and check the coinbase of the published Mainnet
+//! block 1.
 
-use crate::{subsidy, Network, Upgrade, POST_BLOSSOM_TARGET_SPACING, PRE_BLOSSOM_TARGET_SPACING};
+use hayai_consensus_core::founders as core;
+pub use hayai_consensus_core::founders::FoundersReward;
+use hayai_consensus_core::P2shScript;
+use hayai_crypto::zcash_protocol::consensus::NetworkType;
 
-/// The founders' reward of one height.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FoundersReward {
-    /// `FoundersReward(height)` in zatoshis.
-    pub value: u64,
-    /// The Base58Check P2SH address of `FounderRedeemScriptHash(height)`.
-    pub address: &'static str,
-}
+use crate::address::{p2sh_script, scripts_of};
+use crate::network::{check_address, checked};
+use crate::{ChainSpecError, Network};
 
-/// `FoundersFraction` is 1 / 5.
-///
-/// Spec §7.8: `FoundersReward(height) = BlockSubsidy(height) * FoundersFraction` while
-/// `Halving(height) < 1`.
-const FOUNDERS_FRACTION_DIVISOR: u64 = 5;
-
-/// The founders' reward that the coinbase at `height` must pay. `None` when the rule does
-/// not apply: the genesis block, a height at or after Canopy, a height at or after the
-/// first halving, and every Regtest height (Canopy activates at height 1).
-///
-/// Spec §7.9: [Pre-Canopy] a coinbase at a height from 1 to
-/// `FoundersRewardLastBlockHeight` pays `FoundersReward(height)` to the P2SH script of
-/// `FounderRedeemScriptHash(height)`. ZIP 207: the rule ends at Canopy, also on Testnet.
+/// The founders' reward that the coinbase at `height` on `network` must pay
+/// (`hayai_consensus_core::founders::founders_reward`). `None` when the rule does not
+/// apply.
 pub fn founders_reward(network: Network, height: u32) -> Option<FoundersReward> {
-    let addresses: &[&str; 48] = match network {
-        Network::Mainnet => &MAINNET_ADDRESSES,
-        Network::Testnet => &TESTNET_ADDRESSES,
-        Network::Regtest | Network::ConfiguredRegtest(_) => return None,
-    };
-    if height == 0
-        || network.upgrade_at(height) >= Upgrade::Canopy
-        || subsidy::halving(network, height) >= 1
-    {
-        return None;
-    }
-    let params = network.params();
-    // Spec §7.9: FounderAddressChangeInterval = ceiling((SlowStartShift +
-    // PreBlossomHalvingInterval) / NumFounderAddresses).
-    let change_interval = (params.slow_start_interval / 2 + params.pre_blossom_halving_interval)
-        .div_ceil(addresses.len() as u32);
-    // Spec §7.9: FounderAddressAdjustedHeight. A block from Blossom counts as the part of
-    // a pre-Blossom block that its target spacing is.
-    let adjusted_height = match network.activation_height(Upgrade::Blossom) {
-        Some(blossom) if height >= blossom => {
-            blossom
-                + (height - blossom) / (PRE_BLOSSOM_TARGET_SPACING / POST_BLOSSOM_TARGET_SPACING)
-        }
-        _ => height,
-    };
-    Some(FoundersReward {
-        value: subsidy::total_subsidy(network, height) / FOUNDERS_FRACTION_DIVISOR,
-        // Spec §7.9: FounderAddressIndex, from 0 here. The index is below 48 at every
-        // height before the first halving.
-        address: addresses[(adjusted_height / change_interval) as usize],
-    })
+    checked(core::founders_reward(network.core(), height))
 }
+
+/// The scripts of the founders' addresses of a spec with the network type `network_type`.
+/// Each address must be a P2SH address of the network type. The table stays in memory
+/// until the process ends, as the spec does.
+pub(crate) fn core_scripts(
+    network_type: NetworkType,
+    addresses: &[&str],
+) -> Result<&'static [P2shScript], ChainSpecError> {
+    let mut scripts = Vec::with_capacity(addresses.len());
+    for address in addresses {
+        check_address(network_type, address)?;
+        let Ok(script) = p2sh_script(network_type, address) else {
+            unreachable!("check_address decoded the address");
+        };
+        scripts.push(script);
+    }
+    Ok(Box::leak(scripts.into_boxed_slice()))
+}
+
+/// The scripts of [`MAINNET_ADDRESSES`], for the core.
+pub(crate) static MAINNET_SCRIPTS: [P2shScript; 48] = scripts_of(&MAINNET_ADDRESSES);
+/// The scripts of [`TESTNET_ADDRESSES`], for the core.
+pub(crate) static TESTNET_SCRIPTS: [P2shScript; 48] = scripts_of(&TESTNET_ADDRESSES);
 
 /// Zakura `mainnet::FOUNDER_ADDRESS_LIST` (`constants/mainnet.rs:113-162`).
 ///
 /// Spec §7.9: `FounderAddressList` of Mainnet.
-static MAINNET_ADDRESSES: [&str; 48] = [
+pub(crate) static MAINNET_ADDRESSES: [&str; 48] = [
     "t3Vz22vK5z2LcKEdg16Yv4FFneEL1zg9ojd",
     "t3cL9AucCajm3HXDhb5jBnJK2vapVoXsop3",
     "t3fqvkzrrNaMcamkQMwAyHRjfDdM2xQvDTR",
@@ -135,7 +110,7 @@ static MAINNET_ADDRESSES: [&str; 48] = [
 ///
 /// Spec §7.9: `FounderAddressList` of Testnet, after the change of the addresses from
 /// index 4 at height 53,127.
-static TESTNET_ADDRESSES: [&str; 48] = [
+pub(crate) static TESTNET_ADDRESSES: [&str; 48] = [
     "t2UNzUUx8mWBCRYPRezvA363EYXyEpHokyi",
     "t2N9PH9Wk9xjqYg9iin1Ua3aekJqfAtE543",
     "t2NGQjYMQhFndDHguvUw4wZdNdsssA6K7x2",
@@ -189,7 +164,8 @@ static TESTNET_ADDRESSES: [&str; 48] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coinbase::address_script;
+    use crate::address::address_script;
+    use crate::address_of;
 
     #[test]
     fn the_reward_is_a_fifth_of_the_subsidy_until_canopy() {
@@ -215,7 +191,9 @@ mod tests {
 
     #[test]
     fn the_address_changes_every_17709_adjusted_blocks() {
-        let address = |network, height| founders_reward(network, height).unwrap().address;
+        let address = |network, height| {
+            address_of(network, &founders_reward(network, height).unwrap().script)
+        };
         for (network, addresses, blossom, last) in [
             (
                 Network::Mainnet,
@@ -262,7 +240,6 @@ mod tests {
         ] {
             for address in addresses {
                 let script = address_script(network, address);
-                assert_eq!(script.len(), 23, "{address}");
                 assert_eq!((script[0], script[1], script[22]), (0xa9, 0x14, 0x87));
             }
         }

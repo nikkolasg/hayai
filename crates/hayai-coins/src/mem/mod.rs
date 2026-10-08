@@ -54,7 +54,7 @@ const SNAPSHOT_TMP_FILE: &str = "coins.snapshot.tmp";
 pub struct MemConfig {
     /// The log is synced to disk after every this many records. The default is 1: a write
     /// returns after its record is on disk. 0 never syncs; the kernel then writes the log
-    /// back in its own time, as RocksDB does for [`crate::RocksBacking`]'s unsynced write
+    /// back in its own time, as RocksDB does for `RocksBacking`'s unsynced write
     /// batches, and a power loss can lose the last records (never the order or the
     /// integrity of the rest).
     pub fsync_every_generations: u32,
@@ -472,7 +472,7 @@ impl MemBacking {
     }
 
     /// The block of the last generation written, `None` before the first one. Recovery
-    /// replays the blocks after it, as with [`crate::RocksBacking::best_block`].
+    /// replays the blocks after it, as with `RocksBacking::best_block`.
     pub fn best_block(&self) -> Result<Option<BestBlock>, Error> {
         Ok(*self.best_block.read())
     }

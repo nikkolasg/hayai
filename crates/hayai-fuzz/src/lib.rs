@@ -1,7 +1,7 @@
 //! In-process differential fuzzer of hayai against the Zakura library code.
 //!
 //! A case is a block and a chain context. The fuzzer makes a case from a seed block (a
-//! generated fixture of hayai-bench, or a generated transparent block at a chosen height)
+//! generated fixture of hayai-fixtures, or a generated transparent block at a chosen height)
 //! and a list of mutations ([`mutate::Recipe`]). hayai ([`hayai_side`]) and the reference
 //! ([`reference`]) each give a verdict, and [`verdict::compare`] compares the two.
 //!

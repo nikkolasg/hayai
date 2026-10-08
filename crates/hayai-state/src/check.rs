@@ -459,7 +459,7 @@ fn check_txs(
     cfg: &CheckConfig<'_>,
 ) -> Result<TxsChecked, ContextError> {
     let rules = cfg.rules;
-    let must_shield = cfg.network.params().coinbase_must_be_shielded;
+    let must_shield = cfg.network.core().coinbase_must_be_shielded;
     // Inputs: double spends inside the block, in-block parents (which must come earlier in
     // the block), then each input against the coin the view resolved for it.
     assert_eq!(inputs.len(), txs.len(), "one input list per transaction");
@@ -757,7 +757,10 @@ fn coinbase_terms(
     pools: ValuePools,
 ) -> Result<CoinbaseTerms, ContextError> {
     // ZIP 237: the total of the pools after the parent gives NSMValueBalance(height - 1).
-    Ok(CoinbaseTerms::after(cfg.network, height, pools.total()).map_err(CoinbaseError::from)?)
+    Ok(
+        hayai_consensus::coinbase::terms_after(cfg.network, height, pools.total())
+            .map_err(CoinbaseError::from)?,
+    )
 }
 
 /// The coinbase against its terms in a block with `fees` zatoshis of fees: every required
@@ -1352,7 +1355,7 @@ mod tests {
     const ZEC: u64 = 100_000_000;
 
     fn terms(network: Network, height: u32) -> CoinbaseTerms {
-        CoinbaseTerms::at(network, height).expect("a rule set")
+        hayai_consensus::coinbase::terms_at(network, height).expect("a rule set")
     }
 
     /// Mainnet in NU6.2: each block adds 0.1875 ZEC to the deferred pool.

@@ -1568,3 +1568,147 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   `PreparedStore::relay_ids`). A rule needs a test at the level of the node, not only of the
   helper.
 
+## 2026-10-07 — hayai-fixtures
+
+- The fixture generator moves from `hayai_bench::fixtures` to the new crate `hayai-fixtures`.
+  The crate depends only on `hayai-crypto`, `hayai-wire`, `hayai-consensus` and 4 small
+  crates (`secp256k1`, `rayon`, `sha2`, `bytes`).
+- Reason: `hayai-fuzz` used `hayai-bench` only for the fixtures. Through `hayai-bench` it
+  built the benchmark scenarios, the system metrics, `perf-event2` and the benchmark baselines.
+- The chain fixture and `scratch_dir` stay in `hayai-bench`. Only `hayai-bench` uses them, and
+  the chain fixture needs the RocksDB coins store and the block shapes of the benchmark models.
+- The test vectors under `crates/hayai-bench/tests/vectors/` stay. Other crates read them by
+  path and do not depend on `hayai-bench`.
+- Rule: a crate that needs test data or a test helper of another crate depends on a support
+  crate, not on a benchmark crate.
+
+## 2026-10-07 — RocksDB optional in hayai-coins (hayai-dny)
+
+- The RocksDB backing of `hayai-coins` (`RocksBacking`, `Config`, the error variants `Rocks` and
+  `MissingColumnFamily`) is behind the cargo feature `rocksdb`.
+- Reason: `hayai-state`, `hayai-prepared`, `hayai-validate` and `hayai-fuzz` use only the types,
+  the cache and `MemBacking`. Before, each of them built the RocksDB C++ library. Another node
+  has its own database, and a WASM target cannot build RocksDB.
+- `hayaid` and `hayai-bench` construct a `RocksBacking` and turn the feature on at their edge.
+- `rocksdb` is in the default features of `hayai-coins`. Thus `cargo test -p hayai-coins` runs
+  every test. The workspace edges set `default-features = false`, so the default does not reach
+  a dependent crate.
+- The test target `store` has `required-features = ["rocksdb"]`. In `tests/mem.rs`, only the
+  tests that use `RocksBacking` need the feature, so the `MemBacking` tests run without it. The
+  CI command (`--workspace --no-default-features`) still runs the RocksDB tests: feature
+  unification takes `rocksdb` from the edge of `hayaid`.
+- Without the feature, `stored_best_block` reads only the memory backend. A directory without
+  its log is an error.
+
+## 2026-10-07 — Chain parameters as data (hayai-wku)
+
+- A `ChainSpec` holds each value of a network that the rules read: the activation heights,
+  `NetworkParams`, the checkpoints, the funding streams, the lockbox disbursements, the
+  founders' addresses, the NSM seed and the `zcash_protocol` network type. A fork clones a
+  built-in spec, changes its fields and calls `ChainSpec::network()`. The fork does not edit
+  hayai-consensus.
+- Decision: `Network::Custom(CheckedSpec)` replaces `Network::ConfiguredRegtest`. Only
+  `ChainSpec::network()` makes a `CheckedSpec`, and two of them are equal when they are the
+  same spec in memory. Mainnet, Testnet and Regtest stay variants with a `static` spec.
+  `Network::spec()` is one `const` match, `Network` stays `Copy` and 16 bytes, and no function
+  of the crate matches on the network.
+- Rejected: a struct `Network(&'static ChainSpec)`, which changes each `Network::Mainnet` and
+  each pattern. Rejected: a parameter trait, which adds a generic or a `dyn` call on each
+  rule path for one implementation.
+- Rule: `ChainSpec::network()` refuses each value that a rule would later meet as a panic or
+  as a rule without code (17 reasons, one `ChainSpecError` variant each). The checks of a
+  Regtest configuration and of a spec are the same functions. Lesson: a review found 6 such
+  values after the first version, from a division by 0 to an NU7 height on Mainnet without
+  the ZIP 2008 rule.
+- `Upgrade` stays a closed enum, because the rules of an upgrade are code. The magic bytes
+  and the ports stay in hayai-net and hayaid. hayai gives no `Parameters` value to an
+  upstream crate: `rules_at` gives the branch id, and the network type gives the address
+  encodings. The upstream `NetworkType` has 3 values, so a chain uses the address encodings
+  of Mainnet, Testnet or Regtest.
+- The Mainnet and Testnet activation heights are constants of the specs. A test compares
+  them with the `zcash_protocol` of the backend. The compiler decodes the embedded checkpoint
+  lists, and the first halving height is a private field that `ChainSpec::network()` derives.
+  Thus a lookup costs what the old `match` cost. The validate benchmark shows no change
+  above the noise of the machine.
+- Lesson: the Mainnet and Testnet tables hold one address for a stream that repeats it (ZIP
+  214 `[a] * n`). A Regtest configuration needs one address for each period, as in Zakura.
+  Thus the check of a spec accepts one address for many periods, and the check of a Regtest
+  configuration does not. The strict check needs the network that `ChainSpec::network()`
+  makes, so it runs after the lenient check. When two streams have too few addresses, the
+  `StreamAddresses` error can now name another stream than before.
+
+## 2026-10-07 — Pure consensus core (hayai-szv, M12 stage 1)
+
+- Decision: the consensus rules of hayai-consensus move to the new crate
+  `hayai-consensus-core`. The crate stays in the Rust subset that Charon and Aeneas
+  translate to Lean:
+  - index loops, no iterator chain, no `HashMap`, no `as` cast, no panic;
+  - checked arithmetic on each amount and each height, with the `MAX_MONEY` bound.
+
+  Reason: the owner wants a Lean specification of the rules, with bridge proofs that this
+  crate satisfies it (`~/prog/zcash/hayai-formal-verification.md`). hayai-consensus is the
+  adapter: the networks, the address decoding, the checkpoints and the upstream types.
+- `CoreSpec` is plain data with scripts, not addresses. The three built-in specs hold it as
+  constant data. A `const fn` Base58 decoder gives the scripts at compile time, and a test
+  compares each script with the upstream decoder. A custom chain gets its core from
+  `ChainSpec::network()`, which decodes the addresses at run time.
+- The core returns an error for every value that `CoreSpec::checked` refuses
+  (`UncheckedSpec`, `DivisionByZero`), never a panic. The adapter maps such an error to
+  `unreachable!` in the wrappers whose result cannot fail on a checked spec. One
+  `ConsensusError` enum serves both crates. Only the adapter builds `UnsupportedUpgrade` and
+  `NoRuleSet`: the core has a rule set for every upgrade, and the backend decides which
+  branch ids it knows.
+- Each path selects the rule set of a height one time. The adapter selects it with
+  `rules_at`, which also refuses an upgrade without a backend branch id. It passes the rule
+  set to the rules of the core: `expected_bits`, `check_contextual`, `CoinbaseTerms::at` and
+  `CoinbaseTerms::after` take `rules: &RuleSet`. A core function that selected the rule set
+  again would double that cost on the per-header path.
+- The 256-bit arithmetic of §7.7 is `Uint256`: 4 limbs, with the operations of the rule
+  only. The work of a block is a restoring division that starts below the bit length of the
+  divisor: 57 steps for a Mainnet target. hayai-consensus tests it against
+  `primitive_types::U256` on 2,000 random values and 20,000 random compact forms.
+- Behaviour that changed, on inputs that no valid chain reaches:
+  - `miner_fee_share`, `reissuance_bonus`, `CoinbaseTerms::miner_fees` before NU7,
+    `deferred_pool_after` and `funding_streams` refuse an amount above `MAX_MONEY`. Before,
+    the arithmetic wrapped or the value passed.
+  - A slow start of 1 block or a halving interval of 0 is an error of the schedule, not a
+    wrap.
+  - `ChainSpec::network()` runs its checks in another order. A spec with two faults can
+    report another error than before.
+  - `CoinbaseTerms::check` matches the required outputs in output order. When two
+    unmatched outputs share a script or a value, the `found` detail of `WrongAmount` or
+    `WrongScript` can name another output than before.
+  - The header rules refuse an upgrade without a backend branch id (NU7 on the upstream
+    backend) before the version, target, time and `nBits` rules. Before, that refusal came
+    after the time rules and before the `nBits` rule.
+- Lesson: the compact form of a target keeps its top 3 bytes. A chain whose blocks state
+  the compact limit gets one unit below the limit as its expected `nBits` on an on-target
+  window. A test that expects the limit there is wrong, not the rule.
+- Lesson: the funding stream tables exist two times: with addresses for the configuration
+  and the RPC, and with scripts for the core. A const fn cannot build a slice of scripts
+  whose length varies by stream, so a test compares the two tables field by field.
+
+## 2026-10-07 — hayai-mempool out of hayai-prepared (hayai-0sm)
+
+- Decision: `PreparedStore`, `MempoolPolicy` and the admission order go to the new crate
+  `hayai-mempool`. `hayai-prepared` keeps the preparation only. Reason: the store pulled
+  hayai-template into hayai-prepared, and thus into hayai-state and hayai-validate.
+- `PreparedTx::candidate` is removed. The store makes the candidate with
+  `Candidate::from_raw` from the facts of the `PreparedTx`. Thus the preparation needs no ZIP
+  317 type, and no ZIP 317 code moves.
+- hayai-validate reads the known transactions through the trait `PreparedLookup` of
+  hayai-prepared, as a generic parameter. The lookup of each transaction is a static call.
+  hayai-validate and hayai-state do not depend on hayai-mempool.
+- The first version made the whole validation body generic, so each caller crate compiled
+  its own copy of the body. Now only the lookup loop is generic. The body is not generic and
+  takes the loop as one `dyn` call for each block. The wall time of the first version read
+  5 % slower in 3 runs on a machine with a load average above 8, which is not a valid
+  measurement; the counter A/B of the final version shows equal instructions and cycles.
+- Lesson: wall time on a loaded machine is noise. The decision measure of a refactor is the
+  instruction and cycle count of an interleaved A/B of the old and the new binary.
+- The split of the admission: `hayai_mempool::Mempool` holds the order of the checks, the
+  insert on the tip of the checks, the retries after a tip change and the readmission after
+  a reorg. hayaid keeps the peer score, the gauges, the private transactions and the
+  transaction sink of the relay. A node with another relay reuses the crate as it is.
+- The Regtest spend builder of the node tests moves from hayaid to `hayai_fixtures::regtest`,
+  so the admission tests move with the admission.

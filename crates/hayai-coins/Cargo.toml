@@ -8,13 +8,16 @@ repository.workspace = true
 description = "Outpoint-keyed coins and nullifier stores with an in-memory cache and batched flush"
 
 [features]
-default = ["upstream"]
+default = ["upstream", "rocksdb"]
 upstream = ["hayai-crypto/upstream"]
 zakura = ["hayai-crypto/zakura"]
+# The feature turns on the RocksDB backing (`RocksBacking`, `Config`). A crate that uses only
+# the types, the cache or `MemBacking` does not turn it on and does not build RocksDB.
+rocksdb = ["dep:rocksdb"]
 
 [dependencies]
 hayai-crypto.workspace = true
-rocksdb.workspace = true
+rocksdb = { workspace = true, optional = true }
 ahash.workspace = true
 crc32c.workspace = true
 hashbrown.workspace = true
@@ -27,3 +30,7 @@ thiserror.workspace = true
 proptest.workspace = true
 rand.workspace = true
 tempfile.workspace = true
+
+[[test]]
+name = "store"
+required-features = ["rocksdb"]

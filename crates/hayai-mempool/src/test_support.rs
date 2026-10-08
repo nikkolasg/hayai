@@ -13,7 +13,7 @@ use zcash_protocol::value::Zatoshis;
 use zcash_transparent::address::Script;
 use zcash_transparent::bundle::{Authorized as TAuthorized, Bundle, TxIn, TxOut};
 
-use crate::{Commitments, PreparedTx, RuleEpoch};
+use hayai_prepared::{Commitments, PreparedTx, RuleEpoch};
 
 pub const BRANCH: BranchId = BranchId::Nu6_2;
 

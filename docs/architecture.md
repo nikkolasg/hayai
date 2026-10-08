@@ -74,20 +74,23 @@ The block spacing decreases to 25 s at NU7. Then 1 s of M1 or M2 delay costs ~4 
 ```
 hayai-crypto      the cryptography backend behind one set of names (upstream or zakura)
 hayai-wire        retained-bytes block and transaction model, txids, merkle roots
-hayai-consensus   network parameters and one rule set per network upgrade
+hayai-consensus-core  the consensus rules as pure functions in the Rust subset of Aeneas
+hayai-consensus   the networks and the adapter around the core (addresses, checkpoints, upstream types)
 hayai-sinsemilla  MerkleCRH^Orchard: position-weighted tables, batch-affine lanes
 hayai-trees       note-commitment frontiers with batched append (Sapling, Orchard, Ironwood)
 hayai-coins       outpoint-keyed coins and nullifier stores with an in-memory cache
-hayai-prepared    prepared-transaction store (context-free verification, once)
+hayai-prepared    transaction preparation (context-free verification, once)
 hayai-state       layered chain state and contextual validation
 hayai-validate    bulk block validation pipeline producing a layer
 hayai-relay       compact block relay protocol (docs/protocol-compact-relay.md)
 hayai-template    live block template (docs/protocol-template-push.md)
+hayai-mempool     prepared-transaction store, mempool policy, admission order
 hayai-blockstore  flat append-only block files with a height index
 hayai-index       wallet index: transactions by id, transparent addresses, note commitment subtrees
 hayai-sync        header chain with forks, block download scheduler, peer misbehaviour score
 hayai-net         legacy Zcash P2P codec and handshake, compact-relay negotiation, both-paths relay, address book, peer manager
 hayai-rpc         getblocktemplate/submitblock shim over the live template
+hayai-fixtures    deterministic synthetic blocks with real signatures and proofs, for tests
 hayai-bench       benchmarks against zakura-* crates and Zakura's data layouts
 ```
 
@@ -124,7 +127,7 @@ directly. `hayai_crypto::BACKEND_SUFFIX` (`""` or `"-zk"`) tags the benchmark id
  peers ──▶ hayai-net (legacy `tx`/`block` or compact-relay frames inside `zcmpct`)
                  │ one TxSink / one IncomingBlock path, header check, forward on both paths
                  ▼
- tx gossip ──▶ hayai-prepared::prepare(bytes, &dyn CoinsView)
+ tx gossip ──▶ hayai-mempool::Mempool::admit → hayai-prepared::prepare(bytes, &dyn CoinsView)
                  │ parse once (hayai-wire), spent coins, sighashes, scripts,
                  │ shielded batches, fee, sigops → Arc<PreparedTx> keyed by wtxid
                  ▼
@@ -149,7 +152,7 @@ directly. `hayai_crypto::BACKEND_SUFFIX` (`""` or `"-zk"`) tags the benchmark id
           └──▶ hayai-validate::verify(verification), concurrently:
                  scripts (flat array) | shielded batch (one task per group, bisect on failure)
                  ├── ok   → Chain::confirm(id): commit = index push + Arc push, oldest first
-                 │          → hayai-template on_confirm; hayai-prepared remove_mined
+                 │          → hayai-template on_confirm; hayai-mempool remove_mined
                  └── fail → Chain::reject(id): the layer and its speculative descendants go
                             → hayai-template on_revert: TemplateRevert on the parent
 
@@ -273,51 +276,165 @@ uses this crate.
   hash is over the exact serialized bytes. `check_equihash(header, params)` verifies with the
   upstream `equihash` crate and the parameters that the caller takes from the network.
 
+## hayai-consensus-core
+
+- The consensus rules as pure functions, in the Rust subset that Charon and Aeneas
+  translate to Lean. The crate has no IO, no clock, no threads, no locks, no `Arc`, no
+  `dyn`, no global state, no crypto, no parsing and no upstream type. It builds with
+  `#![no_std]` and `alloc`, and depends on `thiserror` only.
+- `CoreSpec` is the plain data that the rules read:
+  - the activation heights at `Upgrade::index`;
+  - the slow start and the halving interval;
+  - the proof-of-work limit, its compact form and `disable_pow`;
+  - the heights of the rules that only some networks have;
+  - the funding stream sets with their recipients as scripts (`P2shScript`, 23 bytes);
+  - the lockbox disbursements, the founders' scripts and the NSM seed;
+  - the test reissuance height and the first halving.
+
+  `CoreSpec::checked` derives the first halving. It refuses each value that a rule would
+  later meet as an error (`SpecError`, one variant for each check).
+- One module for each section of the protocol specification or ZIP:
+  - `spec` (§5.3, ZIP 200): `Upgrade`, `upgrade_at`, `next_upgrade`, `orchard_disabled`;
+  - `rules`: the `RuleSet` table with the branch id as `u32` and the script flags as bits,
+    and `rules_at`;
+  - `limits`: `BlockLimits`;
+  - `subsidy` (§7.8): `halving`, `scheduled_subsidy`, `scheduled_issuance`,
+    `halving_height`, `block_subsidy`;
+  - `funding` (§7.10, ZIP 207, ZIP 214, ZIP 1015): `funding_streams`, `address_period`,
+    `nu7_adjusted_end`, `check_sets`, `check_script_counts`;
+  - `lockbox` (ZIP 2001, ZIP 271): `disbursements`, `deferred_pool_after`;
+  - `founders` (§7.9): `founders_reward`;
+  - `nsm` (ZIP 235, ZIP 237): `miner_fee_share`, `balance`, `check_balance`,
+    `reissuance_height`, `reissuance_bonus`;
+  - `difficulty` (§7.7): `Uint256`, `target_from_compact`, `block_work`, `median_time`,
+    `expected_bits`;
+  - `header` (§7.6): `check_contextual`, `check_version`, `check_target`,
+    `check_local_time`;
+  - `coinbase_value` (§7.1.2, §7.10, ZIP 236): `CoinbaseTerms::at`, `CoinbaseTerms::after`,
+    `CoinbaseTerms::check`.
+
+  The module paths are stable: Charon runs with `--start-from` at module paths, and the
+  Lean specification uses these names.
+- The rules of one block take the rule set of its height as a parameter. The caller selects
+  it one time with `rules_at` and passes it to `expected_bits`, `check_contextual`,
+  `CoinbaseTerms::at` and `CoinbaseTerms::after`. The adapter refuses an upgrade without a
+  backend branch id at that selection.
+- The subset: index loops (`for i in 0..n`, `while`), no iterator adapter chain, no closure
+  that captures `&mut`, no `HashMap`, no `as` cast. No `unwrap`, `expect`, `panic!`,
+  `assert!` or `unreachable!`. No `return` out of an outer loop from an inner loop: a flag
+  or a helper function per inner loop. Every operation on an amount or a height is checked
+  (`checked_add` and the like, then the `MAX_MONEY` bound on amounts). Each failure is an
+  error variant: `ConsensusError::{MoneyOverflow, Overflow, DivisionByZero, UncheckedSpec}`
+  beside the rule errors. A value that `CoreSpec::checked` refuses still gives an error in
+  a rule, never a panic. The test `tests/subset.rs` greps `src/` for the tokens outside the
+  subset. It names the file and the line of each one, and it stops at the
+  `#[cfg(test)] mod tests` module of a file.
+- `Uint256` (`[u64; 4]`, little-endian limbs) is the 256-bit arithmetic of §7.7.3 to
+  §7.7.5, with these operations only:
+  - the compact form, in both directions;
+  - the comparison, the sum and the difference;
+  - the product and the division by a 64-bit integer;
+  - the restoring division of `2^256 - 1`, for the work of a block.
+
+  hayai-consensus compares it with `primitive_types::U256` and with the compact codec of
+  hayai-wire on random and edge inputs.
+- One accepted duplicate: the compact target codec exists in hayai-wire (`expand_target`,
+  `compact_from_target`, `check_target`) and in the core (`Uint256::from_compact`,
+  `Uint256::to_compact`, `header::check_target`). hayai-wire parses headers below the core
+  and cannot depend on it. The random test `the_core_arithmetic_matches_u256` of
+  hayai-consensus ties the two codecs together.
+- The adapter and the shell call the core; no other rule is duplicated outside it. Stage 2
+  of the core (item M2) moves the contextual block rules of hayai-state into it, with the
+  entry point `check_context(spec, ctx, txs) -> Result<Delta, RuleError>`.
+
 ## hayai-consensus
 
-- `Network { Mainnet, Testnet, Regtest }` and `NetworkParams` (`Network::params()`): genesis
-  hash and time, Equihash parameters (`hayai_wire::PowParams`), proof-of-work limit (256-bit
-  value and compact form), slow start interval, halving interval. The message start (magic)
-  stays in hayai-net.
+- `Network { Mainnet, Testnet, Regtest, Custom(CheckedSpec) }`. A `ChainSpec` holds
+  every value of a network that the rules read: the name, the `zcash_protocol` network type
+  (address encodings, Regtest-only behaviour), `NetworkParams`, the activation height of
+  each upgrade, the checkpoints, the mandatory checkpoint height, the funding streams, the
+  lockbox disbursements, the founders' addresses and the NSM seed. `Network::spec()` gives
+  the spec of a network: a `static` for Mainnet, Testnet and Regtest, the leaked spec of
+  `Custom`. A `CheckedSpec` is a reference that only `ChainSpec::network()` makes; two
+  values are equal when they are the same spec in memory. Each function of the crate reads
+  the spec, so no function matches on the network. `Network::core()` gives the `CoreSpec`
+  of the network (section hayai-consensus-core): the values of the spec that the rules
+  read, with each address decoded to its script. The three built-in specs hold it as
+  constant data (the compiler decodes the addresses; `address.rs`), and
+  `ChainSpec::network()` builds it one time for a custom chain. The message start (magic)
+  and the ports stay in hayai-net and hayaid.
+- `NetworkParams` (`Network::params()`): genesis hash and time, Equihash parameters
+  (`hayai_wire::PowParams`), proof-of-work limit (256-bit value and compact form), slow start
+  interval, halving interval, and the rules that only some networks have (`disable_pow`,
+  `min_difficulty_start_height`, `max_time_start_height`, `orchard_disabled_start_height`,
+  `coinbase_must_be_shielded`).
 - Constants: `COINBASE_MATURITY` (100), `FINALITY_DEPTH` (1,000 blocks),
   `TX_EXPIRY_HEIGHT_THRESHOLD`, `LOCKTIME_THRESHOLD`, target spacing before and after Blossom
-  (150 s, 75 s), `MEDIAN_TIME_SPAN` (11), `DIFFICULTY_CONTEXT_BLOCKS` (28).
+  and from NU7 (150 s, 75 s, 25 s), `MEDIAN_TIME_SPAN` (11), `DIFFICULTY_CONTEXT_BLOCKS`
+  (113). All but `FINALITY_DEPTH` are re-exports of the core; a test compares
+  `COINBASE_MATURITY` and `MAX_MONEY` with the upstream constants.
 - `Checkpoints` and `Network::checkpoints()`: the checkpoint list of a network, with
   `hash_at(height)`, `last_height()` and `last_at_or_below(height)`. The Mainnet and Testnet
   lists are Zakura's files (`src/checkpoints/*.txt`; source and revision in
   `docs/consensus.md`, section Checkpoints). `build.rs` converts each file to 36 bytes
-  for each checkpoint (880 kB in the binary for both lists). The first use of a list decodes
-  it. `Checkpoints::new` makes a list for a chain of generated blocks.
-  `Network::mandatory_checkpoint_height()` is the last height before Canopy.
-- `Upgrade` names every network upgrade from `Sprout` to `Nu7`.
-  `Network::activation_height(upgrade)` reads Mainnet and Testnet heights from the
-  `zcash_protocol` of the backend (`MAIN_NETWORK`, `TEST_NETWORK`), except the NU7 height.
-  Regtest activates Overwinter to NU5 at height 1.
-- `Network::ConfiguredRegtest(&RegtestConfig)` is Regtest with its own activation heights for
-  NU6 to NU6.3, its own checkpoint list and its own mandatory checkpoint height (`[regtest]` of
-  hayaid). Every other value is the value of Regtest, and `Network::is_regtest()` is true for
-  both. `Network::upgrade_at(height)` and `Network::next_upgrade(height)` derive from it.
-- `RuleSet` holds the rules of one upgrade: branch id, allowed transaction versions
-  (`TxVersions`), script flags, shielded pools (`ShieldedPools`), block limits
-  (`BlockLimits`), history tree version (`HistoryVersion`), coinbase rules (`CoinbaseRules`)
-  and the difficulty parameters (`DifficultyParams`). The rule sets are one table. A new
-  upgrade is one more entry.
+  for each checkpoint, and the compiler decodes each list into a static array (880 kB in the
+  binary for both lists). `Checkpoints::new` makes a list for a chain of generated blocks
+  or for a `ChainSpec`. `Network::mandatory_checkpoint_height()` is the last height before
+  Canopy on the built-in networks.
+- `Upgrade` (of the core) names every network upgrade from `Sprout` to `Nu7`, with the ZIP
+  200 branch id as `u32` (`Upgrade::branch_id`). `branch_id(upgrade)` gives the upstream
+  `BranchId` when the backend knows the upgrade. The rules of an upgrade are code, so a new
+  upgrade is a code change. `Network::activation_height(upgrade)` reads the spec. The
+  Mainnet and Testnet heights are the heights of the `zcash_protocol` of each backend
+  (`MAIN_NETWORK`, `TEST_NETWORK`; a test compares them), and the NU7 height is the same on
+  each backend. Regtest activates Overwinter to NU5 at height 1.
+- A crate defines another chain as data: it clones a built-in spec, changes the public
+  fields, and `ChainSpec::network()` checks the spec and gives a `Network::Custom`. The spec
+  has one private field, the `CoreSpec`, which `ChainSpec::network()` derives: it decodes
+  the addresses (`ChainSpecError::Address`), checks the Mainnet NU7 height (no ZIP 2008
+  code) and the checkpoints (the genesis checkpoint and its coverage), and runs
+  `CoreSpec::checked` for the values that the rules read: activation heights out of order,
+  a halving interval with an address period of 0 blocks, a slow start of 1 block or past
+  the first halving, funding streams without a first halving, the checks of a Regtest
+  configuration on the streams and the disbursements, the Orchard soft fork outside NU6.1,
+  and too few stream addresses (`SpecError`, mapped to `ChainSpecError`). The spec stays in
+  memory until the process ends. hayai passes no `zcash_protocol::consensus::Parameters` value to an
+  upstream crate: the branch id comes from `rules_at`, and the address encodings come from
+  the network type of the spec.
+- `RegtestConfig` makes the spec of a Regtest network with its own activation heights for
+  NU6 to NU7, its own checkpoint list, its own mandatory checkpoint height, its own funding
+  streams and its own lockbox disbursements (`[regtest]` of hayaid). Every other value is
+  the value of Regtest, and `Network::is_regtest()` is true for both: it reads the network
+  type. `Network::upgrade_at(height)` and `Network::next_upgrade(height)` derive from the
+  activation heights.
+- `RuleSet` holds the rules of one upgrade: the upstream branch id, allowed transaction
+  versions (`TxVersions`), the upstream script flags, shielded pools (`ShieldedPools`), block
+  limits (`BlockLimits`), history tree version (`HistoryVersion`), coinbase rules
+  (`CoinbaseRules`) and the difficulty parameters (`DifficultyParams`). The rule sets are the
+  table of the core (`hayai_consensus_core::rules::RULE_SETS`), mapped one time to the types
+  of the backend in a `LazyLock`. A new upgrade is one more entry of the core table.
 - `rules_at(network, height) -> Result<&'static RuleSet, ConsensusError>` is the one
   interface that selects a rule set. When the upgrade that is active at `height` has no rule
   set, it returns `ConsensusError::UnsupportedUpgrade { upgrade, height }`. It never returns
   the rule set of an earlier upgrade for such a height.
 - `difficulty::expected_bits(network, time, &ParentChain) -> Result<u32, DifficultyError>`
   is the `nBits` that a block must have (specification §7.7.3 and the Testnet
-  minimum-difficulty rule). `ParentChain { height, times, bits }` is the context: the times
-  of the 28 blocks before the header and the `bits` of the 17 blocks before it, newest
-  first. `difficulty::block_work(bits)` is the work of a block.
+  minimum-difficulty rule), a wrapper of the core. `ParentChain { height, times, bits }` is
+  the context: the times of the 28 blocks before the header and the `bits` of the 17 blocks
+  before it, newest first (113 and 102 from NU7). `difficulty::block_work(bits)` is the
+  work of a block as the `U256` of the history tree, and `target_from_compact` and
+  `compact_from_u256` convert between the `Uint256` of the core and `U256`.
 - `header::check_header(network, header, &ParentChain, now)` holds every header rule. Its
-  parts are `check_contextual`, `check_local_time` and `check_proof_of_work`. `check_version`
-  is the version rule, for a caller that has no context (the header chain). The result
+  parts are `check_contextual` (the core rules on `HeaderFields { version, time, bits }`),
+  `check_local_time` and `check_proof_of_work` (the solution length, the hash and the
+  Equihash solution: the adapter, because they read the hash). `check_version` is the version
+  rule, for a caller that has no context (the header chain). The result
   `HeaderVerdict::ContextTooShort` names the rules that did not run because the context
-  holds fewer blocks than they read (section Header rule paths). `NetworkParams`
-  holds the values that the rules read: `disable_pow` (Regtest), `min_difficulty_start_height`
-  (Testnet 299,188), `max_time_start_height` (Mainnet 2, Testnet 653,606, Regtest 2).
+  holds fewer blocks than they read (section Header rule paths). The `HeaderError` of the
+  core maps to `HeaderRuleError`: the target errors become `HeaderRuleError::Pow`.
+  `NetworkParams` holds the values that the rules read: `disable_pow` (Regtest),
+  `min_difficulty_start_height` (Testnet 299,188), `max_time_start_height` (Mainnet 2,
+  Testnet 653,606, Regtest 2).
 - NU7 has a rule set when the crypto backend has the NU7 branch id
   (`hayai_crypto::nu7_branch()`, the only `cfg` for it). The `zakura` backend has it. The
   upstream backend does not have it: `zcash_protocol` `BranchId` has no NU7 value outside
@@ -335,18 +452,27 @@ uses this crate.
   function of the height and of the total of the chain value pools, so the state stores no
   value for it.
 - `subsidy::block_subsidy(network, height)` is the block subsidy schedule of the 3 networks.
-  `founders`, `funding` and `lockbox` hold the founders' reward, the funding streams and the
-  lockbox disbursement. `coinbase::CoinbaseTerms::at(network, height)` collects what the
-  coinbase of a height must pay. `check` applies the output rules and the value rule (ZIP 236
-  from NU6). `deferred_pool_after` gives the deferred pool after the block. hayai-state calls
-  them in the contextual check, and hayai-template builds its coinbase from the same terms
-  (`CoinbaseSpec { network, .. }`).
+  `founders`, `funding` and `lockbox` hold the address tables of Mainnet and Testnet with
+  their compile-time scripts, and the wrappers of the founders' reward, the funding streams
+  and the lockbox disbursement. `coinbase::terms_at(network, height)` and
+  `coinbase::terms_after(network, height, issued)` collect what the coinbase of a height
+  must pay (`CoinbaseTerms` of the core, with `miner_subsidy` as a field). `check` applies
+  the output rules and the value rule (ZIP 236 from NU6). `deferred_pool_after` gives the
+  deferred pool after the block. hayai-state calls them in the contextual check, and
+  hayai-template builds its coinbase from the same terms (`CoinbaseSpec { network, .. }`).
+  A required output has a `P2shScript`; `address_of(network, &script)` gives the address
+  for an RPC answer. The wrappers that take a `Network` add one check to the core: the
+  upgrade of the height has a rule set in this build (`rules_at`). A wrapper whose result
+  cannot fail on a checked spec (`subsidy::halving`, `nsm::reissuance_height`,
+  `founders::founders_reward`, `Network::upgrade_at`) maps the error of the core to
+  `unreachable!`.
 - `rules_at` also selects a rule set that depends on the height inside one upgrade. From the
   Orchard soft fork (Mainnet 3,363,426, Testnet 4,048,500) until the NU6.2 activation, it gives
   the NU6.1 rule set with the Orchard pool off. hayai-prepared takes the rule set from the
   branch id, so the contextual check of hayai-state applies the pools of the rule set of the
   height.
-- Users: hayai-prepared (`RuleEpoch::of(&RuleSet)`, expiry threshold), hayai-state
+- Users: hayai-prepared (`RuleEpoch::of(&RuleSet)`, expiry threshold), hayai-mempool (the
+  rule set of the next block), hayai-state
   (`CheckConfig { network, rules }`, history tree version, `LAYER_WINDOW`), hayai-validate
   (`ValidateConfig { network, rules, keys, header }`), hayaid (`params.rs` is a thin
   wrapper).
@@ -429,6 +555,10 @@ a pass:
 - `NullifierStore`: per-pool sets with `contains_many` by `multi_get` and batched insert. A
   query gets the answer from the pending set, then from the generation in flight, then from
   the backing.
+- The RocksDB backing (`RocksBacking`, `Config`) is behind the cargo feature `rocksdb`. The
+  feature is in the default features of `hayai-coins`, but the workspace edges set
+  `default-features = false`. Only `hayaid` and `hayai-bench` turn it on. The other crates use the
+  types, the cache and `MemBacking`, and do not build the RocksDB C++ library.
 - `CoinsBacking` is the trait of the backing store. Its RocksDB implementation has the `coins`,
   `nf_*` and `meta` column families, no compression, Ribbon filters, pinned filter and index
   blocks, and a block cache sized from configuration. The default block cache is 256 MiB: it
@@ -507,19 +637,15 @@ a pass:
   through `ShieldedBatcher`: block-scoped or mempool-scoped batches over the upstream
   `orchard::bundle::BatchValidator` and `sapling_crypto::bundle::BatchValidator`. The batcher
   bisects a failing batch until it isolates the failing items.
-- `PreparedStore`: a concurrent map `WtxId → Arc<PreparedTx>` plus the index
-  `OutPoint → WtxId` of spent outpoints (conflict detection) and a feerate-ordered view for the
-  template. Each entry holds its ZIP 317 values (conventional fee, unpaid actions, weight
-  ratio) and its ZIP 401 values (cost, eviction weight), computed once at insert.
-- The store evicts by ZIP 401: a cost limit, a weighted random selection with an injected
-  random number generator, and a list of recently evicted txids. `remove_expired(next_height)`
-  removes the transactions that the next block cannot contain (ZIP 203). The store removes
-  entries whose epoch differs from the current one. Each removal emits `SetEvent::Removed`.
-- `MempoolPolicy::admit(&PreparedTx, &PolicyContext) -> Result<(), PolicyReject>` applies
-  the relay rules to a valid transaction: ZIP 317 unpaid actions, the minimum relay fee,
-  zcashd standardness, expiry, lock time and coinbase maturity at the next block
-  (`docs/mempool-policy.md`). `PolicyContext` holds the next block height, the
-  median-time-past and the rule set of the next block.
+- `PreparedLookup` gives a prepared transaction by `WtxId`. hayai-validate reads the known
+  transactions of a block through it, as a generic parameter: the lookup of each
+  transaction is a static call, and hayai-validate does not depend on the mempool.
+  `hayai_mempool::PreparedStore` implements it. Only the lookup loop of hayai-validate is
+  generic. The validation body is not generic and gets the loop as one `dyn` call for each
+  block, so hayai-validate compiles the body once.
+- The crate does not depend on hayai-template or on the mempool. A template candidate is
+  `hayai_template::Candidate::from_raw(&tx.raw, tx.fee, tx.sigops, ..)`: the mempool makes it
+  from the facts of the `PreparedTx`.
 - Modules: `shielded.rs` holds the batch, `orchard.rs` and `sapling.rs` hold the keys and the
   batch verification of each pool.
 - `VerifyingKeys`: one Orchard verifying key per circuit version and one Sapling key pair.
@@ -749,6 +875,30 @@ the event removes and the dependencies that the event releases. `on_confirm` rel
 `on_revert` restores the parent tip with them and emits `TemplateUpdate::Reverted` (message
 `TemplateRevert`). `TemplateConfig::pow` sets the header length in the byte budget and the
 solution length of a submission.
+
+## hayai-mempool
+
+- `PreparedStore`: a concurrent map `WtxId → Arc<PreparedTx>` plus the index
+  `OutPoint → WtxId` of spent outpoints (conflict detection) and a feerate-ordered view for the
+  template. Each entry holds its ZIP 317 values (conventional fee, unpaid actions, weight
+  ratio) and its ZIP 401 values (cost, eviction weight), computed once at insert.
+- The store evicts by ZIP 401: a cost limit, a weighted random selection with an injected
+  random number generator, and a list of recently evicted txids. `remove_expired(next_height)`
+  removes the transactions that the next block cannot contain (ZIP 203). The store removes
+  entries whose epoch differs from the current one. Each removal emits `SetEvent::Removed`.
+- `MempoolPolicy::admit(&PreparedTx, &PolicyContext) -> Result<(), PolicyReject>` applies
+  the relay rules to a valid transaction: ZIP 317 unpaid actions, the minimum relay fee,
+  zcashd standardness, expiry, lock time and coinbase maturity at the next block
+  (`docs/mempool-policy.md`). `PolicyContext` holds the next block height, the
+  median-time-past and the rule set of the next block.
+- `Mempool` holds the store, the chain view of the committed tip, the network and the
+  verifying keys. `admit` applies the admission order of `docs/mempool-policy.md`. The
+  driver of a node takes `tip_change()` while it writes the view and cleans the store. An
+  admission inserts only on the tip of its checks, else it runs again (3 times at most).
+  `readmit` admits the transactions again after a reorg, with a bound of 2 blocks of bytes.
+- The node keeps what only it does (`crates/hayaid/src/mempool.rs`): the peer score of an
+  invalid transaction, the gauges of the store, the private transactions and the
+  transaction sink of the relay. Another node can reuse `Mempool` with its own relay.
 
 ## hayai-blockstore
 
@@ -1100,9 +1250,12 @@ of a node without the index.
 
 ## hayai-bench
 
-- Fixtures: deterministic synthetic blocks (transparent-heavy, Orchard-heavy, mixed). The
-  fixtures come from upstream builders and carry real signatures and proofs. The cache is under
-  `bench-fixtures/`.
+- Fixtures: deterministic synthetic blocks (transparent-heavy, Orchard-heavy, mixed) from the
+  crate `hayai-fixtures`. The fixtures come from upstream builders and carry real signatures
+  and proofs. The cache is under `bench-fixtures/`. `hayai-fixtures` depends only on
+  `hayai-crypto`, `hayai-wire` and `hayai-consensus`, so `hayai-fuzz` uses the fixtures
+  without the benchmark code. The chain fixture (`hayai_bench::chain_fixture`) stays in
+  `hayai-bench`: it uses the RocksDB coins store and the block shapes of the benchmark models.
 - Baselines: `zakura-chain` (block parsing, `parallel::batch_frontier`, Orchard tree),
   `zakura-orchard` (weighted Sinsemilla, batch validator), and faithful ports of Zakura's data
   layouts where its code is not usable as a library (RocksDB UTXO schema with 2 gets per

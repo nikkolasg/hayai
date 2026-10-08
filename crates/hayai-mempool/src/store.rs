@@ -47,8 +47,9 @@ use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use zcash_primitives::transaction::TxId;
 
+use hayai_prepared::{PreparedLookup, PreparedTx, RuleEpoch};
+
 use crate::policy::is_relayable;
-use crate::{PreparedTx, RuleEpoch};
 
 /// ZIP 401 `mempooltxcostlimit`: the default limit of the total cost of the store.
 pub const MEMPOOL_TX_COST_LIMIT: usize = 80_000_000;
@@ -355,7 +356,8 @@ impl PreparedStore {
                 });
             }
         }
-        let candidate = tx.candidate(self.parents(&tx), &self.params);
+        let candidate =
+            Candidate::from_raw(&tx.raw, tx.fee, tx.sigops, self.parents(&tx), &self.params);
         let cost = (tx.raw.bytes.len() as u64).max(MEMPOOL_COST_THRESHOLD);
         let low_fee = tx.fee < candidate.conventional_fee;
         let fees = EntryFees {
@@ -545,6 +547,12 @@ impl PreparedStore {
             self.remove_entry(&mut w, id, true);
         }
         stale
+    }
+}
+
+impl PreparedLookup for PreparedStore {
+    fn prepared(&self, id: &WtxId) -> Option<Arc<PreparedTx>> {
+        self.get(id)
     }
 }
 
@@ -986,6 +994,22 @@ mod tests {
         };
         assert_eq!(by, a.wtxid());
         assert_eq!(store.len(), 2);
+    }
+
+    /// Block validation reads the store through `PreparedLookup`: the stored transaction
+    /// itself, and nothing for a transaction that the store does not hold.
+    #[test]
+    fn the_prepared_lookup_serves_the_stored_transactions() {
+        let store = store(10, 0);
+        let (held, other) = (paying(1, CONVENTIONAL), paying(2, CONVENTIONAL));
+        store.insert(held.clone()).unwrap();
+        let Some(found) = PreparedLookup::prepared(&store, &held.wtxid()) else {
+            panic!("the stored transaction is found");
+        };
+        assert!(Arc::ptr_eq(&found, &held));
+        let None = PreparedLookup::prepared(&store, &other.wtxid()) else {
+            panic!("a transaction that the store does not hold is not found");
+        };
     }
 
     #[test]

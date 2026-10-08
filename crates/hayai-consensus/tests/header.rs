@@ -29,7 +29,7 @@ fn first_headers(network: Network) -> Vec<BlockHeader> {
     match network {
         Network::Mainnet => (0..=10).map(|h| bench_vector("main", h)).collect(),
         Network::Testnet => (0..=9).map(|h| bench_vector("test", h)).collect(),
-        Network::Regtest | Network::ConfiguredRegtest(_) => vec![vector_header(
+        Network::Regtest | Network::Custom(_) => vec![vector_header(
             "hayai-wire/tests/vectors/block-regtest-0-000-000.hex",
         )],
     }

@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{mixed_block, orchard_block, transparent_block};
 use hayai_coins::{CoinsView, OutPoint};
 use hayai_crypto::{zcash_primitives, zcash_protocol, zcash_transparent};
-use hayai_prepared::{prepare, InsertError, PrepareError, PreparedTx, ScopedBatch};
+use hayai_fixtures::{mixed_block, orchard_block, transparent_block};
+use hayai_mempool::InsertError;
+use hayai_prepared::{prepare, PrepareError, PreparedTx, ScopedBatch};
 use hayai_template::{CandidateSource, SetEvent};
 use hayai_wire::{RawTx, TxLookup, WtxId};
 use zcash_primitives::transaction::{Authorized, TransactionData, TxVersion};
@@ -50,7 +51,7 @@ fn every_fixture_transaction_prepares() {
             .into_u64();
         assert_eq!(
             coinbase_out,
-            hayai_bench::fixtures::coinbase_terms(fixture.height).miner_subsidy() + fees,
+            hayai_fixtures::coinbase_terms(fixture.height).miner_subsidy + fees,
             "{}: fees add up to what the coinbase claims",
             fixture.name
         );

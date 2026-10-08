@@ -13,7 +13,7 @@ use hayai_wire::RawBlock;
 
 use super::{Built, Impl};
 use crate::chain_fixture::{harness, Harness};
-use crate::fixtures::standard_set;
+use hayai_fixtures::standard_set;
 
 /// Zakura's shape of block verification, from the audit of its sources:
 ///

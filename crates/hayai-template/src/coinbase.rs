@@ -13,7 +13,6 @@
 use std::fmt;
 
 use bytes::Bytes;
-use hayai_consensus::coinbase::CoinbaseTerms;
 use hayai_consensus::{rules_at, ConsensusError, Network};
 use hayai_crypto::{
     zcash_primitives, zcash_protocol, zcash_script04 as zcash_script, zcash_transparent,
@@ -112,10 +111,10 @@ impl CoinbaseSpec {
     ) -> Result<CoinbaseTx, CoinbaseError> {
         let branch_id = rules_at(self.network, height)?.branch_id;
         let terms = match issued {
-            Some(issued) => CoinbaseTerms::after(self.network, height, issued)?,
-            None => CoinbaseTerms::at(self.network, height)?,
+            Some(issued) => hayai_consensus::coinbase::terms_after(self.network, height, issued)?,
+            None => hayai_consensus::coinbase::terms_at(self.network, height)?,
         };
-        let miner_fees = terms.miner_fees(fees_total);
+        let miner_fees = terms.miner_fees(fees_total)?;
         let miner_data = match self.miner_data.as_slice() {
             [] => None,
             data => Some(push_value(data).ok_or(CoinbaseError::MinerData(data.len()))?),
@@ -123,7 +122,7 @@ impl CoinbaseSpec {
         let input = TxIn::<CoinbaseAuth>::coinbase(BlockHeight::from_u32(height), miner_data)
             .map_err(CoinbaseError::Script)?;
         let miner_value = terms
-            .miner_subsidy()
+            .miner_subsidy
             .checked_add(miner_fees)
             .ok_or(CoinbaseError::Value(u64::MAX))?;
         let mut vout = vec![TxOut::new(
@@ -133,7 +132,7 @@ impl CoinbaseSpec {
         for output in terms.required {
             vout.push(TxOut::new(
                 zatoshis(output.value)?,
-                Script(Code(output.script)),
+                Script(Code(output.script.to_vec())),
             ));
         }
         let bundle = Bundle {
@@ -186,7 +185,9 @@ fn zatoshis(value: u64) -> Result<Zatoshis, CoinbaseError> {
 mod tests {
     use super::*;
     use crate::test_support::coinbase_spec;
-    use hayai_consensus::coinbase::{CoinbaseError as ConsensusCoinbaseError, ShieldedBalances};
+    use hayai_consensus::coinbase::{
+        CoinbaseError as ConsensusCoinbaseError, CoinbaseTerms, ShieldedBalances,
+    };
     use hayai_consensus::Upgrade;
     use hayai_crypto::zcash_primitives::transaction::Transaction;
 
@@ -288,12 +289,12 @@ mod tests {
     fn the_coinbase_of_the_consensus_rule_passes_the_coinbase_check() {
         for (network, height) in HEIGHTS {
             let spec = spec_on(network);
-            let terms = CoinbaseTerms::at(network, height).unwrap();
+            let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
             for fees in [0, 98_765] {
                 let cb = spec.build(height, fees).unwrap();
                 let outputs = outputs_of(&cb.bytes, cb.branch_id);
                 assert_eq!(outputs.len(), 1 + terms.required.len());
-                assert_eq!(outputs[0].0, terms.miner_subsidy() + fees);
+                assert_eq!(outputs[0].0, terms.miner_subsidy + fees);
                 assert_eq!(outputs[0].1, spec.script_pubkey);
                 assert_eq!(
                     check(&terms, &outputs, fees),
@@ -316,7 +317,7 @@ mod tests {
         let fees = 4_321;
         for (network, height) in HEIGHTS {
             let spec = spec_on(network);
-            let terms = CoinbaseTerms::at(network, height).unwrap();
+            let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
             let cb = spec.build(height, fees).unwrap();
             let outputs = outputs_of(&cb.bytes, cb.branch_id);
             let context = format!("{network:?} {height}");
@@ -398,9 +399,9 @@ mod tests {
             let spec = spec_on(network);
             let before = spec.build(nu7 - 1, fees).unwrap();
             assert_eq!(before.branch_id, BranchId::Nu6_3);
-            let terms = CoinbaseTerms::at(network, nu7 - 1).unwrap();
+            let terms = hayai_consensus::coinbase::terms_at(network, nu7 - 1).unwrap();
             let outputs = outputs_of(&before.bytes, before.branch_id);
-            assert_eq!(outputs[0].0, terms.miner_subsidy() + fees);
+            assert_eq!(outputs[0].0, terms.miner_subsidy + fees);
             assert_eq!(check(&terms, &outputs, fees), Ok(()));
             for height in [nu7, nu7 + 1] {
                 let Some(rules) = RuleSet::of(Upgrade::Nu7) else {
@@ -417,11 +418,11 @@ mod tests {
                 assert_eq!(cb.branch_id, rules.branch_id);
                 let tx = Transaction::read(cb.bytes.as_ref(), BranchId::Sprout).unwrap();
                 assert_eq!(tx.consensus_branch_id(), rules.branch_id);
-                let terms = CoinbaseTerms::at(network, height).unwrap();
+                let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
                 let outputs = outputs_of(&cb.bytes, cb.branch_id);
                 assert_eq!(outputs.len(), 1 + terms.required.len());
                 // 600 of the 1,001 zatoshis of fees stay out of the coinbase.
-                assert_eq!(outputs[0].0, terms.miner_subsidy() + 401);
+                assert_eq!(outputs[0].0, terms.miner_subsidy + 401);
                 assert_eq!(
                     check(&terms, &outputs, fees),
                     Ok(()),
@@ -477,11 +478,13 @@ mod tests {
             let outputs = outputs_of(&cb.bytes, cb.branch_id);
             assert_eq!(outputs.len(), 1, "Regtest has no funding stream");
             assert_eq!(outputs[0].0, 208_333_333 + bonus + 401, "{height}");
-            let terms = CoinbaseTerms::after(network, height, issued).unwrap();
+            let terms = hayai_consensus::coinbase::terms_after(network, height, issued).unwrap();
             assert_eq!(terms.subsidy.total, 208_333_333 + bonus);
             assert_eq!(check(&terms, &outputs, fees), Ok(()), "{height}");
             // The terms of other pools refuse the coinbase when the bonus differs.
-            let other = CoinbaseTerms::after(network, height, issued - 1_000_000_000).unwrap();
+            let other =
+                hayai_consensus::coinbase::terms_after(network, height, issued - 1_000_000_000)
+                    .unwrap();
             assert_eq!(
                 check(&other, &outputs, fees).is_ok(),
                 bonus == 0,
@@ -593,12 +596,12 @@ mod tests {
             let mut expected = vec![miner + fees];
             expected.extend(required);
             assert_eq!(values, expected, "{height}");
-            let terms = CoinbaseTerms::at(network, height).unwrap();
+            let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
             assert_eq!(check(&terms, &outputs, fees), Ok(()), "{height}");
         }
         // The deferred pool gets 2 times 75,000,000 zatoshis before the NU6.1 block and
         // pays the disbursement in it.
-        let terms = CoinbaseTerms::at(network, 13).unwrap();
+        let terms = hayai_consensus::coinbase::terms_at(network, 13).unwrap();
         assert_eq!(terms.deferred_pool_after(150_000_000), Ok(75_000_000));
 
         let none = spec_on(config().network());

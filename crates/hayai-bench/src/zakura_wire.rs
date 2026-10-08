@@ -39,7 +39,7 @@ pub fn auth_data_root(digests: &[AuthDigest]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures;
+    use hayai_fixtures as fixtures;
 
     /// hayai-wire must not depend on zakura crates, so the equality of its roots with
     /// Zakura's implementation is checked here.

@@ -238,7 +238,7 @@ the marginal fee of 400 zatoshis:
 | 60 | 23,020 | 0 | refused | accepted | accepted |
 
 hayaid mined each accepted transaction, and zakurad accepted the block. The test
-`the_policy_cases_of_the_regtest_pair_have_the_verdict_of_zakura` (hayai-prepared) has the
+`the_policy_cases_of_the_regtest_pair_have_the_verdict_of_zakura` (hayai-mempool) has the
 same cases.
 
 ## Z1: a Zakura node that stops loses its newest blocks

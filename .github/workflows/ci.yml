@@ -77,7 +77,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: bench-fixtures
-          key: fixtures-${{ hashFiles('crates/hayai-bench/src/fixtures.rs') }}
+          key: fixtures-${{ hashFiles('crates/hayai-fixtures/src/lib.rs') }}
       # The same package set and features as the clippy job.
       - run: cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release --locked --no-run
       # The quotes are necessary: a plain YAML value cannot end with a colon.

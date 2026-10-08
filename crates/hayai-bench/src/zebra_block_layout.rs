@@ -121,7 +121,7 @@ impl ZebraBlockDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures;
+    use hayai_fixtures as fixtures;
 
     #[test]
     fn served_block_equals_wire_bytes() {

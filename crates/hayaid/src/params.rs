@@ -4,7 +4,7 @@
 //! node needs: the wire network and the epoch of a height for the prepared store.
 
 use hayai_consensus::{rules_at, ConsensusError, RuleSet};
-use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_crypto::zcash_protocol::consensus::{BranchId, NetworkType};
 use hayai_net::Network;
 use hayai_prepared::RuleEpoch;
 use hayai_wire::header::{BlockHash, PowParams};
@@ -27,10 +27,10 @@ impl NetParams {
     }
 
     pub fn wire(&self) -> Network {
-        match self.kind {
-            NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => Network::Regtest,
-            NetworkKind::Testnet => Network::Testnet,
-            NetworkKind::Mainnet => Network::Mainnet,
+        match self.kind.network_type() {
+            NetworkType::Regtest => Network::Regtest,
+            NetworkType::Test => Network::Testnet,
+            NetworkType::Main => Network::Mainnet,
         }
     }
 
@@ -55,7 +55,7 @@ impl NetParams {
 
     /// The branch of the next upgrade after `height`, for the verifying key prebuild.
     pub fn next_branch(&self, height: u32) -> Option<BranchId> {
-        self.kind.next_upgrade(height)?.branch_id()
+        hayai_consensus::branch_id(self.kind.next_upgrade(height)?)
     }
 
     /// The hash and time of the genesis block, the start of a full node.
@@ -148,14 +148,20 @@ mod tests {
             .expect("the NU7 height of Testnet");
         assert_eq!(nu7, 4_465_026);
         assert_eq!(p.branch_at(nu7 - 1), Ok(BranchId::Nu6_3));
-        assert_eq!(p.next_branch(nu7 - 1), Upgrade::Nu7.branch_id());
+        assert_eq!(
+            p.next_branch(nu7 - 1),
+            hayai_consensus::branch_id(Upgrade::Nu7)
+        );
         for height in [nu7, nu7 + 1] {
             match RuleSet::of(Upgrade::Nu7) {
                 Some(rules) => {
                     assert_eq!(p.rules_at(height), Ok(rules));
                     assert_eq!(p.branch_at(height), Ok(rules.branch_id));
                     assert_eq!(p.epoch_at(height), Ok(RuleEpoch::of(rules)));
-                    assert_eq!(Some(rules.branch_id), Upgrade::Nu7.branch_id());
+                    assert_eq!(
+                        Some(rules.branch_id),
+                        hayai_consensus::branch_id(Upgrade::Nu7)
+                    );
                 }
                 None => {
                     let refused = ConsensusError::UnsupportedUpgrade {

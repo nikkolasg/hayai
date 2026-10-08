@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{orchard_block, transparent_block};
 use hayai_coins::{Coin, OutPoint};
 use hayai_crypto::{zcash_primitives, zcash_protocol, zcash_transparent};
-use hayai_prepared::{draft, PreparedStore, PreparedTx, RuleEpoch};
+use hayai_fixtures::{orchard_block, transparent_block};
+use hayai_mempool::PreparedStore;
+use hayai_prepared::{draft, PreparedTx, RuleEpoch};
 use hayai_template::Zip317Params;
 use hayai_wire::RawTx;
 use zcash_primitives::transaction::{Authorized, TransactionData, TxVersion};
@@ -184,7 +185,7 @@ fn eviction_never_strands_the_inserted_transaction() {
     let child = Arc::new(child_of(&h, &parent, parent_value / 2));
     // Room for the parent and the other transaction, not for a third (ZIP 401: each has
     // the cost 10,000).
-    let limit = 2 * hayai_prepared::MEMPOOL_COST_THRESHOLD as usize;
+    let limit = 2 * hayai_mempool::MEMPOOL_COST_THRESHOLD as usize;
     let store = PreparedStore::new(h.cfg.epoch(), limit, Zip317Params::ZAKURA);
     store.insert(parent.clone()).unwrap();
     store.insert(other.clone()).unwrap();

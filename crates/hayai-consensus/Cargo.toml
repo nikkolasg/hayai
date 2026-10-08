@@ -5,14 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Network parameters and one rule set per network upgrade"
+description = "The networks and the adapter around the pure consensus core"
 
 [features]
 default = ["upstream"]
-upstream = ["hayai-crypto/upstream", "hayai-wire/upstream"]
-zakura = ["hayai-crypto/zakura", "hayai-wire/zakura"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream", "hayai-consensus-core/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura", "hayai-consensus-core/zakura"]
 
 [dependencies]
+hayai-consensus-core.workspace = true
 hayai-crypto.workspace = true
 hayai-wire.workspace = true
 serde.workspace = true

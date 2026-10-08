@@ -45,9 +45,8 @@ use std::sync::Arc;
 use hayai_coins::{Coin, CoinsView, OutPoint};
 use hayai_consensus::header::check_proof_of_work;
 use hayai_consensus::{RuleSet, Upgrade};
-use hayai_prepared::{
-    check_scripts, draft, PrepareError, PreparedStore, RuleEpoch, ScopedBatch, VerifyingKeys,
-};
+use hayai_mempool::PreparedStore;
+use hayai_prepared::{check_scripts, draft, PrepareError, RuleEpoch, ScopedBatch, VerifyingKeys};
 use hayai_state::{
     block_outputs, ChainView, ContextError, HistoryError, HistoryLeaf, HistoryState, Layer, Map,
 };

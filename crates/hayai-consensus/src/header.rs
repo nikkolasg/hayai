@@ -10,12 +10,14 @@
 //! three parts, which a caller can also run on their own:
 //!
 //! - [`check_contextual`]: the version, the target limit, the time rules against the
-//!   median-time-past, and `nBits` against the expected value.
+//!   median-time-past, and `nBits` against the expected value
+//!   (`hayai_consensus_core::header::check_contextual`).
 //! - [`check_local_time`]: the rule against the clock of the node. It is not a consensus
 //!   rule: its result changes with time. It runs only when the caller gives a clock. A
 //!   caller that validates a stored block again (a replay) must not give one.
 //! - [`check_proof_of_work`]: the solution length, the hash against the target, and the
-//!   Equihash solution.
+//!   Equihash solution. These rules read the hash and the solution, so they are in the
+//!   adapter and not in the core.
 //!
 //! The contextual rules read the blocks before the header ([`ParentChain`]). When the
 //! context holds fewer blocks than a rule reads, that rule does not run and the result is
@@ -26,22 +28,15 @@
 //! right length and a target at or below the limit. It has no hash filter, no Equihash
 //! verification and no expected `nBits`. The time rules apply.
 
+use hayai_consensus_core::header as core;
+pub use hayai_consensus_core::header::{
+    HeaderFields, HeaderVerdict, Unchecked, MAX_FUTURE_BLOCK_TIME_LOCAL, MAX_FUTURE_BLOCK_TIME_MTP,
+    MIN_BLOCK_VERSION,
+};
 use hayai_wire::header::{check_equihash, check_pow, check_target, BlockHeader, PowError};
 
-use crate::difficulty::{expected_bits, median_time_past, ContextTooShort, DifficultyError};
-use crate::{ConsensusError, Network, ParentChain, MEDIAN_TIME_SPAN};
-
-/// Lowest block version (zcashd `MIN_BLOCK_VERSION`).
-/// Spec §7.6: the block version is at least 4.
-pub const MIN_BLOCK_VERSION: u32 = 4;
-/// A block's time is at most this number of seconds after its median-time-past (zcashd
-/// `MAX_FUTURE_BLOCK_TIME_MTP`).
-/// Spec §7.6: `nTime` is at most the median-time-past plus 90 · 60 s.
-pub const MAX_FUTURE_BLOCK_TIME_MTP: u32 = 90 * 60;
-/// A node accepts a block whose time is at most this number of seconds after its clock
-/// (zcashd `MAX_FUTURE_BLOCK_TIME_LOCAL`).
-/// Spec §7.6: a full validator refuses `nTime` more than 2 h after its clock.
-pub const MAX_FUTURE_BLOCK_TIME_LOCAL: u32 = 2 * 60 * 60;
+use crate::rules::core_rules_at;
+use crate::{ConsensusError, Network, ParentChain};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HeaderRuleError {
@@ -75,27 +70,48 @@ pub enum HeaderRuleError {
     WorkOverflow,
 }
 
-/// The rules of [`check_contextual`] that did not run because the context is too short.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unchecked {
-    /// The time rules did not run: the context holds fewer times than the
-    /// median-time-past reads.
-    pub time: bool,
-    /// `nBits` was not compared with the expected value.
-    pub bits: bool,
-    /// What the context holds and what the rules that did not run read.
-    pub context: ContextTooShort,
+impl From<core::HeaderError> for HeaderRuleError {
+    fn from(error: core::HeaderError) -> Self {
+        match error {
+            core::HeaderError::Genesis => HeaderRuleError::Genesis,
+            core::HeaderError::Version(version) => HeaderRuleError::Version(version),
+            core::HeaderError::InvalidBits(bits) => {
+                HeaderRuleError::Pow(PowError::InvalidBits(bits))
+            }
+            core::HeaderError::TargetAboveLimit(bits) => {
+                HeaderRuleError::Pow(PowError::TargetAboveLimit(bits))
+            }
+            core::HeaderError::WrongBits { expected, got } => {
+                HeaderRuleError::WrongBits { expected, got }
+            }
+            core::HeaderError::TimeTooEarly {
+                time,
+                median_time_past,
+            } => HeaderRuleError::TimeTooEarly {
+                time,
+                median_time_past,
+            },
+            core::HeaderError::TimeTooLate { time, limit } => {
+                HeaderRuleError::TimeTooLate { time, limit }
+            }
+            core::HeaderError::TimeTooFarAhead { time, limit } => {
+                HeaderRuleError::TimeTooFarAhead { time, limit }
+            }
+            core::HeaderError::Rules(error) => HeaderRuleError::Rules(error),
+            core::HeaderError::InvalidContextBits(bits) => {
+                HeaderRuleError::InvalidContextBits(bits)
+            }
+        }
+    }
 }
 
-/// The result of the contextual header rules when no rule failed.
-#[must_use = "a short context means that a rule did not run: the caller must handle it"]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HeaderVerdict {
-    /// Every rule ran and passed.
-    Checked,
-    /// The context holds fewer blocks than a rule reads. The rules of [`Unchecked`] did
-    /// not run. Every other rule ran and passed.
-    ContextTooShort(Unchecked),
+/// The fields of `header` that the core reads.
+fn fields(header: &BlockHeader) -> HeaderFields {
+    HeaderFields {
+        version: header.version,
+        time: header.time,
+        bits: header.bits,
+    }
 }
 
 /// Every rule of `header` at `chain.height` on `network`: the consensus rules, and the
@@ -118,98 +134,28 @@ pub fn check_header(
 
 /// The rules that read no hash and no solution: the version, the target against the
 /// proof-of-work limit, the time against the median-time-past, and `nBits` against the
-/// expected value of [`expected_bits`].
+/// expected value of `expected_bits`. An upgrade without a rule set in this build is
+/// [`HeaderRuleError::Rules`], before the other rules run.
 pub fn check_contextual(
     network: Network,
     header: &BlockHeader,
     chain: &ParentChain<'_>,
 ) -> Result<HeaderVerdict, HeaderRuleError> {
-    let height = chain.height;
-    if height == 0 {
-        return Err(HeaderRuleError::Genesis);
-    }
-    let net = network.params();
-    check_version(header)?;
-    // Spec §7.7.2: the target of `nBits` is at most `PoWLimit`.
-    check_target(header.bits, &net.pow_limit)?;
-
-    // Spec §7.6: the median-time-past reads the 11 blocks before the header, or all of
-    // them when fewer exist.
-    let needed_times = MEDIAN_TIME_SPAN.min(usize::try_from(height).unwrap_or(usize::MAX));
-    let median = median_time_past(chain.times).filter(|_| chain.times.len() >= needed_times);
-    let time_unchecked = match median {
-        Some(median_time_past) => {
-            // Spec §7.6: `nTime` is strictly greater than the median-time-past.
-            if header.time <= median_time_past {
-                return Err(HeaderRuleError::TimeTooEarly {
-                    time: header.time,
-                    median_time_past,
-                });
-            }
-            // Spec §7.6: `nTime` is at most the median-time-past plus 90 min, from height 2
-            // on Mainnet and from height 653,606 on Testnet.
-            let limit = median_time_past.saturating_add(MAX_FUTURE_BLOCK_TIME_MTP);
-            if height >= net.max_time_start_height && header.time > limit {
-                return Err(HeaderRuleError::TimeTooLate {
-                    time: header.time,
-                    limit,
-                });
-            }
-            false
-        }
-        None => true,
+    let spec = network.core();
+    // The core has a rule set for every upgrade. This build has one for the upgrades whose
+    // branch id its crypto backend knows: the expected `nBits` of another upgrade is not a
+    // rule of this build. Regtest has no expected `nBits`, so every upgrade is valid there.
+    let rules = match network.params().disable_pow {
+        true => hayai_consensus_core::rules::rules_at(spec, chain.height)?,
+        false => core_rules_at(network, chain.height)?,
     };
-    let mut unchecked = Unchecked {
-        time: time_unchecked,
-        bits: false,
-        context: ContextTooShort {
-            times: chain.times.len(),
-            needed_times,
-            bits: chain.bits.len(),
-            needed_bits: 0,
-        },
-    };
-
-    if !net.disable_pow {
-        // Spec §7.6: `nBits` equals `ThresholdBits(height)`.
-        match expected_bits(network, header.time, chain) {
-            Ok(expected) if expected == header.bits => {}
-            Ok(expected) => {
-                return Err(HeaderRuleError::WrongBits {
-                    expected,
-                    got: header.bits,
-                })
-            }
-            Err(DifficultyError::ContextTooShort(short)) => {
-                unchecked.bits = true;
-                unchecked.context.needed_times = short.needed_times.max(needed_times);
-                unchecked.context.needed_bits = short.needed_bits;
-            }
-            Err(DifficultyError::Genesis) => return Err(HeaderRuleError::Genesis),
-            Err(DifficultyError::Rules(e)) => return Err(HeaderRuleError::Rules(e)),
-            Err(DifficultyError::InvalidContextBits(bits)) => {
-                return Err(HeaderRuleError::InvalidContextBits(bits))
-            }
-        }
-    }
-    if unchecked.time || unchecked.bits {
-        return Ok(HeaderVerdict::ContextTooShort(unchecked));
-    }
-    Ok(HeaderVerdict::Checked)
+    Ok(core::check_contextual(spec, rules, fields(header), chain)?)
 }
 
 /// The version rule: the version is at least [`MIN_BLOCK_VERSION`] as a signed 32-bit
-/// integer. A version with the high bit set is negative for zcashd (`int32_t nVersion`,
-/// `CheckBlockHeader`: `version-too-low`). Zakura rejects it by name
-/// (`zakura-chain/src/block/serialize.rs:36-62`, `validate_header_version`).
-///
-/// Spec §7.6: the block version is at least 4, and a version above 4 has the rules of
-/// version 4.
+/// integer (`hayai_consensus_core::header::check_version`).
 pub fn check_version(header: &BlockHeader) -> Result<(), HeaderRuleError> {
-    if header.version >> 31 != 0 || header.version < MIN_BLOCK_VERSION {
-        return Err(HeaderRuleError::Version(header.version));
-    }
-    Ok(())
+    Ok(core::check_version(header.version)?)
 }
 
 /// The solution has the length of the network's Equihash parameters. A header of another
@@ -245,16 +191,8 @@ pub fn check_proof_of_work(network: Network, header: &BlockHeader) -> Result<(),
 }
 
 /// The local rule: the time of `header` is at most 2 h after `now`, the clock of the node
-/// in seconds. It is not a consensus rule. A header that fails can pass later.
-///
-/// Spec §7.6: a full validator refuses a block with `nTime` more than 2 h after its clock.
+/// in seconds (`hayai_consensus_core::header::check_local_time`). It is not a consensus
+/// rule. A header that fails can pass later.
 pub fn check_local_time(header: &BlockHeader, now: u32) -> Result<(), HeaderRuleError> {
-    let limit = now.saturating_add(MAX_FUTURE_BLOCK_TIME_LOCAL);
-    if header.time > limit {
-        return Err(HeaderRuleError::TimeTooFarAhead {
-            time: header.time,
-            limit,
-        });
-    }
-    Ok(())
+    Ok(core::check_local_time(header.time, now)?)
 }

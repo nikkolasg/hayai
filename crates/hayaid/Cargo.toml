@@ -16,6 +16,7 @@ upstream = [
     "hayai-coins/upstream",
     "hayai-trees/upstream",
     "hayai-prepared/upstream",
+    "hayai-mempool/upstream",
     "hayai-state/upstream",
     "hayai-validate/upstream",
     "hayai-relay/upstream",
@@ -25,6 +26,7 @@ upstream = [
     "hayai-net/upstream",
     "hayai-sync/upstream",
     "hayai-rpc/upstream",
+    "hayai-fixtures/upstream",
 ]
 zakura = [
     "hayai-crypto/zakura",
@@ -33,6 +35,7 @@ zakura = [
     "hayai-coins/zakura",
     "hayai-trees/zakura",
     "hayai-prepared/zakura",
+    "hayai-mempool/zakura",
     "hayai-state/zakura",
     "hayai-validate/zakura",
     "hayai-relay/zakura",
@@ -42,15 +45,17 @@ zakura = [
     "hayai-net/zakura",
     "hayai-sync/zakura",
     "hayai-rpc/zakura",
+    "hayai-fixtures/zakura",
 ]
 
 [dependencies]
 hayai-crypto.workspace = true
 hayai-consensus.workspace = true
 hayai-wire.workspace = true
-hayai-coins.workspace = true
+hayai-coins = { workspace = true, features = ["rocksdb"] }
 hayai-trees.workspace = true
 hayai-prepared.workspace = true
+hayai-mempool.workspace = true
 hayai-state.workspace = true
 hayai-validate.workspace = true
 hayai-relay.workspace = true
@@ -77,6 +82,8 @@ toml.workspace = true
 signal-hook.workspace = true
 
 [dev-dependencies]
+# The Regtest spend builder of the node tests (`hayai_fixtures::regtest`).
+hayai-fixtures.workspace = true
 tempfile.workspace = true
 
 # The Regtest pair of one hayaid and one zakurad (`docs/regtest-pair.md`). It has its own

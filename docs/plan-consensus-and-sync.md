@@ -259,7 +259,7 @@ Rules that are not consensus rules and that the plan does not include:
   - Add Ironwood to `Anchors::get`, `Base::insert_anchor`, `has_anchor`, the shadow `trust_anchors` and `compare_roots`. Zakura `z_gettreestate` returns the Ironwood tree: confirm the field name.
 - **Tests.**
   - the `zcash_history` V3 test vectors (in the crate, `test_vectors.rs`). Copy them as `zip_0221_v3.rs` beside the V1/V2 files in `hayai-state/tests/vectors`;
-  - a fixture generator: a v6 bundle with `BundleVersion::ironwood_v3()` in `hayai-bench/src/fixtures.rs`;
+  - a fixture generator: a v6 bundle with `BundleVersion::ironwood_v3()` in `hayai-fixtures/src/lib.rs`;
   - real blocks: Mainnet 3,428,142–3,428,144 and Testnet 4,133,999–4,134,001 from the shadow node (C2);
   - the acceptance test: a shadow run across the Mainnet tip.
 - **Size.** L. It is the first item to do: the Mainnet shadow mode stops without it.
@@ -536,7 +536,7 @@ Measured unit costs (`bench-results/summary.json`, Ryzen 9 9950X, 32 threads):
 ### C3. Differential fuzzer for negative tests (L)
 
 - No official set of invalid blocks exists. Design: the new crate `crates/hayai-fuzz`, outside the default workspace build of the node. It has `cargo-fuzz`/libFuzzer targets and a proptest mode for stable CI.
-- **Seeds.** The Zebra vectors with their contexts (C2), the synthetic fixtures of hayai-bench (real proofs), the transactions of the ZIP 244 vectors.
+- **Seeds.** The Zebra vectors with their contexts (C2), the synthetic fixtures of hayai-fixtures (real proofs), the transactions of the ZIP 244 vectors.
 - **Mutators.**
   - Byte level: bit flips and splices inside the byte ranges of transactions and headers (ranges from `hayai-wire/src/scan.rs`). Then a fix-up of the merkle root and the auth root, so that the mutation reaches the rule and not only the root check. Optional: a fix-up of PoW on Regtest parameters.
   - Structure-aware:

@@ -79,7 +79,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: bench-fixtures
-          key: fixtures-${{ hashFiles('crates/hayai-bench/src/fixtures.rs') }}
+          key: fixtures-${{ hashFiles('crates/hayai-fixtures/src/lib.rs') }}
       - run: cargo test --workspace --release --locked ${{ matrix.flags }} --no-run
       - run: cargo test --workspace --release --locked ${{ matrix.flags }}
 

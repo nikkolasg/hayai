@@ -8,10 +8,10 @@
 
 use std::net::SocketAddr;
 
-use hayai_consensus::coinbase::{CoinbaseTerms, OutputKind};
+use hayai_consensus::coinbase::OutputKind;
 use hayai_consensus::difficulty::{block_work, target_from_compact};
 use hayai_consensus::funding::{funding_streams, Receiver};
-use hayai_consensus::{rules_at, Network, Upgrade};
+use hayai_consensus::{address_of, rules_at, Network, Upgrade};
 use hayai_crypto::primitive_types::U256;
 use hayai_crypto::zcash_address::unified::{self, Container};
 use hayai_crypto::zcash_address::{ConversionError, TryFromAddress, ZcashAddress};
@@ -60,14 +60,14 @@ fn zec(zatoshis: u64) -> f64 {
 
 /// The name of the network in `chain` fields (Zakura `bip70_network_name`).
 fn chain_name(network: Network) -> &'static str {
-    match network {
-        Network::Mainnet => "main",
-        Network::Testnet | Network::Regtest | Network::ConfiguredRegtest(_) => "test",
+    match network.network_type() {
+        NetworkType::Main => "main",
+        NetworkType::Test | NetworkType::Regtest => "test",
     }
 }
 
 fn is_testnet(network: Network) -> bool {
-    !matches!(network, Network::Mainnet)
+    !matches!(network.network_type(), NetworkType::Main)
 }
 
 /// The difficulty of `bits` as zcashd computes it from the compact forms
@@ -282,13 +282,9 @@ fn z_validate_address(network: Network, text: &str) -> Value {
     let Some(address) = parse_address(text) else {
         return json!({ "isvalid": false });
     };
-    let expected = match network {
-        Network::Mainnet => NetworkType::Main,
-        Network::Testnet => NetworkType::Test,
-        Network::Regtest | Network::ConfiguredRegtest(_) if address.transparent() => {
-            NetworkType::Test
-        }
-        Network::Regtest | Network::ConfiguredRegtest(_) => NetworkType::Regtest,
+    let expected = match network.network_type() {
+        NetworkType::Regtest if address.transparent() => NetworkType::Test,
+        network_type => network_type,
     };
     match address.network == expected {
         true => json!({
@@ -404,9 +400,9 @@ impl Rpc {
                 let issued = pools
                     .iter()
                     .fold(0u64, |sum, (_, v)| sum.saturating_add(*v));
-                CoinbaseTerms::after(network, height, issued)
+                hayai_consensus::coinbase::terms_after(network, height, issued)
             }
-            false => CoinbaseTerms::at(network, height),
+            false => hayai_consensus::coinbase::terms_at(network, height),
         }
         .map_err(|e| err(codes::MISC, e.to_string()))?;
         let founders: u64 = terms
@@ -421,7 +417,8 @@ impl Rpc {
             true => LOCKBOX_SPECIFICATION,
             false => FUNDING_STREAM_SPECIFICATION,
         };
-        let mut streams = funding_streams(network, height, terms.subsidy.total);
+        let mut streams = funding_streams(network, height, terms.subsidy.total)
+            .map_err(|e| err(codes::MISC, e.to_string()))?;
         // The order of zcashd.
         streams.sort_by_key(|stream| match stream.receiver {
             Receiver::Ecc => 0,
@@ -445,9 +442,9 @@ impl Rpc {
                 "value": zec(stream.value),
                 "valueZat": stream.value,
             });
-            match stream.address {
-                Some(address) => {
-                    entry["address"] = json!(address);
+            match stream.script {
+                Some(script) => {
+                    entry["address"] = json!(address_of(network, &script));
                     funding_total += stream.value;
                     funding.push(entry);
                 }
@@ -458,7 +455,7 @@ impl Rpc {
             }
         }
         let mut result = json!({
-            "miner": zec(terms.miner_subsidy()),
+            "miner": zec(terms.miner_subsidy),
             "founders": zec(founders),
             "fundingstreamstotal": zec(funding_total),
             "lockboxtotal": zec(lockbox_total),

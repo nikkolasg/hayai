@@ -13,7 +13,7 @@ and metrics, and the limits of each mode.
 One process holds these parts:
 
 - hayai-net `Relay` over `TcpTransport`.
-- The prepared store (`PreparedStore`) as the transaction sink.
+- The mempool (hayai-mempool `Mempool` over the `PreparedStore`) as the transaction sink.
 - The driver: hayai-validate on hayai-state `Chain`, hayai-blockstore, hayai-template
   `LiveTemplate`.
 - hayai-rpc: the JSON-RPC server (full mode) and the `/metrics` server.

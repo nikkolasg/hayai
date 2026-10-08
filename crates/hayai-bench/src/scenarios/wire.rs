@@ -5,8 +5,8 @@
 use hayai_wire::RawBlock;
 
 use super::{Built, Impl};
-use crate::fixtures::standard_set;
 use crate::zakura_wire;
+use hayai_fixtures::standard_set;
 
 pub fn build(fixture: &str, imp: Impl) -> Result<Built, String> {
     let Some(f) = standard_set().into_iter().find(|f| f.name == fixture) else {

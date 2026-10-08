@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use hayai_coins::{BestBlock, Pool};
 use hayai_crypto::zcash_primitives::merkle_tree::{read_frontier_v1, write_frontier_v1};
-use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_crypto::zcash_protocol::consensus::{BranchId, NetworkType};
 use hayai_state::{BaseState, HistoryState, ValuePools};
 use hayai_trees::{IronwoodFrontier, OrchardFrontier, SaplingFrontier, SproutFrontier};
 use hayai_wire::header::BlockHash;
@@ -261,10 +261,10 @@ const RECORD_VERSION_2: u8 = 2;
 const RECORD_VERSION_1: u8 = 1;
 
 fn network_tag(kind: NetworkKind) -> u8 {
-    match kind {
-        NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => 0,
-        NetworkKind::Testnet => 1,
-        NetworkKind::Mainnet => 2,
+    match kind.network_type() {
+        NetworkType::Regtest => 0,
+        NetworkType::Test => 1,
+        NetworkType::Main => 2,
     }
 }
 

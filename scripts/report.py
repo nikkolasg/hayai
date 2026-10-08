@@ -1410,7 +1410,7 @@ a {{ color:var(--accent); }}
 <ul>
 <li>Machine: {esc(m.get('cpu', ''))}, {esc(m.get('threads', ''))} threads, Linux.</li>
 <li>A Zakura baseline is one of four kinds, named in each row: Zakura's published crates run in the same process; Zakura's data layout on the same storage engine; Zakura's scheduling rebuilt around the same cryptography; or Zakura's algorithm ported line by line. Each port cites the Zakura source lines in <code>crates/hayai-bench/src/</code>.</li>
-<li>Test blocks are synthetic and deterministic, with real ECDSA signatures and real Orchard proofs (<code>crates/hayai-bench/src/fixtures.rs</code>).</li>
+<li>Test blocks are synthetic and deterministic, with real ECDSA signatures and real Orchard proofs (<code>crates/hayai-fixtures/src/lib.rs</code>).</li>
 <li>Times are criterion means. System values are medians of 20 runs, each scenario in a fresh process.</li>
 <li>To reproduce: <code>cargo bench -p hayai-bench</code>, <code>scripts/sysbench.sh</code>, <code>python3 scripts/collect_bench.py</code>, <code>python3 scripts/report.py</code>.</li>
 </ul>

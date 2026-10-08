@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{coin, harness, harness_with_history, Harness};
-use hayai_bench::fixtures::{nu6_3_block, orchard_block, transparent_block, Fixture};
 use hayai_coins::{CoinsView, MemBacking, MemConfig, OutPoint, Pool};
 use hayai_consensus::{rules_at, Checkpoints, Network};
 use hayai_crypto::zcash_protocol::consensus::BranchId;
+use hayai_fixtures::{nu6_3_block, orchard_block, transparent_block, Fixture};
 use hayai_prepared::PrepareError;
 use hayai_state::{checkpoint_layer, Base, Chain, CheckConfig, ContextError, Layer};
 use hayai_validate::{

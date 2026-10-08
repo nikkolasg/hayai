@@ -60,11 +60,9 @@ impl TryFromAddress for TransparentScript {
 /// The scriptPubKey of the miner output from `[mining]`. An address must be a transparent
 /// address of the network (Regtest uses the Testnet encoding).
 pub fn miner_script(mining: &MiningSection, network: NetworkKind) -> Result<Vec<u8>, String> {
-    let address_network = match network {
-        NetworkKind::Mainnet => NetworkType::Main,
-        NetworkKind::Testnet | NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => {
-            NetworkType::Test
-        }
+    let address_network = match network.network_type() {
+        NetworkType::Main => NetworkType::Main,
+        NetworkType::Test | NetworkType::Regtest => NetworkType::Test,
     };
     match (&mining.miner_address, &mining.miner_script) {
         (Some(address), None) => {

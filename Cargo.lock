@@ -1430,6 +1430,8 @@ dependencies = [
  "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-fixtures",
+ "hayai-mempool",
  "hayai-prepared",
  "hayai-relay",
  "hayai-sinsemilla",
@@ -1451,7 +1453,6 @@ dependencies = [
  "rayon",
  "rocksdb",
  "scc",
- "secp256k1 0.29.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1503,6 +1504,7 @@ dependencies = [
 name = "hayai-consensus"
 version = "0.1.0"
 dependencies = [
+ "hayai-consensus-core",
  "hayai-crypto",
  "hayai-wire",
  "hex",
@@ -1510,6 +1512,13 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "hayai-consensus-core"
+version = "0.1.0"
+dependencies = [
  "thiserror 2.0.21",
 ]
 
@@ -1565,15 +1574,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayai-fixtures"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "hayai-consensus",
+ "hayai-crypto",
+ "hayai-wire",
+ "rayon",
+ "secp256k1 0.29.1",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "hayai-fuzz"
 version = "0.1.0"
 dependencies = [
  "bytes",
  "chrono",
- "hayai-bench",
  "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-fixtures",
+ "hayai-mempool",
  "hayai-prepared",
  "hayai-state",
  "hayai-template",
@@ -1615,6 +1638,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayai-mempool"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bytes",
+ "crossbeam-channel",
+ "dashmap",
+ "hayai-coins",
+ "hayai-consensus",
+ "hayai-crypto",
+ "hayai-fixtures",
+ "hayai-prepared",
+ "hayai-state",
+ "hayai-template",
+ "hayai-wire",
+ "parking_lot",
+ "rand 0.8.8",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "hayai-net"
 version = "0.1.0"
 dependencies = [
@@ -1640,19 +1686,14 @@ dependencies = [
  "ahash",
  "blake2b_simd",
  "bytes",
- "crossbeam-channel",
- "dashmap",
  "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
- "hayai-template",
  "hayai-wire",
  "parking_lot",
  "proptest",
- "rand 0.8.8",
  "rayon",
  "thiserror 2.0.21",
- "tracing",
  "wagyu-zcash-parameters",
 ]
 
@@ -1817,7 +1858,9 @@ dependencies = [
  "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-fixtures",
  "hayai-index",
+ "hayai-mempool",
  "hayai-net",
  "hayai-prepared",
  "hayai-relay",

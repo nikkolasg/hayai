@@ -30,12 +30,12 @@ use criterion::{
     criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
 use hayai_bench::chain_fixture::{harness, harness_with_history};
-use hayai_bench::fixtures::standard_set;
 use hayai_bench::hayai_id;
 use hayai_bench::scenarios::state::{new_chain, push};
 use hayai_bench::zakura_chain_clone::{BlockEntries, BlockShape, ZakuraChainClone};
 use hayai_bench::zebra_chain_clone::{ZebraBlockEntries, ZebraChainClone};
 use hayai_coins::{Coin, CoinsView, OutPoint};
+use hayai_fixtures::standard_set;
 use hayai_prepared::{prepare, ScopedBatch};
 use hayai_state::{contextual_check, CheckConfig, PreparedBlock};
 use hayai_validate::{commit_prebuilt, prebuild, validate_block};

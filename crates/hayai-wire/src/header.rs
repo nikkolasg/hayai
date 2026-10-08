@@ -38,7 +38,7 @@ impl fmt::Debug for BlockHash {
 
 /// The Equihash parameters `(n, k)` of a network. The caller takes them from the network
 /// that it runs on; a header does not carry them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PowParams {
     pub n: u32,
     pub k: u32,

@@ -1157,7 +1157,7 @@ fn shielding_in(
     fee: u64,
     expiry: u32,
 ) -> Arc<hayai_wire::RawTx> {
-    let bytes = crate::test_support::shielding_tx(coin.0.clone(), coin.1, fee, expiry, branch);
+    let bytes = hayai_fixtures::regtest::shielding_tx(coin.0.clone(), coin.1, fee, expiry, branch);
     Arc::new(hayai_wire::RawTx::parse(bytes, branch).expect("a transaction"))
 }
 
@@ -1185,7 +1185,7 @@ pub(crate) fn disconnect_all(node: &Node) {
 /// accepts that block.
 #[test]
 fn a_reorg_of_depth_three_returns_the_transactions_to_the_mempool() {
-    use crate::mempool::Reject;
+    use hayai_mempool::Reject;
 
     let dir = scratch();
     let a = start(dir.path(), "a", true, false);
@@ -1247,8 +1247,8 @@ fn a_reorg_of_depth_three_returns_the_transactions_to_the_mempool() {
 /// The admission applies the policy and the tip state to each transaction.
 #[test]
 fn the_mempool_refuses_what_the_policy_and_the_tip_do_not_permit() {
-    use crate::mempool::Reject;
-    use hayai_prepared::{InsertError, PolicyReject};
+    use hayai_mempool::Reject;
+    use hayai_mempool::{InsertError, PolicyReject};
 
     let dir = scratch();
     let a = start(dir.path(), "a", true, false);
@@ -1327,11 +1327,11 @@ fn the_mempool_refuses_what_the_policy_and_the_tip_do_not_permit() {
 /// anchor of the empty tree passes the rule (the transaction then fails for its proof).
 #[test]
 fn the_mempool_applies_the_sprout_anchor_rule() {
-    use crate::mempool::Reject;
     use hayai_coins::Pool;
     use hayai_crypto::zcash_primitives::transaction::components::sprout::{Bundle, JsDescription};
     use hayai_crypto::zcash_primitives::transaction::{Authorized, TransactionData, TxVersion};
     use hayai_crypto::zcash_protocol::consensus::BlockHeight;
+    use hayai_mempool::Reject;
 
     // A v4 transaction with one JoinSplit that takes 20,000 zatoshis out of the Sprout
     // pool as the fee. The proof and the signature are not valid.
@@ -1403,7 +1403,7 @@ fn tx_count(chain: &[Bytes], height: u32) -> usize {
 /// Admits `tx` into the mempool of `node`. The Orchard key of the next upgrade is built
 /// in the background, so the admission waits for it.
 fn submit_when_keys_are_ready(node: &Node, tx: &Arc<hayai_wire::RawTx>) {
-    use crate::mempool::Reject;
+    use hayai_mempool::Reject;
     use hayai_prepared::PrepareError;
 
     wait_for("the verifying key", || match node.submit_tx(tx.clone()) {
@@ -1471,7 +1471,7 @@ recipients = [
 /// whole chain from the genesis block. No node restarts.
 #[test]
 fn a_chain_crosses_two_upgrades_at_the_tip_and_during_the_synchronization() {
-    use crate::mempool::Reject;
+    use hayai_mempool::Reject;
     use hayai_prepared::PrepareError;
 
     let dir = scratch();
@@ -1595,8 +1595,8 @@ fn a_chain_crosses_two_upgrades_at_the_tip_and_during_the_synchronization() {
 /// stops with an error when its next block is block 108, and the test ends there.
 #[test]
 fn a_chain_crosses_nu7_at_the_tip_and_during_the_synchronization() {
-    use crate::mempool::Reject;
     use hayai_consensus::{nsm, subsidy, RuleSet, Upgrade};
+    use hayai_mempool::Reject;
     use hayai_prepared::PrepareError;
 
     const NU7: &str = "[regtest]\nactivation_heights = { nu6_3 = 104, nu7 = 108 }\n";
@@ -1678,7 +1678,7 @@ fn a_chain_crosses_nu7_at_the_tip_and_during_the_synchronization() {
     // The reissuance: the balance of 9,000 zatoshis gives a bonus of 1 zatoshi to block
     // 110, and the balance of 8,999 gives 1 zatoshi to block 111.
     assert_eq!(nsm::reissuance_height(regtest), Some(110));
-    assert_eq!(nsm::reissuance_bonus(9_000), 1);
+    assert_eq!(nsm::reissuance_bonus(9_000), Ok(1));
     assert_eq!(miner_value(&chain[109], nu7), (1, 208_333_334));
     assert_eq!(miner_value(&chain[110], nu7), (1, 208_333_334));
 
@@ -2132,7 +2132,7 @@ fn a_changed_coinbase_script_on_the_prebuilt_path_is_a_wrong_body() {
 /// transaction.
 #[test]
 fn an_admission_on_an_old_tip_does_not_insert_after_the_commit() {
-    use crate::mempool::Reject;
+    use hayai_mempool::Reject;
     use hayai_prepared::PrepareError;
 
     let dir = scratch();
@@ -2358,8 +2358,8 @@ fn replaced(tx: &hayai_wire::RawTx, needle: &[u8], with: &[u8]) -> Arc<hayai_wir
 /// transaction with an anchor that is no tree state of the chain, before it reads a proof.
 #[test]
 fn the_mempool_refuses_a_nullifier_of_the_chain_and_an_unknown_anchor() {
-    use crate::mempool::Reject;
     use hayai_coins::Pool;
+    use hayai_mempool::Reject;
 
     let dir = scratch();
     let a = start(dir.path(), "a", true, false);
@@ -2772,7 +2772,7 @@ fn a_private_transaction_stays_off_the_wire(publication: crate::config::LanePubl
     a.submit_private_tx(private.clone()).expect("valid");
     assert!(a.mempool.is_private(&private.wtxid()));
     // A second private admission does not change the mark.
-    let Err(crate::mempool::Reject::Known) = a.submit_private_tx(private.clone()) else {
+    let Err(hayai_mempool::Reject::Known) = a.submit_private_tx(private.clone()) else {
         panic!("the store has the transaction");
     };
     assert!(a.mempool.is_private(&private.wtxid()));

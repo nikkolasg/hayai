@@ -3,10 +3,10 @@
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{chain_with_layers, harness, harness_with_history};
-use hayai_bench::fixtures::{mixed_block, orchard_block, transparent_block, Fixture};
 use hayai_bench::zakura_chain_clone::BlockShape;
 use hayai_coins::{CoinsView, Pool};
 use hayai_consensus::BlockLimits;
+use hayai_fixtures::{mixed_block, orchard_block, transparent_block, Fixture};
 use hayai_prepared::PrepareError;
 use hayai_state::{ContextError, Layer};
 use hayai_validate::{block_commitments, validate_block, validate_bytes, BlockError};

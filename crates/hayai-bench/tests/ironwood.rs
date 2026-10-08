@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{chain_with_layers, harness, harness_with_history, keys, Harness};
-use hayai_bench::fixtures::{nu6_3_block, Fixture, NU6_3_FIXTURE_BRANCH, NU6_3_FIXTURE_HEIGHT};
 use hayai_bench::zakura_chain_clone::BlockShape;
 use hayai_coins::Pool;
 use hayai_consensus::coinbase::{CoinbaseError, ShieldedBalances};
@@ -16,6 +15,7 @@ use hayai_crypto::incrementalmerkletree::frontier::Frontier;
 use hayai_crypto::orchard::tree::MerkleHashOrchard;
 use hayai_crypto::orchard::Anchor;
 use hayai_crypto::zcash_primitives::transaction::{Authorized, TransactionData, TxVersion};
+use hayai_fixtures::{nu6_3_block, Fixture, NU6_3_FIXTURE_BRANCH, NU6_3_FIXTURE_HEIGHT};
 use hayai_prepared::{draft, PrepareError, PreparedTx};
 use hayai_state::history::{header_commitment, HeaderCommitment};
 use hayai_state::{contextual_check, CheckConfig, ContextError, HistoryLeaf, Layer, PreparedBlock};
@@ -365,8 +365,8 @@ fn the_header_commits_to_the_history_tree_of_version_3() {
 
     // The NU6.3 activation block starts a new tree: on a parent of NU6.2 the tree after
     // the block has one leaf, and the header commits to the whole NU6.2 tree.
-    let nu6_2 = hayai_state::HistoryState::empty(hayai_bench::fixtures::FIXTURE_BRANCH)
-        .append(hayai_bench::fixtures::FIXTURE_BRANCH, &leaf([0; 32]))
+    let nu6_2 = hayai_state::HistoryState::empty(hayai_fixtures::FIXTURE_BRANCH)
+        .append(hayai_fixtures::FIXTURE_BRANCH, &leaf([0; 32]))
         .expect("appends");
     let activation = harness(&fixture);
     activation.chain.base().write().history = Some(Arc::new(nu6_2.clone()));
@@ -776,7 +776,7 @@ fn the_coinbase_value_counts_the_ironwood_output() {
     assert!(shielded > 0);
     // The value rule of the fixture height is the equality of ZIP 236. The block is valid,
     // so the value that the coinbase pays includes the Ironwood output.
-    let terms = hayai_bench::fixtures::coinbase_terms(NU6_3_FIXTURE_HEIGHT);
+    let terms = hayai_fixtures::coinbase_terms(NU6_3_FIXTURE_HEIGHT);
     assert!(terms.exact_value);
     check(&h, &block).expect("the coinbase pays its terms exactly");
     // The transparent outputs alone pay less than the terms by the Ironwood output.
@@ -817,11 +817,7 @@ fn a_template_candidate_counts_its_ironwood_actions() {
         let raw = &tx.raw;
         let orchard = raw.tx.orchard_bundle().map_or(0, |b| b.actions().len()) as u32;
         let ironwood = raw.tx.ironwood_bundle().map_or(0, |b| b.actions().len()) as u32;
-        let candidate = tx.candidate(Vec::new(), &params);
-        assert_eq!(
-            candidate,
-            Candidate::from_raw(raw, tx.fee, tx.sigops, Vec::new(), &params)
-        );
+        let candidate = Candidate::from_raw(raw, tx.fee, tx.sigops, Vec::new(), &params);
         assert_eq!(candidate.ironwood_actions, ironwood);
         assert_eq!(candidate.ironwood_actions, tx.ironwood_actions);
         assert_eq!(candidate.orchard_actions, orchard);

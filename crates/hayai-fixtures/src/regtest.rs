@@ -1,9 +1,9 @@
-//! A valid Regtest transaction for the node tests.
+//! Valid Regtest transactions that spend one transparent coin, for the tests of the mempool
+//! and of the node. The proofs and the signatures are real.
 
 use std::sync::OnceLock;
 
 use bytes::Bytes;
-use hayai_coins::OutPoint;
 use hayai_crypto::rng::os_rng;
 use hayai_crypto::{
     orchard, sapling_crypto, zcash_primitives, zcash_protocol, zcash_script04, zcash_transparent,
@@ -20,7 +20,7 @@ use zcash_primitives::transaction::{Authorization, Authorized, TransactionData, 
 use zcash_protocol::consensus::{BlockHeight, BranchId};
 use zcash_protocol::value::{ZatBalance, Zatoshis};
 use zcash_transparent::address::Script;
-use zcash_transparent::bundle::{Authorized as TAuthorized, Bundle, TxIn, TxOut};
+use zcash_transparent::bundle::{Authorized as TAuthorized, Bundle, OutPoint, TxIn, TxOut};
 use zcash_transparent::sighash::TransparentAuthorizingContext;
 
 /// The scriptPubKey of the spent coin: `OP_TRUE`.
@@ -218,89 +218,4 @@ pub fn spend_tx(spend: &Spend) -> Bytes {
     let mut bytes = Vec::new();
     tx.write(&mut bytes).expect("vec write");
     Bytes::from(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use hayai_coins::{Coin, CoinsView};
-    use hayai_consensus::{rules_at, Network};
-    use hayai_prepared::{
-        prepare, MempoolPolicy, PolicyContext, PolicyReject, PreparedTx, RuleEpoch, ScopedBatch,
-        VerifyingKeys,
-    };
-    use hayai_wire::RawTx;
-
-    use super::*;
-
-    const VALUE: u64 = 625_000_000;
-    const NEXT_HEIGHT: u32 = 150;
-
-    /// A view with one coin: a coinbase coin of height 1 with the script `OP_TRUE`.
-    struct OneCoin(OutPoint);
-
-    impl CoinsView for OneCoin {
-        fn get_coins(&self, outpoints: &[OutPoint]) -> Vec<Option<Coin>> {
-            outpoints
-                .iter()
-                .map(|outpoint| {
-                    (*outpoint == self.0).then(|| Coin {
-                        value: VALUE,
-                        script_pubkey: Bytes::from_static(&OP_TRUE),
-                        height: 1,
-                        is_coinbase: true,
-                    })
-                })
-                .collect()
-        }
-    }
-
-    #[test]
-    fn shielding_tx_is_valid_and_follows_the_policy() {
-        let rules = rules_at(Network::Regtest, NEXT_HEIGHT).expect("Regtest rules");
-        let epoch = RuleEpoch::of(rules);
-        let keys = VerifyingKeys::prebuild(epoch, None);
-        keys.ready();
-        let outpoint = OutPoint::new([3; 32], 0);
-        let view = OneCoin(outpoint.clone());
-
-        let prepared = |fee: u64, expiry_height: u32| -> PreparedTx {
-            let bytes = shielding_tx(outpoint.clone(), VALUE, fee, expiry_height, BranchId::Nu5);
-            let raw = RawTx::parse(bytes, BranchId::Nu5).expect("the transaction parses");
-            let mut batch = ScopedBatch::new(&keys);
-            let prepared = prepare(raw, epoch, &view, &mut batch).expect("prepare passes");
-            assert!(batch.finalize().failed.is_empty());
-            assert_eq!(prepared.fee, fee);
-            assert_eq!(prepared.expiry_height, expiry_height);
-            prepared
-        };
-        let policy = MempoolPolicy::of(Network::Regtest);
-        let admit = |tx: &PreparedTx| {
-            policy.admit(
-                tx,
-                &PolicyContext {
-                    next_height: NEXT_HEIGHT,
-                    median_time_past: 0,
-                    rules,
-                },
-            )
-        };
-
-        // One transparent input and two Orchard actions: 3 logical actions, 1,200
-        // zatoshis. The unpaid action limit is 0.
-        assert_eq!(admit(&prepared(1_200, 0)), Ok(()));
-        assert_eq!(
-            admit(&prepared(1_199, 0)),
-            Err(PolicyReject::UnpaidActions {
-                unpaid: 1,
-                limit: 0
-            })
-        );
-        assert_eq!(
-            admit(&prepared(15_000, NEXT_HEIGHT + 1)),
-            Err(PolicyReject::ExpiringSoon {
-                expiry: NEXT_HEIGHT + 1,
-                next_height: NEXT_HEIGHT
-            })
-        );
-    }
 }

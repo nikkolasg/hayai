@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer};
 
-use hayai_consensus::coinbase::CoinbaseTerms;
 use hayai_consensus::{
     ConsensusError, RegtestConfig, RegtestDisbursement, RegtestFundingStreams, Upgrade,
 };
+use hayai_crypto::zcash_protocol::consensus::NetworkType;
 
 use crate::params::{parse_hash, NetworkKind};
 
@@ -139,7 +139,7 @@ impl RegtestSection {
         // below that height.
         if let Some(height) = heights.nu6_1 {
             if let Err(e @ ConsensusError::NoLockboxDisbursement { .. }) =
-                CoinbaseTerms::at(network, height)
+                hayai_consensus::coinbase::terms_at(network, height)
             {
                 return Err(invalid(&format!("{e}: set lockbox_disbursements")));
             }
@@ -542,7 +542,7 @@ fn default_lane_publication() -> LanePublication {
 }
 const DEFAULT_MAX_PEERS: usize = 16;
 fn default_tx_cost_limit() -> u64 {
-    hayai_prepared::MEMPOOL_TX_COST_LIMIT as u64
+    hayai_mempool::MEMPOOL_TX_COST_LIMIT as u64
 }
 fn default_cache_dir() -> PathBuf {
     PathBuf::from("hayaid-data")
@@ -934,8 +934,8 @@ pub fn default_toml(network: NetworkKind) -> String {
              poll_interval_ms = 200\n"
         )
     };
-    let (mode, listen, peers, rpc, metrics, mining, shadow) = match network {
-        NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => (
+    let (mode, listen, peers, rpc, metrics, mining, shadow) = match network.network_type() {
+        NetworkType::Regtest => (
             "full",
             "127.0.0.1:18344",
             "[]",
@@ -952,7 +952,7 @@ pub fn default_toml(network: NetworkKind) -> String {
              regtest_produce = true",
             String::new(),
         ),
-        NetworkKind::Testnet => (
+        NetworkType::Test => (
             "shadow",
             "127.0.0.1:18333",
             "[\"127.0.0.1:18233\"]",
@@ -962,7 +962,7 @@ pub fn default_toml(network: NetworkKind) -> String {
              miner_address = \"tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV\"",
             shadow_rpc(18232),
         ),
-        NetworkKind::Mainnet => (
+        NetworkType::Main => (
             "shadow",
             "127.0.0.1:8333",
             "[\"127.0.0.1:8233\"]",
@@ -1069,14 +1069,14 @@ pub fn default_toml(network: NetworkKind) -> String {
          force_use_color = false\n\
          # The log goes to this file. Absent: stderr.\n\
          # log_file = \"hayaid.log\"\n",
-        network = match network {
-            NetworkKind::Mainnet => "Mainnet",
-            NetworkKind::Testnet => "Testnet",
-            NetworkKind::Regtest | NetworkKind::ConfiguredRegtest(_) => "Regtest",
+        network = match network.network_type() {
+            NetworkType::Main => "Mainnet",
+            NetworkType::Test => "Testnet",
+            NetworkType::Regtest => "Regtest",
         },
-        initial_peers = match network {
-            NetworkKind::Mainnet => "initial_mainnet_peers",
-            _ => "initial_testnet_peers",
+        initial_peers = match network.network_type() {
+            NetworkType::Main => "initial_mainnet_peers",
+            NetworkType::Test | NetworkType::Regtest => "initial_testnet_peers",
         },
         compact = network.is_regtest(),
         regtest = match network.is_regtest() {
@@ -1226,7 +1226,7 @@ mod tests {
             .consensus_network()
             .expect("a network");
         let kinds = |height| -> Vec<OutputKind> {
-            let terms = CoinbaseTerms::at(network, height).expect("terms");
+            let terms = hayai_consensus::coinbase::terms_at(network, height).expect("terms");
             terms.required.iter().map(|output| output.kind).collect()
         };
         let stream = OutputKind::FundingStream(Receiver::MajorGrants);
@@ -1235,7 +1235,7 @@ mod tests {
         assert_eq!(kinds(16), vec![stream]);
         assert_eq!(kinds(17), vec![]);
         assert_eq!(kinds(30), vec![OutputKind::LockboxDisbursement]);
-        let terms = CoinbaseTerms::at(network, 30).expect("terms");
+        let terms = hayai_consensus::coinbase::terms_at(network, 30).expect("terms");
         assert_eq!((terms.disbursed, terms.required[0].value), (7, 7));
 
         // An NU6.1 height without a disbursement: Zakura refuses each block at that

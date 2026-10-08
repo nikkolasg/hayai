@@ -10,8 +10,8 @@ use hayai_blockstore::BlockStore;
 use hayai_coins::{CoinsView, OutPoint};
 use hayai_crypto::zcash_primitives::transaction::TxId;
 use hayai_index::{AddressKey, WalletIndex};
+use hayai_mempool::{PreparedStore, MIN_RELAY_FEE_RATE};
 use hayai_net::{Direction, Relay};
-use hayai_prepared::{PreparedStore, MIN_RELAY_FEE_RATE};
 use hayai_rpc::{
     AddressUtxo, BlockInfo, BlockState, ChainTip, IndexError, NodeQuery, NodeState, PeerRow, Pools,
     SubtreePool, SubtreeRow, TipState, TransparentAddress, TxOutInfo,

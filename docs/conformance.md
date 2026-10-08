@@ -352,7 +352,7 @@ inputs and the published values for that test (bd hayai-xya).
 
 `crates/hayai-fuzz` runs hayai and the Zakura library code on the same block in one process
 and compares the 2 verdicts. A case is a seed block, a list of mutations and a chain
-context. The seeds are the generated fixture blocks of `hayai-bench`, with real signatures and
+context. The seeds are the generated fixture blocks of `hayai-fixtures`, with real signatures and
 real Orchard and Ironwood proofs. Other seeds are generated coinbase-only blocks at a chosen
 height of Mainnet or Testnet. `docs/fuzz-findings.md` has the runs and the findings.
 
