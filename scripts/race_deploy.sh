@@ -54,6 +54,9 @@
 #   RACE_CALLER_INTERVAL  Seconds between two calls of an RPC caller (default 5).
 #   RACE_CALLER_LONGPOLL  1 (default): each RPC caller also holds one long poll and
 #                     sends one call without `longpollid` after each answer. 0: no long poll.
+#   RACE_GRAFANA_ADDR Listen address of Grafana on C (default 127.0.0.1: open it through
+#                     an SSH tunnel). Set 0.0.0.0 only behind a firewall that limits port
+#                     3000 to the operator.
 #   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT, RACE_PROMETHEUS_ADDR
 #                     Other ports than 9999, 19101 and 127.0.0.1:9090, as in
 #                     docker/race/compose.monitor.yml (the dry run).
@@ -91,6 +94,7 @@ ZAKURAD_METRICS_PORT="${RACE_ZAKURAD_METRICS_PORT:-9999}"
 HAYAID_METRICS_PORT="${RACE_HAYAID_METRICS_PORT:-19101}"
 EXPORTER_PORT=9100
 PROMETHEUS_ADDR="${RACE_PROMETHEUS_ADDR:-127.0.0.1:9090}"
+GRAFANA_ADDR="${RACE_GRAFANA_ADDR:-127.0.0.1}"
 # The data directory of zakurad in its container (docker/race/config).
 ZAKURAD_DATA="/home/zebra/.cache/zakura"
 # The scrape interval of docker/race/prometheus/prometheus.yml, in seconds.
@@ -227,10 +231,10 @@ firewall() { # HOST PORTS
   }
   local ip rule
   ip=$(monitor_ip "$1")
-  rule="INPUT -p tcp -m multiport --dports $2 ! -s ${ip} -m comment --comment hayai-race -j DROP"
+  rule="INPUT ! -i lo -p tcp -m multiport --dports $2 ! -s ${ip} -m comment --comment hayai-race -j DROP"
   remote "$1" "sudo -n iptables -C ${rule} 2>/dev/null || sudo -n iptables -I ${rule}" ||
     die "$1: cannot set the iptables rule (sudo without a password is necessary, or RACE_FIREWALL=0)"
-  rule="INPUT -p tcp -m multiport --dports $2 -m comment --comment hayai-race -j DROP"
+  rule="INPUT ! -i lo -p tcp -m multiport --dports $2 -m comment --comment hayai-race -j DROP"
   remote "$1" "sudo -n ip6tables -C ${rule} 2>/dev/null || sudo -n ip6tables -I ${rule}" ||
     die "$1: cannot set the ip6tables rule"
   log "$1: ports $2 are open to ${ip} only"
@@ -284,6 +288,14 @@ start() {
   if remote "${C}" "docker volume inspect race-monitor_prometheus-data >/dev/null 2>&1"; then
     die "${C} has the Prometheus data of a race: run the collect command, then the clean command"
   fi
+  # The iptables rules come after the monitoring is up. A sudo failure then would leave
+  # the Prometheus data of a race on C, so the check runs before any start.
+  if [[ "${RACE_FIREWALL}" == 1 ]]; then
+    for host in "${A}" "${B}"; do
+      remote "${host}" "sudo -n true" ||
+        die "${host}: sudo without a password is necessary for the iptables rules (or RACE_FIREWALL=0)"
+    done
+  fi
 
   for host in "${A}" "${B}" "${C}"; do
     copy_files "${host}"
@@ -305,9 +317,12 @@ start() {
     log "RACE_CALLER=0: no RPC caller; the getblocktemplate panels and the template columns stay empty"
 
   log "starting Prometheus and Grafana on ${C}"
+  # The directory keeps the password private. The file stays readable: Compose mounts it
+  # with its mode of the host, and Grafana runs as uid 472.
   remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
-    'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env &&
-    mkdir -p secrets &&
+    'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' \
+    'RACE_GRAFANA_ADDR=${GRAFANA_ADDR}' >.env &&
+    mkdir -p secrets && chmod 700 secrets &&
     { [ -f secrets/grafana_admin_password ] ||
       (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password); }"
   monitor_compose "${C}" "up -d"
@@ -325,7 +340,11 @@ start() {
   schedule "${B}" hayaid "${HAYAI_IMAGE}" "${epoch}"
   log "both nodes start on ${RACE_NETWORK} at $(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) (epoch ${epoch})"
   log "the firewall of the provider must open TCP ${P2P_PORT} on ${A} and ${B}"
-  log "Grafana: http://$(host_of "${C}"):3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  if [[ "${GRAFANA_ADDR}" == 127.0.0.1 ]]; then
+    log "Grafana: ssh -L 3000:127.0.0.1:3000 ${C}, then http://localhost:3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  else
+    log "Grafana: http://$(host_of "${C}"):3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  fi
   log "run the status command after that time"
 }
 
@@ -367,7 +386,7 @@ container_file() { # CONTAINER PATH
 
 collect_node() { # HOST CONTAINER IMAGE METRICS_PORT VERSION_COMMAND OUT
   local out=$6
-  remote "$1" "cat '${RACE_DIR}/race-info.txt' '${RACE_DIR}/race-start.log' 2>/dev/null" >"${out}/$2-info.txt" || true
+  remote "$1" "cat '${RACE_DIR}/race-info.txt' '${RACE_DIR}/race-start.log' /var/log/race-start.log 2>/dev/null" >"${out}/$2-info.txt" || true
   remote "$1" "docker run --rm --network none '$3' $5 2>&1" >"${out}/$2-version.txt" || true
   remote "$1" "docker inspect '$2'" >"${out}/$2-inspect.json" || true
   remote "$1" "docker stats --no-stream '$2'" >"${out}/$2-stats.txt" || true
