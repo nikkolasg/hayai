@@ -18,6 +18,21 @@
   No vector that grows for the life of the process, no unbounded queue, no random access without a measured reason. Measure before and after. Never adopt a method on a claim.
 - Code reaches cryptographic primitives through the `hayai-crypto` facade. The facade re-exports the upstream Zcash crates by default and the `zakura-*` forks under its `zakura` feature. Crates never name `orchard`, `zcash_primitives`, `pasta_curves`, ... directly, so both backends build. `hayai-bench` also depends on the `zakura-*` crates and on `zebra-chain` as the comparison baselines, behind its default feature `baselines`. The Zakura backend with the baselines is `--no-default-features --features zakura,baselines`.
 
+- `hayai-consensus-core` is the code that Lean proofs will cover. Every change to it keeps the rules of `docs/formal-verification.md`, section "Design rules of the core". Consensus rules go into the core; the other crates only fetch data, run the cryptography and call the core.
+
+## Branch modular-crates: how to continue
+
+The work of the epic "Modular crates" (bd `hayai-7yq`) moved from another machine at commit `7bc096d`. When the owner asks to continue this branch:
+
+1. Read `CHANGES.md`, `docs/formal-verification.md` and `docs/architecture.md`.
+2. Run `bd show hayai-7yq` for the open items. If `bd` does not list the issues, import `.beads/issues.jsonl`.
+3. Start with M2 (`bd show hayai-rlg`): its hand-off note gives the design of stage 2 of the core. The first step is the removal of `#![no_std]` and `extern crate alloc` from `crates/hayai-consensus-core/src/lib.rs`.
+4. Then M14 (Charon and Aeneas extraction of the core), then the other open items. M13 (the performance gate) comes last.
+5. The tests did not run on `7bc096d`. Run the tests of the changed crates before the first new commit, and report a failure that the change does not explain to the owner.
+6. Ask the owner the open decision of `docs/formal-verification.md` (checkpoint path) before M2 changes `apply_checkpointed`.
+
+Remove this section when the epic merges into `main`.
+
 ## Containers
 
 - Never start a container with `--privileged`, with `--pid=host`, or with a bind mount of the host `/dev`. On 2026-10-03 a privileged systemd container started `getty` on the host `tty1` and ended the desktop session of the owner.
