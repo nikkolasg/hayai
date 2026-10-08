@@ -227,10 +227,10 @@ firewall() { # HOST PORTS
   }
   local ip rule
   ip=$(monitor_ip "$1")
-  rule="INPUT -p tcp -m multiport --dports $2 ! -s ${ip} -m comment --comment hayai-race -j DROP"
+  rule="INPUT ! -i lo -p tcp -m multiport --dports $2 ! -s ${ip} -m comment --comment hayai-race -j DROP"
   remote "$1" "sudo -n iptables -C ${rule} 2>/dev/null || sudo -n iptables -I ${rule}" ||
     die "$1: cannot set the iptables rule (sudo without a password is necessary, or RACE_FIREWALL=0)"
-  rule="INPUT -p tcp -m multiport --dports $2 -m comment --comment hayai-race -j DROP"
+  rule="INPUT ! -i lo -p tcp -m multiport --dports $2 -m comment --comment hayai-race -j DROP"
   remote "$1" "sudo -n ip6tables -C ${rule} 2>/dev/null || sudo -n ip6tables -I ${rule}" ||
     die "$1: cannot set the ip6tables rule"
   log "$1: ports $2 are open to ${ip} only"
@@ -284,6 +284,14 @@ start() {
   if remote "${C}" "docker volume inspect race-monitor_prometheus-data >/dev/null 2>&1"; then
     die "${C} has the Prometheus data of a race: run the collect command, then the clean command"
   fi
+  # The iptables rules come after the monitoring is up. A sudo failure then would leave
+  # the Prometheus data of a race on C, so the check runs before any start.
+  if [[ "${RACE_FIREWALL}" == 1 ]]; then
+    for host in "${A}" "${B}"; do
+      remote "${host}" "sudo -n true" ||
+        die "${host}: sudo without a password is necessary for the iptables rules (or RACE_FIREWALL=0)"
+    done
+  fi
 
   for host in "${A}" "${B}" "${C}"; do
     copy_files "${host}"
@@ -307,9 +315,9 @@ start() {
   log "starting Prometheus and Grafana on ${C}"
   remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
     'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env &&
-    mkdir -p secrets &&
+    mkdir -p secrets && chmod 700 secrets &&
     { [ -f secrets/grafana_admin_password ] ||
-      (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password); }"
+      (umask 077 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password); }"
   monitor_compose "${C}" "up -d"
 
   firewall "${A}" "${ZAKURAD_METRICS_PORT},${EXPORTER_PORT}"
@@ -367,7 +375,7 @@ container_file() { # CONTAINER PATH
 
 collect_node() { # HOST CONTAINER IMAGE METRICS_PORT VERSION_COMMAND OUT
   local out=$6
-  remote "$1" "cat '${RACE_DIR}/race-info.txt' '${RACE_DIR}/race-start.log' 2>/dev/null" >"${out}/$2-info.txt" || true
+  remote "$1" "cat '${RACE_DIR}/race-info.txt' '${RACE_DIR}/race-start.log' /var/log/race-start.log 2>/dev/null" >"${out}/$2-info.txt" || true
   remote "$1" "docker run --rm --network none '$3' $5 2>&1" >"${out}/$2-version.txt" || true
   remote "$1" "docker inspect '$2'" >"${out}/$2-inspect.json" || true
   remote "$1" "docker stats --no-stream '$2'" >"${out}/$2-stats.txt" || true

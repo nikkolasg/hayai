@@ -198,8 +198,22 @@ scripts/race_deploy.sh stop    user@a.example user@b.example user@c.example
   machine except C. `start` needs `sudo` without a password for these rules. Set
   `RACE_MONITOR_IP` when A and B see C under another address than the SSH target. Open
   the P2P port (TCP 8233 on Mainnet) on A and B in the firewall of the provider.
-- Grafana: `http://c.example:3000`, user `admin`, password in
-  `hayai-race/secrets/grafana_admin_password` on C.
+- Grafana listens on `127.0.0.1:3000` of C. Open a tunnel with
+  `ssh -L 3000:127.0.0.1:3000 user@c.example`, then open `http://localhost:3000`, user
+  `admin`, password in `hayai-race/secrets/grafana_admin_password` on C. Set
+  `RACE_GRAFANA_ADDR=0.0.0.0` only behind a firewall that limits port 3000 to the operator.
+
+Prerequisites of the 3 machines, which the script does not check:
+
+- The SSH user is in the `docker` group on A, B and C.
+- `sudo` without a password on A and B, for the iptables rules (or `RACE_FIREWALL=0`).
+- The Docker Compose plugin, version 2.20 or later, on A, B and C. Docker BuildKit on the
+  build machine (the Zakura image uses `COPY --link`).
+- GNU `tar`, `gzip` and `getent` on A, B and C.
+- Linux 5.19 or later on A and B: the sidecar reads `memory.peak` of the cgroup.
+- Disk on A and B: `/var/lib/docker` holds the images and the node data. Use the sizes of
+  the section Machine size. The Zakura state needs 275 GiB or more on Mainnet; a 400 GiB
+  volume leaves about 60 GiB for the images, the traces and the zakurad log.
 
 ## System setting
 
@@ -249,6 +263,12 @@ on Mainnet or Testnet confirms it:
 | Mainnet | Yes (`vct/mainnet-frontier.bin`) | VCT state on, source `HeaderAuxiliary`. The roots of the trees come with the native header sync (`GetHeaders { want_tree_aux_roots }`), and `p2p_stack = "legacy"` runs no native stack. Without a supplied root, and before a first block on the fast path, the committer recomputes the note commitment trees of the block (`finalized_state.rs:1214-1222`, counter `state_vct_legacy_block_count`). Expected with the race configuration: the recompute for each block, as on Testnet. After a first block on the fast path, a block without a root stops with a retryable error (`VctSuppliedRootUnavailable`, counter `state_vct_root_unavailable_count`) |
 | Testnet | No (`Network::Testnet(_) => None`) | Legacy committer: zakurad recomputes the Sprout, Sapling, Orchard and Ironwood note commitment trees of each block |
 | Regtest | Only with the test variable `VCT_REGTEST_FRONTIER` | Legacy committer. The `/metrics` text of a Regtest node has `state_vct_legacy_block_count` and `state_vct_fast_path_miss` (`scripts/zakura_metric_names.txt`) |
+
+hayaid below the last checkpoint takes its checkpoint path (`apply_checkpointed` in
+hayai-validate, `docs/hayaid.md`): the hash of the block against the checkpoint list, the
+merkle root and the ZIP 244 authorizing-data root, then the state update with the note
+commitment tree appends. It runs no script, no proof, no signature and no contextual header
+rule, and it loads no verifying key. Both nodes trust the same checkpoint heights.
 
 The historical frontier grid (`zakura-assets`, `MAINNET_FRONTIER_GRID`) is also Mainnet
 only (`treestate_artifact.rs:1062`). It serves historical tree states and does not
@@ -431,6 +451,14 @@ of the blocks. For the value of each block, use a range of 2 hours or less, or u
 8. Differences that stay: zakurad writes its log to a file and hayaid to the output of
    its container. The sync methods differ (zakurad: legacy syncer with checkpoints;
    hayaid: header chain first, then blocks).
+9. The RPC caller makes zakurad build a template at each call, and hayaid answers from
+   its live template. The node CPU of the comparison includes this load. A run with
+   `RACE_CALLER=0` on both machines isolates it.
+10. The sidecars run under the same limits, but the zakurad sidecar does more work: it
+    tails the zakurad log and walks the RocksDB files each 60 s for `disk_bytes`. The
+    machine CPU includes this difference; the node CPU (the cgroup of the node) does not.
+11. The reference height of the tip is `sync_estimated_network_tip_height`, an estimate
+    that both nodes see. "Time to the tip" has an error of some blocks.
 
 ## Run time
 

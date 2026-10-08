@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Race deployment (`scripts/race_deploy.sh`, `docker/race`, `deploy/terraform/aws-race`): the iptables rules of the node machines keep loopback open, so `status` and `collect` read the metrics again; Grafana listens on `127.0.0.1` by default (SSH tunnel; the Terraform path keeps `0.0.0.0` behind its security group); the Grafana password file is private; `start` checks `sudo` before it starts anything; `collect` records the start times of the Terraform path; the race units are enabled, so a reboot before the start time does not lose the start. The runbook lists the prerequisites, the checkpoint path of hayaid and 3 more fairness rules.
 - `hayai-prepared`: a v5 or v6 transparent input signed with `SIGHASH_SINGLE` (or `SIGHASH_SINGLE | ANYONECANPAY`) and no output at its index fails its signature check (ZIP 244 S.2a, as zcashd, Zebra and Zakura). Before, hayai hashed an empty output list and accepted such a signature.
 - `hayaid`: a peer whose protocol version is below the version of the upgrade of the tip is refused at the handshake and disconnected when the upgrade activates (ZIP 201, ZIP 204, as Zakura). Before, the minimum stayed at 170,150.
 - `hayai-net`: a `ping` before the end of the handshake gets no `pong` (ZIP 204). Before NU5 the relay does not fetch a `MSG_WTX` announcement (ZIP 239).

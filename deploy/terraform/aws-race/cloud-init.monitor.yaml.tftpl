@@ -20,12 +20,14 @@ write_files:
       fi
       git -C /opt/race/hayai checkout --detach '${hayai_ref}'
       cd /opt/race/hayai/docker/race
+      # Grafana on all interfaces: the security group limits port 3000 to admin_cidr.
       printf '%s\n' 'RACE_NETWORK=${network}' \
-        'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env
+        'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' \
+        'RACE_GRAFANA_ADDR=0.0.0.0' >.env
       # Grafana admin password, generated once.
-      install -d -m 0755 secrets
+      install -d -m 0700 secrets
       if [ ! -f secrets/grafana_admin_password ]; then
-        (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
+        (umask 077 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
       fi
       docker compose -f compose.monitor.yml up -d
 

@@ -141,5 +141,5 @@ write_files:
 runcmd:
   - [sysctl, -p, /etc/sysctl.d/90-race.conf]
   - [systemctl, daemon-reload]
-  - [systemctl, start, --no-block, race-bootstrap.service]
-  - [systemctl, start, --no-block, race-start.service]
+  - [systemctl, enable, --now, --no-block, race-bootstrap.service]
+  - [systemctl, enable, --now, --no-block, race-start.service]

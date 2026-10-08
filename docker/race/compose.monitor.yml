@@ -13,7 +13,9 @@
 #                            checkpoint in the rules (3,499,045 or 4,023,200)
 #   RACE_LAST_CHECKPOINT_HEIGHT  another height for the rules (the Regtest dry run)
 #   RACE_PROMETHEUS_ADDR     listen address of Prometheus (default 127.0.0.1:9090)
-#   RACE_GRAFANA_ADDR, RACE_GRAFANA_PORT   Grafana (defaults 0.0.0.0 and 3000)
+#   RACE_GRAFANA_ADDR, RACE_GRAFANA_PORT   Grafana (defaults 127.0.0.1 and 3000). The
+#                            default serves an SSH tunnel; set 0.0.0.0 only behind a
+#                            firewall that limits port 3000 to the operator.
 #
 # Grafana reads its admin password from secrets/grafana_admin_password. Create that file
 # before the first start.
@@ -67,7 +69,7 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      GF_SERVER_HTTP_ADDR: ${RACE_GRAFANA_ADDR:-0.0.0.0}
+      GF_SERVER_HTTP_ADDR: ${RACE_GRAFANA_ADDR:-127.0.0.1}
       GF_SERVER_HTTP_PORT: ${RACE_GRAFANA_PORT:-3000}
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
