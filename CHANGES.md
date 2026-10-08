@@ -1568,3 +1568,13 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   `PreparedStore::relay_ids`). A rule needs a test at the level of the node, not only of the
   helper.
 
+
+## 2026-10-08 — Race deployment: private secrets, enabled units
+
+- Lesson: Docker Compose outside swarm mounts a `secrets:` file with its owner and mode of
+  the host, and ignores `uid`, `gid` and `mode`. A 0600 file of the operator is unreadable
+  for Grafana (uid 472). The directory of the secret is 0700; the daemon resolves the bind
+  mount as root, so the file can stay 0644. `deploy/terraform/aws` already did this.
+- Lesson: `systemctl enable` on a unit without an `[Install]` section only warns, and the
+  unit does not start at the next boot. A unit that must survive a reboot has
+  `WantedBy=multi-user.target`.

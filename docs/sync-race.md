@@ -573,7 +573,7 @@ export RACE_ZAKURAD_HOST=127.0.0.1 RACE_HAYAID_HOST=127.0.0.1 RACE_ZAKURAD_METRI
 export RACE_HAYAID_METRICS_PORT=39101 RACE_ZAKURAD_EXPORTER_PORT=39100 RACE_HAYAID_EXPORTER_PORT=39100
 export RACE_PROMETHEUS_ADDR=127.0.0.1:39090 RACE_GRAFANA_ADDR=127.0.0.1 RACE_GRAFANA_PORT=33000
 export RACE_LAST_CHECKPOINT_HEIGHT=5
-mkdir -p secrets && (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
+install -d -m 0700 secrets && (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password)
 docker compose -p race-dryrun-monitor -f compose.monitor.yml up -d
 docker compose -p race-dryrun-node -f compose.node.yml --profile zakurad up -d node-exporter zakurad zakurad-caller zakurad-sidecar
 docker compose -p race-dryrun-node -f compose.node.yml --profile hayaid up -d hayaid hayaid-caller hayaid-sidecar

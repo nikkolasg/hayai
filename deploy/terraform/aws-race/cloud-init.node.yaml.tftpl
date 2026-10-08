@@ -124,6 +124,9 @@ write_files:
       ExecStart=/usr/local/sbin/race-bootstrap
       TimeoutStartSec=infinity
 
+      [Install]
+      WantedBy=multi-user.target
+
   - path: /etc/systemd/system/race-start.service
     permissions: "0644"
     content: |
@@ -137,6 +140,9 @@ write_files:
       Type=oneshot
       ExecStart=/usr/local/sbin/race-start
       TimeoutStartSec=infinity
+
+      [Install]
+      WantedBy=multi-user.target
 
 runcmd:
   - [sysctl, -p, /etc/sysctl.d/90-race.conf]

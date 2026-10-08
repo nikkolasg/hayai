@@ -54,6 +54,9 @@
 #   RACE_CALLER_INTERVAL  Seconds between two calls of an RPC caller (default 5).
 #   RACE_CALLER_LONGPOLL  1 (default): each RPC caller also holds one long poll and
 #                     sends one call without `longpollid` after each answer. 0: no long poll.
+#   RACE_GRAFANA_ADDR Listen address of Grafana on C (default 127.0.0.1: open it through
+#                     an SSH tunnel). Set 0.0.0.0 only behind a firewall that limits port
+#                     3000 to the operator.
 #   RACE_ZAKURAD_METRICS_PORT, RACE_HAYAID_METRICS_PORT, RACE_PROMETHEUS_ADDR
 #                     Other ports than 9999, 19101 and 127.0.0.1:9090, as in
 #                     docker/race/compose.monitor.yml (the dry run).
@@ -91,6 +94,7 @@ ZAKURAD_METRICS_PORT="${RACE_ZAKURAD_METRICS_PORT:-9999}"
 HAYAID_METRICS_PORT="${RACE_HAYAID_METRICS_PORT:-19101}"
 EXPORTER_PORT=9100
 PROMETHEUS_ADDR="${RACE_PROMETHEUS_ADDR:-127.0.0.1:9090}"
+GRAFANA_ADDR="${RACE_GRAFANA_ADDR:-127.0.0.1}"
 # The data directory of zakurad in its container (docker/race/config).
 ZAKURAD_DATA="/home/zebra/.cache/zakura"
 # The scrape interval of docker/race/prometheus/prometheus.yml, in seconds.
@@ -313,11 +317,14 @@ start() {
     log "RACE_CALLER=0: no RPC caller; the getblocktemplate panels and the template columns stay empty"
 
   log "starting Prometheus and Grafana on ${C}"
+  # The directory keeps the password private. The file stays readable: Compose mounts it
+  # with its mode of the host, and Grafana runs as uid 472.
   remote "${C}" "cd '${RACE_DIR}' && printf '%s\n' 'RACE_NETWORK=${RACE_NETWORK}' \
-    'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' >.env &&
+    'RACE_ZAKURAD_HOST=${zakurad_host}' 'RACE_HAYAID_HOST=${hayaid_host}' \
+    'RACE_GRAFANA_ADDR=${GRAFANA_ADDR}' >.env &&
     mkdir -p secrets && chmod 700 secrets &&
     { [ -f secrets/grafana_admin_password ] ||
-      (umask 077 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password); }"
+      (umask 022 && head -c 18 /dev/urandom | base64 >secrets/grafana_admin_password); }"
   monitor_compose "${C}" "up -d"
 
   firewall "${A}" "${ZAKURAD_METRICS_PORT},${EXPORTER_PORT}"
@@ -333,7 +340,11 @@ start() {
   schedule "${B}" hayaid "${HAYAI_IMAGE}" "${epoch}"
   log "both nodes start on ${RACE_NETWORK} at $(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) (epoch ${epoch})"
   log "the firewall of the provider must open TCP ${P2P_PORT} on ${A} and ${B}"
-  log "Grafana: http://$(host_of "${C}"):3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  if [[ "${GRAFANA_ADDR}" == 127.0.0.1 ]]; then
+    log "Grafana: ssh -L 3000:127.0.0.1:3000 ${C}, then http://localhost:3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  else
+    log "Grafana: http://$(host_of "${C}"):3000 (user admin, password in ${RACE_DIR}/secrets/grafana_admin_password on ${C})"
+  fi
   log "run the status command after that time"
 }
 
