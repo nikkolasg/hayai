@@ -530,7 +530,7 @@ mod counter {
             operation,
             result,
         };
-        let builder = match event {
+        let mut builder = match event {
             HwEvent::Cycles => Builder::new(Hardware::CPU_CYCLES),
             HwEvent::Instructions => Builder::new(Hardware::INSTRUCTIONS),
             HwEvent::CacheRefs => Builder::new(Hardware::CACHE_REFERENCES),
