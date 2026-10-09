@@ -41,10 +41,14 @@ default.
 | `docker/race/config/zakurad.regtest.toml`, `hayaid.regtest.toml` | The dry run on one machine: Regtest, 127.0.0.1, hayaid is the only peer of zakurad. |
 | `docker/race/prometheus/prometheus.yml` | One scrape job each 5 s with the targets of the file service discovery; each target has the label `node`. |
 | `docker/race/prometheus/rules/race.yml` | Recording rules `race:*`: heights, blocks for each second, peers, P2P bytes, the first time at the last checkpoint and at the tip, the mean service time of RPC, one value for each block (contextual commit time and its block height), verification reuse, machine CPU, memory, disk and network. |
-| `docker/race/prometheus/tests/race_test.yml`, `race_blocks_test.yml` | `promtool test rules` cases for each rule. |
+| `docker/race/prometheus/tests/race_test.yml`, `race_blocks_test.yml`, `race_sidecar_test.yml` | `promtool test rules` cases for each rule. |
 | `docker/race/grafana/dashboards/comparison.json` | Dashboard "zakurad and hayaid: comparison": only the quantities with a close meaning on both nodes, each with its difference. |
 | `docker/race/grafana/dashboards/hayai-node.json`, `zakura-node.json` | One dashboard for each node with each metric that the node exports. |
 | `scripts/race_deploy.sh` | `build`, `start`, `status`, `stop`, `collect`, `swap`, `clean` for 3 hosts with Docker and SSH. |
+| `scripts/race_rpc_caller.py` | The RPC caller of one node: `getblocktemplate` with the long poll of a pool, at the cadence of `RACE_CALLER_INTERVAL`. The same image and settings on both machines. |
+| `scripts/race_sidecar.py` | The sidecar of one node: the compared quantities of the node from its cgroup (`cpu.stat`, `memory.current`, `memory.peak`, `io.stat`), its data directory and its RPC, as a textfile of node-exporter. |
+| `scripts/gen_race_dashboards.py` | Writes the 3 dashboards of `docker/race/grafana/dashboards/`. CI checks that the files equal its output. |
+| `scripts/test_race_blocks.py`, `scripts/test_race_sidecar.py` | Unit tests of `race_blocks.py` and `race_sidecar.py` (`python3 -m unittest`). |
 | `scripts/race_blocks.py` | The table of blocks at the tip (`blocks.csv`, `blocks.md`) from the traces of both nodes, the log of zakurad and its Prometheus series. `scripts/test_race_blocks.py` tests it with the files of `scripts/fixtures/race_blocks`. |
 | `scripts/zakura_metric_names.txt` | The metric families of a running zakurad. `scripts/check_metric_names.py` reads it. |
 | `deploy/terraform/aws-race/` | 3 instances (A and B equal, C small), security groups, first-boot scripts that build the image and start the node at `start_at`. Variable `network` (default `mainnet`). |
@@ -74,6 +78,7 @@ default.
 
 | File | Content |
 |---|---|
-| `.github/workflows/ci.yml` | Jobs: fmt; msrv check of the node crates on the workspace `rust-version`; clippy `-D warnings` and release tests on both backends; benches compile; cargo-deny; Docker build and compose check; Prometheus, Alertmanager and dashboard checks (also the race of zakurad and hayaid, with the test of `scripts/race_blocks.py`); Terraform fmt and validate of both root modules; shellcheck. |
+| `.github/workflows/ci.yml` | Jobs of each push: fmt; clippy `-D warnings` and release tests on the upstream backend; cargo-deny; compose check; Prometheus, Alertmanager and dashboard checks (also the race rules, with the tests of `scripts/race_blocks.py` and `scripts/race_sidecar.py`); Terraform fmt and validate of both root modules; shellcheck. |
+| `.github/workflows/full.yml` | Jobs on demand: clippy and release tests on both backends; msrv check of the node crates on the workspace `rust-version`; benches compile; Docker build. |
 | `deny.toml` | Licenses (MIT, Apache-2.0, BSD, ISC, Unicode, Zlib, CC0, one MPL-2.0 exception), RustSec advisories (none ignored), sources. The file excludes the `multitable` git dependency from the graph: the dependency has no license. It is a feature of hayai-bench that is off by default. |
 | `scripts/check_metric_names.py` | Fails when a rule or a dashboard uses a metric name that hayaid does not register, or when a rule or a dashboard of `docker/race` reads a name that is not in its lists (hayaid, the families of a running zakurad, node-exporter). |
