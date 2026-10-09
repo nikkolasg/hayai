@@ -39,6 +39,19 @@ jobs:
       - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt && rustup default "$RUST_TOOLCHAIN"
       - run: cargo fmt --all --check
 
+  # The layering of the crates (scripts/layering.sh): the dependency order of
+  # docs/architecture.md, no I/O in a pure crate, no file, socket or database in an
+  # in-memory crate, no socket outside the network crates. `cargo tree` resolves the lock
+  # file and builds nothing.
+  layering:
+    name: crate layering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && rustup default "$RUST_TOOLCHAIN"
+      - run: scripts/layering.sh
+
   clippy:
     name: clippy
     runs-on: ubuntu-24.04

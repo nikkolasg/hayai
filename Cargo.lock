@@ -1620,6 +1620,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayai-http"
+version = "0.1.0"
+dependencies = [
+ "hayai-crypto",
+ "tracing",
+]
+
+[[package]]
 name = "hayai-index"
 version = "0.1.0"
 dependencies = [
@@ -1661,6 +1669,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayai-metrics"
+version = "0.1.0"
+dependencies = [
+ "hayai-http",
+ "tracing",
+]
+
+[[package]]
 name = "hayai-net"
 version = "0.1.0"
 dependencies = [
@@ -1676,6 +1692,46 @@ dependencies = [
  "rand 0.8.8",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "hayai-node"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "crc32c",
+ "crossbeam-channel",
+ "hayai-blockstore",
+ "hayai-coins",
+ "hayai-consensus",
+ "hayai-crypto",
+ "hayai-fixtures",
+ "hayai-http",
+ "hayai-index",
+ "hayai-mempool",
+ "hayai-metrics",
+ "hayai-net",
+ "hayai-prepared",
+ "hayai-relay",
+ "hayai-rpc",
+ "hayai-shadow",
+ "hayai-state",
+ "hayai-sync",
+ "hayai-template",
+ "hayai-trace",
+ "hayai-trees",
+ "hayai-validate",
+ "hayai-wire",
+ "hex",
+ "parking_lot",
+ "rand 0.8.8",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
  "tracing",
 ]
 
@@ -1721,11 +1777,37 @@ dependencies = [
  "bytes",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-http",
+ "hayai-metrics",
  "hayai-template",
  "hayai-wire",
  "hex",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "hayai-shadow"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "crossbeam-channel",
+ "hayai-coins",
+ "hayai-consensus",
+ "hayai-crypto",
+ "hayai-metrics",
+ "hayai-state",
+ "hayai-sync",
+ "hayai-template",
+ "hayai-trees",
+ "hayai-wire",
+ "hex",
+ "parking_lot",
+ "rayon",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -1745,6 +1827,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "bytes",
+ "crc32c",
  "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
@@ -1755,6 +1838,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.8.8",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -1767,7 +1851,9 @@ dependencies = [
  "hashbrown 0.16.1",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-relay",
  "hayai-wire",
+ "parking_lot",
  "proptest",
  "rayon",
  "tempfile",
@@ -1785,9 +1871,23 @@ dependencies = [
  "crossbeam-channel",
  "hayai-consensus",
  "hayai-crypto",
+ "hayai-template-messages",
  "hayai-wire",
  "hex",
  "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "hayai-template-messages"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "hayai-crypto",
+ "hayai-wire",
+ "hex",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1852,36 +1952,20 @@ name = "hayaid"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "crc32c",
  "crossbeam-channel",
- "hayai-blockstore",
- "hayai-coins",
  "hayai-consensus",
  "hayai-crypto",
  "hayai-fixtures",
- "hayai-index",
- "hayai-mempool",
+ "hayai-http",
+ "hayai-metrics",
  "hayai-net",
- "hayai-prepared",
- "hayai-relay",
+ "hayai-node",
  "hayai-rpc",
- "hayai-state",
- "hayai-sync",
- "hayai-template",
- "hayai-trace",
- "hayai-trees",
- "hayai-validate",
  "hayai-wire",
  "hex",
- "parking_lot",
- "rand 0.8.8",
- "rayon",
- "serde",
  "serde_json",
  "signal-hook",
  "tempfile",
- "thiserror 2.0.21",
- "toml",
  "tracing",
  "tracing-subscriber",
 ]

@@ -35,9 +35,9 @@ use hayai_wire::RawTx;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 
-use crate::metrics::NodeMetrics;
-use crate::persist::{PersistError, RecordLog};
 use crate::upstream::{Upstream, UpstreamError};
+use hayai_metrics::Counter;
+use hayai_state::persist::{PersistError, RecordLog};
 
 const ATTEMPTS: u32 = 3;
 
@@ -99,7 +99,9 @@ pub struct UpstreamBacking {
     /// The persistent copy of `spent`, written by `write_generation`. `write_batch` is not
     /// the path of the node (the chain flushes generations) and records in memory only.
     spent_log: Mutex<RecordLog>,
-    metrics: Arc<NodeMetrics>,
+    /// Coins and nullifiers that upstream answered for: the node trusts them.
+    trusted_coins: Arc<Counter>,
+    trusted_nullifiers: Arc<Counter>,
 }
 
 impl UpstreamBacking {
@@ -108,7 +110,8 @@ impl UpstreamBacking {
         upstream: Arc<Upstream>,
         start_height: u32,
         branch: BranchId,
-        metrics: Arc<NodeMetrics>,
+        trusted_coins: Arc<Counter>,
+        trusted_nullifiers: Arc<Counter>,
         spent: SpentLog,
     ) -> Self {
         Self {
@@ -118,7 +121,8 @@ impl UpstreamBacking {
             branch,
             spent: Mutex::new(spent.spent),
             spent_log: Mutex::new(spent.log),
-            metrics,
+            trusted_coins,
+            trusted_nullifiers,
         }
     }
 
@@ -204,7 +208,7 @@ impl CoinsBacking for UpstreamBacking {
             for i in positions {
                 if let Some(coin) = outputs.get(outpoints[i].n() as usize) {
                     found[i] = Some(coin.clone());
-                    self.metrics.trusted_coins.inc();
+                    self.trusted_coins.inc();
                 }
             }
         }
@@ -219,7 +223,7 @@ impl CoinsBacking for UpstreamBacking {
     fn contains_many(&self, pool: Pool, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, Error> {
         let found = self.inner.contains_many(pool, nullifiers)?;
         let unknown = found.iter().filter(|present| !**present).count();
-        self.metrics.trusted_nullifiers.add(unknown as u64);
+        self.trusted_nullifiers.add(unknown as u64);
         Ok(found)
     }
 

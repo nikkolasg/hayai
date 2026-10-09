@@ -134,12 +134,15 @@ token rules; the Charon and Aeneas extraction (bd M14) is the real check.
 The toolchain and the lessons of `multisig-formal/formal` apply: Lean 4.31, a pinned Aeneas
 nightly, an `extract.sh` that regenerates the translation, and a CI job that fails on drift.
 
-## Open decisions
+## Decisions
 
-- Checkpoint path. `apply_checkpointed` computes the delta with the core, but it runs no
-  rule function for a block at or below the last checkpoint, as Zebra and Zakura. Option 1
-  (recommended): the proof takes the checkpoint list as an axiom. Option 2: the node checks
-  these blocks fully, which slows the first synchronization.
+- Checkpoint path (owner, 2026-10-08). `apply_checkpointed` computes the delta with the
+  core, but it runs no rule function for a block at or below the last checkpoint, as Zebra
+  and Zakura. The proof takes the checkpoint list as an axiom. The node does not check
+  these blocks fully: that would slow the first synchronization.
+- Pause (owner, 2026-10-08). Steps 2 to 7 of the plan wait. The crate split of the epic
+  "Modular crates" goes on and keeps the design rules of the core, so that the plan starts
+  from the same core when it resumes.
 
 ## Effort
 

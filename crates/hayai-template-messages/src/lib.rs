@@ -3,6 +3,8 @@
 //! type byte and the fields, integers little-endian, byte strings `u32`-length-prefixed). The
 //! second encoding is JSON lines (serde, byte strings as lowercase hex in wire byte order).
 
+#![forbid(unsafe_code)]
+
 use std::io::{self, Read, Write};
 
 use bytes::Bytes;

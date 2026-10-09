@@ -32,6 +32,15 @@ pub enum Mode {
     Shadow,
 }
 
+impl From<Mode> for hayai_state::persist::Mode {
+    fn from(mode: Mode) -> Self {
+        match mode {
+            Mode::Full => Self::Full,
+            Mode::Shadow => Self::Shadow,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {

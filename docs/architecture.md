@@ -74,6 +74,7 @@ The block spacing decreases to 25 s at NU7. Then 1 s of M1 or M2 delay costs ~4 
 ```
 hayai-crypto      the cryptography backend behind one set of names (upstream or zakura)
 hayai-wire        retained-bytes block and transaction model, txids, merkle roots
+hayai-template-messages  the messages of the template push protocol, with their encodings
 hayai-consensus-core  the consensus rules as pure functions in the Rust subset of Aeneas
 hayai-consensus   the networks and the adapter around the core (addresses, checkpoints, upstream types)
 hayai-sinsemilla  MerkleCRH^Orchard: position-weighted tables, batch-affine lanes
@@ -89,13 +90,28 @@ hayai-blockstore  flat append-only block files with a height index
 hayai-index       wallet index: transactions by id, transparent addresses, note commitment subtrees
 hayai-sync        header chain with forks, block download scheduler, peer misbehaviour score
 hayai-net         legacy Zcash P2P codec and handshake, compact-relay negotiation, both-paths relay, address book, peer manager
+hayai-http        the HTTP/1.1 server side of the services of a node, and the cookie authentication
+hayai-metrics     Prometheus registry (counters, gauges, histograms) and the /metrics endpoint
 hayai-rpc         getblocktemplate/submitblock shim over the live template
+hayai-shadow      shadow mode: the follower of an upstream node through its JSON-RPC, its seed state, its upstream-backed coins
 hayai-fixtures    deterministic synthetic blocks with real signatures and proofs, for tests
+hayai-node        the node as a library: the stores, the chain, the relay, the driver and the RPC from a Config (NodeBuilder)
+hayaid            the binary: the configuration file, the signals, the logs and the CLI around hayai-node
 hayai-bench       benchmarks against zakura-* crates and Zakura's data layouts
 ```
 
 The dependency direction is top to bottom within this list. No crate depends on a crate below
 it in the list, except through the traits named in its section.
+
+`scripts/layering.sh` checks the list on each push (CI job `layering`): the dependency
+order with `cargo tree`, and the layer of each crate by its sources outside the tests. The
+pure crates (`hayai-consensus-core`, `hayai-consensus`, `hayai-wire`, `hayai-sinsemilla`,
+`hayai-trees`) name no file, socket, thread, clock or lock: a rayon map is the one form of
+parallelism they have. The in-memory crates (`hayai-prepared`, `hayai-state`,
+`hayai-validate`, `hayai-mempool`, `hayai-template`, `hayai-relay`) have threads and
+locks, name no file or socket, and pull no database and no async runtime; the one
+exception is `hayai_state::persist`, the base on disk. Only `hayai-net`, `hayai-rpc` and
+`hayaid` open a socket.
 
 ### Crypto backends
 
@@ -487,8 +503,7 @@ it. Block validation and the replay at a restart do not apply it.
 
 | Path | Rules | Context |
 |---|---|---|
-| Relay header check (`hayai_relay::StandardHeaderCheck`) | `check_header` with the clock | `HeaderContext::parent` |
-| hayaid header check (`NodeHeaderCheck`: relay, `submitblock`, shadow follower) | `check_header` with the clock | the header index: committed and pending headers |
+| Relay header check (`hayai_relay::StandardHeaderCheck`: relay, `submitblock`, shadow follower; hayaid's `NodeHeaderCheck` adds the trace row and the counter) | `check_header` with the clock | `HeaderContext::parent`: the best chain index of hayai-sync, committed and pending headers |
 | Block validation (`validate_block`, `build_layer`, `commit_prebuilt`) | `check_contextual` (`hayai_validate::check_block_header`) | the view: `ChainView::recent_times`, `difficulty_context` |
 | Header chain (`hayai_sync::HeaderChain::accept_headers`) | `check_version`, `check_proof_of_work`, then the `HeaderRules` of the node. A chain whose work is 2^256 or more is `HeaderRuleError::WorkOverflow` (possible on Regtest only) | the ancestors of the branch |
 | Replay at a restart | `check_proof_of_work`, then block validation | the view |
@@ -730,6 +745,14 @@ a pass:
 
   It appends the block to the history tree. `docs/consensus.md` lists every rule with
   its status.
+- `persist`: the base on disk. `StateLog` is `state.log`, an append-only file of
+  checksummed records (`RecordLog`). A `StateRecord` holds the `BaseState`, the network,
+  the node mode (full or shadow), the `(hash, time)` of the newest blocks for the seed of
+  the header index, and the anchors and Sprout treestates that are new since the record
+  before. The node writes one record before each flush of the coins store;
+  `StateLog::open` selects the record of the best block of the coins store and drops the
+  later ones, and `StateLog::resume_point` reads that selection without a write. The
+  record format is the contract of a data directory (`docs/hayaid.md`, Files).
 - `block_outputs(raw, height)` is the set of the coins of the block, keyed by outpoint.
   `resolve_inputs(view, raw, &created)` is the coin of every transparent input of the block,
   from that map or from one view round. The validator builds both once, prepares the unknown
@@ -816,7 +839,7 @@ a pass:
   reserved, and hayai does not check it, as Zakura (`zakura-state/src/service/check.rs:272`,
   `PreSaplingReserved`).
 - The Sprout treestates are in memory: the base holds the frontier of the final treestate of
-  every block that changed the tree, by root (about 1 kB each). hayaid writes the new
+  every block that changed the tree, by root (about 1 kB each). `persist` writes the new
   treestates of each flush to `state.log` and reads all of them at a restart.
 - The upstream Sapling batch validator applies the canonical point encodings of ZIP 216 at
   every height. ZIP 216 activates with Canopy. Zebra and Zakura do the same, because no block
@@ -830,8 +853,8 @@ a pass:
   `RuleEpoch { branch_id, script_flags }`. An epoch change drops the cache.
 - The finalized anchors are an in-memory set for each pool (Sapling, Orchard, Ironwood). The
   set starts with the root of the empty tree (`GetSaplingAnchorAt` and `GetOrchardAnchorAt` of
-  zcashd treat it as always present). hayaid persists the set in `state.log` (the new anchors
-  of each flush) and rebuilds it at a restart (`docs/hayaid.md`, Restart).
+  zcashd treat it as always present). `persist` writes the set to `state.log` (the new
+  anchors of each flush) and rebuilds it at a restart (`docs/hayaid.md`, Restart).
 - The Orchard soft fork of ZIP 257 applies to blocks (`rules_at`). The mempool admission of
   hayaid uses the rule set of the branch and does not apply the range (plan item B10).
 
@@ -853,8 +876,11 @@ See `docs/protocol-compact-relay.md`. Library API:
 Header-first forwarding is a policy of the caller. The relay layer exposes
 `HeaderCheck::check(&header)` over a caller-supplied `HeaderContext` (parent lookup: the
 height, and the times and bits of the blocks before the header). A node can therefore forward a
-block after the check passes. `StandardHeaderCheck { context, network }` applies every header
-rule of `hayai_consensus::header::check_header` for the network. `CompactBlock::header` holds
+block after the check passes. `StandardHeaderCheck { context, network, trust_short_context }`
+applies every header rule of `hayai_consensus::header::check_header` for the network. Its
+`verify` returns the height of the header and, on a check that trusts a short context (a
+shadow node whose seed is shorter than the rules read), the rules that did not run. The
+one production context is `hayai_sync::index::HeaderIndex`. `CompactBlock::header` holds
 the serialized header with its real length (1487 bytes on Mainnet, 177 bytes on Regtest).
 
 ## hayai-template
@@ -896,7 +922,7 @@ solution length of a submission.
   driver of a node takes `tip_change()` while it writes the view and cleans the store. An
   admission inserts only on the tip of its checks, else it runs again (3 times at most).
   `readmit` admits the transactions again after a reorg, with a bound of 2 blocks of bytes.
-- The node keeps what only it does (`crates/hayaid/src/mempool.rs`): the peer score of an
+- The node keeps what only it does (`crates/hayai-node/src/mempool.rs`): the peer score of an
   invalid transaction, the gauges of the store, the private transactions and the
   transaction sink of the relay. Another node can reuse `Mempool` with its own relay.
 
@@ -933,6 +959,24 @@ Wallet index, has the column families and the consistency rule.
 
 The crate holds the state machines for synchronization. The crate has no sockets and no
 threads of its own.
+
+### Best chain index (`index`)
+
+- `HeaderIndex` holds the committed best chain as headers: the window that the relay's
+  header check, `getheaders` and the RPC read. It starts at a seed (`SeedBlock`: the
+  genesis block, the start block of a shadow node with the blocks before it, or the base
+  block of a restart with the blocks before it), the node pushes a header after each
+  commit and pops one per disconnected block, and a full node prunes it to the newest
+  blocks. It also holds the pending headers: headers that passed the relay's check and
+  whose blocks wait in the node's queue, so that a child finds its parent before the
+  parent commits.
+- The index is the `hayai_relay::HeaderContext` of the relay's check: `has_block`,
+  `parent` (`parent_context`: the height, and up to 113 times and `nBits` of the parent
+  and the blocks before it, newest first) and the clock of the system.
+- A full node has both the index and the `HeaderChain`: the chain holds every header from
+  the genesis block and chooses the best chain; the index holds the committed window. The
+  two are linked by the commit order of the node (bd `hayai-7yq`, follow-up: the chain as
+  the context of the relay in full mode).
 
 ### Header chain (`headers`, `locator`, `store`)
 
@@ -1115,10 +1159,18 @@ See `docs/protocol-compact-relay.md`, section Negotiation and legacy coexistence
   Established(CompactRelay(v)); pings and timeouts.
 - `transport`: the `Transport` trait, and `TcpTransport` on `std::net` with one reader thread
   per peer and a bounded outbound queue.
-- `relay`: `Relay` owns the peer set. It applies the both-paths policy through the traits
-  `TxSink` (prepared store), `BlockSink` (validator), `ChainSource` (headers and stored
-  blocks) and `TxLookup` (hayai-wire). `IncomingBlock` is the single entry that every block
-  takes.
+- `policy`: `RelayPolicy` owns the peer set and applies the both-paths policy through the
+  traits `TxSink` (prepared store), `BlockSink` (validator), `ChainSource` (headers and
+  stored blocks) and `TxLookup` (hayai-wire). `IncomingBlock` is the single entry that
+  every block takes. The policy has no socket and no thread: every message that leaves and
+  every connection that ends goes through the `Io` trait (`send`, `queued_bytes`, `close`)
+  that the caller passes with each event, and the tick takes its `now`. The locks are the
+  ones of the state (the peers, the recent blocks, the pending compact blocks, the lanes),
+  so the readers of the peers run the policy at the same time, as before the split. The
+  tests of the module drive the policy with a recording `Io`: events in, messages out.
+- `relay`: `Relay` is the shell: the TCP transports, the acceptor, the dialler of the peer
+  manager and the ticker. It implements `Io` with the transport of each peer (looked up
+  under the lock, used after its release) and keeps the public API of the node.
 - `protocol`: the node sends protocol version 170,160 (NU6.3) and the user agent
   `/hayai:<version>/`. `min_peer_version(network, upgrade)` gives the oldest peer version
   for the active upgrade, never below 170,150. `Relay::set_min_peer_version` applies it to

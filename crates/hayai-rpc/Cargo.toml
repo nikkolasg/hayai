@@ -14,12 +14,16 @@ upstream = [
     "hayai-wire/upstream",
     "hayai-consensus/upstream",
     "hayai-template/upstream",
+    "hayai-http/upstream",
+    "hayai-metrics/upstream",
 ]
 zakura = [
     "hayai-crypto/zakura",
     "hayai-wire/zakura",
     "hayai-consensus/zakura",
     "hayai-template/zakura",
+    "hayai-http/zakura",
+    "hayai-metrics/zakura",
 ]
 
 [dependencies]
@@ -27,6 +31,8 @@ hayai-crypto.workspace = true
 hayai-wire.workspace = true
 hayai-consensus.workspace = true
 hayai-template.workspace = true
+hayai-http.workspace = true
+hayai-metrics.workspace = true
 bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -8,7 +8,8 @@
 //! - [`LiveTemplate`]: the ordered candidate set, the dependency graph and the deterministic
 //!   greedy selection under the block limits. `apply` handles set events. `on_tip` handles tip
 //!   events.
-//! - [`messages`]: the protocol messages with binary-frame and JSON-lines encodings.
+//! - [`messages`]: the protocol messages with binary-frame and JSON-lines encodings, the
+//!   crate `hayai-template-messages`: a miner decodes the push without the template.
 //! - [`Publisher`]: fan-out to subscribers with coalescing and the slow-subscriber rule.
 //! - [`submission`]: the rebuild of a block from a `Submit` message and a stored template.
 //! - [`zip317`]: fee parameters, logical actions and the fixed-point weight ratio.
@@ -18,7 +19,8 @@
 pub mod candidate;
 pub mod coinbase;
 pub mod live;
-pub mod messages;
+/// The protocol messages (`hayai-template-messages`).
+pub use hayai_template_messages as messages;
 pub mod publisher;
 pub mod submission;
 #[cfg(test)]

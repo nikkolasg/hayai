@@ -73,10 +73,10 @@ use hayai_wire::{merkle_root, RawBlock};
 use parking_lot::{Condvar, Mutex};
 use serde_json::json;
 
-use crate::headers::HeaderIndex;
 use crate::metrics::NodeMetrics;
 use crate::node::{fatal, Event as DriverEvent, NodeError};
 use crate::params::NetParams;
+use hayai_sync::index::HeaderIndex;
 
 /// Bodies of the relay that the node holds for blocks that are not on the best header
 /// chain, at most. Above this number the node drops them and records them as missing.

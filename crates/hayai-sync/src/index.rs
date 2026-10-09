@@ -2,35 +2,33 @@
 //! the header check reads (the height of the parent, and the times and the `nBits` of the
 //! blocks before the header).
 //!
-//! hayai-state keeps coins, nullifiers and trees, not headers, so the node keeps this index
-//! beside the chain. The driver pushes a header after each commit and pops one per
-//! disconnected block.
+//! hayai-state keeps coins, nullifiers and trees, not headers, so a node keeps this index
+//! beside the chain. The node pushes a header after each commit and pops one per
+//! disconnected block. The index starts at a seed: the blocks that the node did not receive
+//! as blocks (the genesis block, the start block of a shadow node and the blocks before it,
+//! or the base block of a restart and the blocks before it).
 //!
 //! The index also holds pending headers: headers that passed the check at the relay and
-//! whose blocks wait in the driver's queue. The relay forwards a block after its header
+//! whose blocks wait in the node's queue. The relay forwards a block after its header
 //! check and before its validation, so a child can arrive while its parent is still in the
 //! queue. Its header check then finds the parent among the pending headers.
+//!
+//! The index is the [`HeaderContext`] of the relay's header check
+//! (`hayai_relay::StandardHeaderCheck`), with the clock of the system.
+//!
+//! The fork-aware chain of a full node is [`crate::headers::HeaderChain`]. A full node has
+//! both: the chain holds every header from the genesis block and chooses the best chain;
+//! the index holds the window of committed blocks that the relay and the RPC read.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
-use hayai_consensus::difficulty::median_time_past;
-use hayai_consensus::header::{check_header, HeaderVerdict};
-use hayai_consensus::{ParentChain, DIFFICULTY_CONTEXT_BLOCKS};
-use hayai_relay::{HeaderCheck, HeaderError, ParentInfo};
-use hayai_trace::{event, Table, Tracer};
+use hayai_consensus::DIFFICULTY_CONTEXT_BLOCKS;
+use hayai_relay::{HeaderContext, ParentInfo};
 use hayai_wire::header::{BlockHash, BlockHeader};
 use parking_lot::RwLock;
-use serde_json::json;
-use std::sync::Arc;
-
-use crate::metrics::NodeMetrics;
-use crate::params::NetParams;
 
 /// A block at the start of the index. The node did not receive it as a block, so the
-/// index holds no header for it: the genesis block of a full node, the start block of a
-/// shadow node and the blocks before it, or the base block of a restart and the blocks
-/// before it.
+/// index holds no header for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeedBlock {
     pub hash: BlockHash,
@@ -151,11 +149,6 @@ impl HeaderIndex {
         self.inner.read().pending.contains_key(hash)
     }
 
-    /// Median of the times of `hash` and its ten predecessors that the index holds.
-    pub fn median_time_past(&self, hash: &BlockHash) -> Option<u32> {
-        median_time_past(&self.parent_context(hash)?.times)
-    }
-
     /// The context of a header whose parent is `hash`, a committed block or a pending
     /// header: the height of `hash`, and the times and the `nBits` of `hash` and of the
     /// blocks before it, newest first, at most [`DIFFICULTY_CONTEXT_BLOCKS`] of each. The
@@ -193,7 +186,7 @@ impl HeaderIndex {
         })
     }
 
-    /// Records a header that passed the check and whose block goes to the driver.
+    /// Records a header that passed the check and whose block goes to the node.
     pub fn add_pending(&self, header: &BlockHeader, height: u32) {
         let mut inner = self.inner.write();
         if inner.pending.len() >= MAX_PENDING {
@@ -293,112 +286,43 @@ impl HeaderIndex {
     }
 }
 
-fn now_secs() -> u32 {
+/// The seconds since the Unix epoch, as the header rules read the clock.
+pub fn now_secs() -> u32 {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     u32::try_from(secs).unwrap_or(u32::MAX)
 }
 
-/// The header check that gates forwarding and validation: block not already in the chain,
-/// parent known, then every header rule of `hayai_consensus::header::check_header` on the
-/// context of the index, with the clock of the node.
-///
-/// The index of a shadow node starts at a block above the genesis block. Its seed holds
-/// the time and the `nBits` of the start block and of the blocks before it,
-/// [`DIFFICULTY_CONTEXT_BLOCKS`] blocks in all (fewer only when the chain is shorter), so
-/// every rule runs from the first block after the start. A
-/// context that is too short for a rule (an index with a shorter seed) is never a pass: the
-/// header passes the rules that did not run only when `trust_short_context` is set, and
-/// each such header increments `hayai_shadow_trusted_bits_total`. Without it the header
-/// is rejected.
-pub struct NodeHeaderCheck {
-    pub params: NetParams,
-    pub index: Arc<HeaderIndex>,
-    pub tracer: Tracer,
-    pub metrics: Arc<NodeMetrics>,
-    /// Shadow mode: the node trusts upstream for the rules that its context cannot check.
-    /// Full mode starts at the genesis block and never sets it.
-    pub trust_short_context: bool,
-}
-
-impl NodeHeaderCheck {
-    fn rules(&self, header: &BlockHeader, hash: &BlockHash) -> Result<u32, HeaderError> {
-        if self.index.contains(hash) {
-            return Err(HeaderError::AlreadyInChain(*hash));
-        }
-        let Some(parent) = self.index.parent_context(&header.prev_hash) else {
-            return Err(HeaderError::ParentUnknown(header.prev_hash));
-        };
-        let height = parent.height + 1;
-        let chain = ParentChain {
-            height,
-            times: &parent.times,
-            bits: &parent.bits,
-        };
-        match check_header(self.params.kind, header, &chain, Some(now_secs()))? {
-            HeaderVerdict::Checked => {}
-            HeaderVerdict::ContextTooShort(_) if self.trust_short_context => {
-                self.metrics.trusted_bits.inc();
-            }
-            HeaderVerdict::ContextTooShort(unchecked) => {
-                return Err(HeaderError::ContextTooShort(unchecked));
-            }
-        }
-        Ok(height)
+/// The committed blocks and the pending headers, with the clock of the system.
+impl HeaderContext for HeaderIndex {
+    fn has_block(&self, hash: &BlockHash) -> bool {
+        self.contains(hash)
     }
-}
 
-impl NodeHeaderCheck {
-    /// The rules, with a `block_header_checked` row. Returns the block's height.
-    pub fn verify(&self, header: &BlockHeader) -> Result<u32, HeaderError> {
-        let started = Instant::now();
-        let hash = header.hash();
-        let verdict = self.rules(header, &hash);
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        self.tracer.emit(
-            Table::BlockSync,
-            event::BLOCK_HEADER_CHECKED,
-            || match &verdict {
-                Ok(height) => json!({
-                    "hash": hash.to_string(),
-                    "height": height,
-                    "result": "ok",
-                    "elapsed_us": elapsed_us,
-                }),
-                Err(e) => json!({
-                    "hash": hash.to_string(),
-                    "result": "rejected",
-                    "reason": e.to_string(),
-                    "elapsed_us": elapsed_us,
-                }),
-            },
-        );
-        verdict
+    fn parent(&self, hash: &BlockHash) -> Option<ParentInfo> {
+        self.parent_context(hash)
     }
-}
 
-/// The relay's check: the rules, then the header becomes pending until the driver commits
-/// or rejects its block.
-impl HeaderCheck for NodeHeaderCheck {
-    fn check(&self, header: &BlockHeader) -> Result<(), HeaderError> {
-        let height = self.verify(header)?;
-        self.index.add_pending(header, height);
-        Ok(())
+    fn now(&self) -> u32 {
+        now_secs()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::params::{NetworkKind, REGTEST_POW_LIMIT_BITS};
-    use hayai_consensus::header::{check_solution_length, HeaderRuleError};
-    use hayai_wire::header::{PowError, PowParams};
+    use std::sync::Arc;
 
-    const REGTEST_GENESIS_TIME: u32 = 1_296_688_602;
+    use hayai_consensus::{Network, ParentChain};
+    use hayai_relay::{HeaderError, StandardHeaderCheck};
+    use hayai_wire::header::PowParams;
+
+    use super::*;
+
+    const REGTEST_POW_LIMIT_BITS: u32 = Network::Regtest.params().pow_limit_bits;
 
     fn regtest_genesis_hash() -> BlockHash {
-        NetParams::new(NetworkKind::Regtest).genesis().0
+        Network::Regtest.params().genesis_hash
     }
 
     fn header(prev: BlockHash, time: u32, bits: u32) -> BlockHeader {
@@ -423,32 +347,12 @@ mod tests {
         }
     }
 
-    fn check(index: Arc<HeaderIndex>) -> NodeHeaderCheck {
-        check_on(NetworkKind::Regtest, index, false)
-    }
-
-    fn check_on(
-        kind: NetworkKind,
-        index: Arc<HeaderIndex>,
-        trust_short_context: bool,
-    ) -> NodeHeaderCheck {
-        NodeHeaderCheck {
-            params: NetParams::new(kind),
-            index,
-            tracer: Tracer::disabled(),
-            metrics: Arc::new(NodeMetrics::new(&hayai_rpc::Registry::new())),
-            trust_short_context,
+    fn check(index: Arc<HeaderIndex>) -> StandardHeaderCheck<Arc<HeaderIndex>> {
+        StandardHeaderCheck {
+            context: index,
+            network: Network::Regtest,
+            trust_short_context: false,
         }
-    }
-
-    /// A header of Zebra's Mainnet vectors.
-    fn mainnet_header(height: u32) -> BlockHeader {
-        let name = format!(
-            "{}/../hayai-bench/tests/vectors/block-main-0-000-{height:03}.hex",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let hex = std::fs::read_to_string(&name).unwrap_or_else(|e| panic!("{name}: {e}"));
-        BlockHeader::parse(&hex::decode(hex.trim()).expect("hex")).expect("a header")
     }
 
     #[test]
@@ -465,9 +369,18 @@ mod tests {
         }
         assert_eq!(index.tip(), (12, prev));
         assert_eq!(index.height_of(&hashes[4]), Some(5));
-        // Times 100, 110, ..., 220: the last eleven end at 220 and start at 120.
-        assert_eq!(index.median_time_past(&prev), Some(170));
-        assert_eq!(index.median_time_past(&genesis), Some(100));
+        // Times 220, 210, ..., 100, newest first; the genesis entry has no `nBits`.
+        let context = index.parent_context(&prev).expect("the tip has a context");
+        assert_eq!(context.height, 12);
+        assert_eq!(
+            context.times,
+            (0..=12).rev().map(|i| 100 + i * 10).collect::<Vec<_>>()
+        );
+        assert_eq!(context.bits, vec![REGTEST_POW_LIMIT_BITS; 12]);
+        assert_eq!(
+            index.parent_context(&genesis).map(|c| c.times),
+            Some(vec![100])
+        );
         let after = index.headers_after(&[hashes[9], genesis], &BlockHash([0; 32]), 2000);
         assert_eq!(after.len(), 2);
         assert_eq!(after[0].hash(), hashes[10]);
@@ -480,6 +393,8 @@ mod tests {
         assert_eq!(empty.pop(), None);
     }
 
+    /// The index as the context of the relay's check: a pending header extends the
+    /// committed chain until its commit.
     #[test]
     fn pending_headers_extend_the_committed_chain_until_their_commit() {
         let genesis = regtest_genesis_hash();
@@ -490,128 +405,42 @@ mod tests {
         let second = header(first.hash(), now + 1, REGTEST_POW_LIMIT_BITS);
         // Without the parent pending, the child has no parent.
         assert_eq!(
-            c.check(&second),
+            c.verify(&second),
             Err(HeaderError::ParentUnknown(first.hash()))
         );
-        assert_eq!(c.check(&first), Ok(()));
+        assert_eq!(c.verify(&first).map(|v| v.height), Ok(1));
+        index.add_pending(&first, 1);
         assert!(index.is_pending(&first.hash()));
         assert_eq!(
-            index.parent_context(&first.hash()),
+            index.parent(&first.hash()),
             Some(ParentInfo {
                 height: 1,
                 times: vec![now, 100],
                 bits: vec![REGTEST_POW_LIMIT_BITS],
             })
         );
-        assert_eq!(index.median_time_past(&first.hash()), Some(now));
-        assert_eq!(c.check(&second), Ok(()));
+        assert_eq!(c.verify(&second).map(|v| v.height), Ok(2));
+        index.add_pending(&second, 2);
         assert_eq!(
-            index.parent_context(&second.hash()),
+            index.parent(&second.hash()),
             Some(ParentInfo {
                 height: 2,
                 times: vec![now + 1, now, 100],
                 bits: vec![REGTEST_POW_LIMIT_BITS; 2],
             })
         );
-        assert_eq!(index.median_time_past(&second.hash()), Some(now));
         // The commit of the parent drops its pending entry; the child stays pending.
         index.push(first.clone());
+        assert!(index.has_block(&first.hash()));
         assert!(!index.is_pending(&first.hash()));
         assert!(index.is_pending(&second.hash()));
-        index.remove_pending(&second.hash());
-        assert!(!index.is_pending(&second.hash()));
-        // The pure rules leave no pending entry.
-        assert_eq!(c.verify(&second), Ok(2));
-        assert!(!index.is_pending(&second.hash()));
-    }
-
-    #[test]
-    fn regtest_check_applies_the_waiver_and_the_time_rules() {
-        let genesis = regtest_genesis_hash();
-        let index = Arc::new(HeaderIndex::new(
-            0,
-            &[seed_block(genesis, REGTEST_GENESIS_TIME)],
-        ));
-        let c = check(index.clone());
-        let now = now_secs();
-        // Height 1 is exempt from the median-time-past maximum. The solution is never
-        // verified and the hash meets no filter.
-        let first = header(genesis, now, REGTEST_POW_LIMIT_BITS);
-        assert_eq!(c.check(&first), Ok(()));
-        index.push(first.clone());
         assert_eq!(
-            c.check(&first),
+            c.verify(&first),
             Err(HeaderError::AlreadyInChain(first.hash()))
         );
-        let early = header(first.hash(), now - 1, REGTEST_POW_LIMIT_BITS);
-        let Err(HeaderError::Rule(HeaderRuleError::TimeTooEarly { .. })) = c.check(&early) else {
-            panic!("time at or below the median time past");
-        };
-        // The median of the two times is the time of the first block. Height 2 is the
-        // first height with the maximum.
-        let late = header(first.hash(), now + 5_401, REGTEST_POW_LIMIT_BITS);
-        let Err(HeaderError::Rule(HeaderRuleError::TimeTooLate { .. })) = c.check(&late) else {
-            panic!("time beyond the median time past plus 90 min");
-        };
-        let easy = header(first.hash(), now + 1, 0x2010_0000);
-        assert_eq!(
-            c.check(&easy),
-            Err(HeaderError::Rule(HeaderRuleError::Pow(
-                PowError::TargetAboveLimit(0x2010_0000)
-            )))
-        );
-        // Regtest has no expected bits: a harder target than the limit passes.
-        assert_eq!(c.verify(&header(first.hash(), now + 1, 0x1f07_ffff)), Ok(2));
-        let orphan = header(BlockHash([9; 32]), now + 1, REGTEST_POW_LIMIT_BITS);
-        assert_eq!(
-            c.check(&orphan),
-            Err(HeaderError::ParentUnknown(BlockHash([9; 32])))
-        );
-        let mut old = header(first.hash(), now + 1, REGTEST_POW_LIMIT_BITS);
-        old.version = 3;
-        assert_eq!(
-            c.check(&old),
-            Err(HeaderError::Rule(HeaderRuleError::Version(3)))
-        );
-        // The shape rule of the waiver: a (200, 9) solution is not a Regtest solution.
-        let mut mainnet = header(first.hash(), now + 1, REGTEST_POW_LIMIT_BITS);
-        mainnet.solution = vec![0; PowParams::MAINNET.solution_len()];
-        assert_eq!(
-            c.check(&mainnet),
-            Err(HeaderError::Rule(HeaderRuleError::SolutionLength {
-                expected: 36,
-                got: 1344
-            }))
-        );
-        assert_eq!(
-            c.check(&header(first.hash(), now + 1, REGTEST_POW_LIMIT_BITS)),
-            Ok(())
-        );
-    }
-
-    /// The recorded zcashd and Zakura Regtest genesis block parses, has the hash of the
-    /// constant that the index starts from, and its 36-byte solution passes the shape rule.
-    #[test]
-    fn recorded_regtest_genesis_matches_the_index_seed() {
-        let hex = include_str!("../../hayai-wire/tests/vectors/block-regtest-0-000-000.hex");
-        let bytes = hex::decode(hex.trim()).expect("hex");
-        let genesis = BlockHeader::parse(&bytes).expect("a Regtest header parses");
-        assert_eq!(genesis.hash(), regtest_genesis_hash());
-        assert_eq!(
-            NetParams::new(NetworkKind::Regtest).genesis().1,
-            REGTEST_GENESIS_TIME
-        );
-        assert_eq!(genesis.time, REGTEST_GENESIS_TIME);
-        assert_eq!(genesis.bits, REGTEST_POW_LIMIT_BITS);
-        assert_eq!(
-            check_solution_length(NetworkKind::Regtest, &genesis),
-            Ok(())
-        );
-        let Err(HeaderRuleError::SolutionLength { .. }) =
-            check_solution_length(NetworkKind::Testnet, &genesis)
-        else {
-            panic!("a Regtest solution on Testnet");
-        };
+        index.remove_pending(&second.hash());
+        assert!(!index.is_pending(&second.hash()));
+        assert_eq!(c.verify(&second).map(|v| v.height), Ok(2));
     }
 
     /// The context of a header: times from the pending headers, then the committed
@@ -652,75 +481,6 @@ mod tests {
         bits.extend((1..=105).rev().map(|i| 0x2000_0000 + i));
         assert_eq!(context.bits, bits);
         assert_eq!(index.parent_context(&BlockHash([0xee; 32])), None);
-    }
-
-    /// A node from the Mainnet genesis block: the real blocks 1 to 10 pass every rule
-    /// with the context of the index, and no header is trusted.
-    #[test]
-    fn mainnet_headers_from_genesis_pass_without_trust() {
-        let genesis = mainnet_header(0);
-        let index = Arc::new(HeaderIndex::new(
-            0,
-            &[seed_block(genesis.hash(), genesis.time)],
-        ));
-        let c = check_on(NetworkKind::Mainnet, index.clone(), false);
-        for height in 1..=10 {
-            let h = mainnet_header(height);
-            assert_eq!(c.verify(&h), Ok(height));
-            // A harder target than the chain requires is not the expected one.
-            let mut hard = h.clone();
-            hard.bits = 0x1f07_fffe;
-            assert_eq!(
-                c.verify(&hard),
-                Err(HeaderError::Rule(HeaderRuleError::WrongBits {
-                    expected: 0x1f07_ffff,
-                    got: 0x1f07_fffe
-                }))
-            );
-            index.push(h);
-        }
-        assert_eq!(c.metrics.trusted_bits.get(), 0);
-    }
-
-    /// An index that starts above the genesis block without the ancestors of its start:
-    /// the context of the next header is too short. The header passes only when the node
-    /// trusts its source, and the counter records it.
-    #[test]
-    fn a_short_context_is_trusted_and_counted_or_rejected() {
-        let start = mainnet_header(1);
-        let next = mainnet_header(2);
-        let seed = [seed_block(start.hash(), start.time)];
-        let strict = check_on(
-            NetworkKind::Mainnet,
-            Arc::new(HeaderIndex::new(1, &seed)),
-            false,
-        );
-        let Err(HeaderError::ContextTooShort(unchecked)) = strict.verify(&next) else {
-            panic!("the median-time-past of height 2 reads two times");
-        };
-        assert!(unchecked.time);
-        assert_eq!(strict.metrics.trusted_bits.get(), 0);
-
-        let index = Arc::new(HeaderIndex::new(1, &seed));
-        let trusting = check_on(NetworkKind::Mainnet, index.clone(), true);
-        assert_eq!(trusting.verify(&next), Ok(2));
-        assert_eq!(trusting.metrics.trusted_bits.get(), 1);
-        // The rules that the context allows still run on a trusted header.
-        let mut hard = next.clone();
-        hard.bits = 0x1f07_fffe;
-        assert!(matches!(
-            trusting.verify(&hard),
-            Err(HeaderError::Rule(HeaderRuleError::WrongBits { .. }))
-        ));
-        let mut bad = next.clone();
-        bad.nonce[0] ^= 1;
-        assert!(matches!(
-            trusting.verify(&bad),
-            Err(HeaderError::Rule(
-                HeaderRuleError::Pow(PowError::HashAboveTarget) | HeaderRuleError::Equihash(_)
-            ))
-        ));
-        assert_eq!(trusting.metrics.trusted_bits.get(), 1);
     }
 
     /// The seed lists of a restart: the `nBits` list is aligned with the newest ancestor,
@@ -775,7 +535,7 @@ mod tests {
                 bits: &parent.bits,
             };
             let time = seed[seed.len() - 1].time + 75;
-            expected_bits(NetworkKind::Mainnet, time, &chain)
+            expected_bits(Network::Mainnet, time, &chain)
         };
         // Blocks at the target spacing keep the target, less the remainder of the division
         // by the window timespan (`floor(MeanTarget / AveragingWindowTimespan)`).
@@ -792,31 +552,5 @@ mod tests {
         let index = HeaderIndex::new(3_000_000, &without_bits);
         let parent = index.parent_context(&index.tip().1).expect("a context");
         assert_eq!((parent.times.len(), parent.bits.len()), (28, 0));
-    }
-
-    /// A shadow start above the genesis block with the whole seed: every header rule runs
-    /// on the first block after the start, with no trust, and the counter stays at 0.
-    #[test]
-    fn a_whole_seed_needs_no_trust() {
-        let seed: Vec<SeedBlock> = (0..=5)
-            .map(|height| {
-                let header = mainnet_header(height);
-                SeedBlock {
-                    hash: header.hash(),
-                    time: header.time,
-                    bits: Some(header.bits),
-                }
-            })
-            .collect();
-        for trust in [false, true] {
-            let index = Arc::new(HeaderIndex::new(5, &seed));
-            let c = check_on(NetworkKind::Mainnet, index.clone(), trust);
-            for height in 6..=10 {
-                let h = mainnet_header(height);
-                assert_eq!(c.verify(&h), Ok(height));
-                index.push(h);
-            }
-            assert_eq!(c.metrics.trusted_bits.get(), 0);
-        }
     }
 }

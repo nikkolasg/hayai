@@ -16,8 +16,8 @@
 //! between the two writes leaves one record more than the coins store. The restart drops
 //! the records after the best block.
 //!
-//! [`RecordLog`] is the file format of the log. The shadow node also keeps its set of spent
-//! outpoints in a [`RecordLog`] (`backing.rs`).
+//! [`RecordLog`] is the file format of the log. The shadow node of hayaid also keeps its
+//! set of spent outpoints in a [`RecordLog`].
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -25,14 +25,32 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hayai_coins::{BestBlock, Pool};
+use hayai_consensus::Network;
 use hayai_crypto::zcash_primitives::merkle_tree::{read_frontier_v1, write_frontier_v1};
 use hayai_crypto::zcash_protocol::consensus::{BranchId, NetworkType};
-use hayai_state::{BaseState, HistoryState, ValuePools};
 use hayai_trees::{IronwoodFrontier, OrchardFrontier, SaplingFrontier, SproutFrontier};
 use hayai_wire::header::BlockHash;
 
-use crate::config::Mode;
-use crate::params::NetworkKind;
+use crate::history::HistoryState;
+use crate::{BaseState, ValuePools};
+
+/// What the node that wrote a state log does with blocks. A log belongs to one mode: a
+/// full node owns its state from the genesis block, and a shadow node starts from a seed
+/// state of an upstream node.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    Full,
+    Shadow,
+}
+
+impl Mode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Mode::Full => "full",
+            Mode::Shadow => "shadow",
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum PersistError {
@@ -260,7 +278,7 @@ const RECORD_VERSION_2: u8 = 2;
 /// adds are then empty.
 const RECORD_VERSION_1: u8 = 1;
 
-fn network_tag(kind: NetworkKind) -> u8 {
+fn network_tag(kind: Network) -> u8 {
     match kind.network_type() {
         NetworkType::Regtest => 0,
         NetworkType::Test => 1,
@@ -295,7 +313,7 @@ fn pool_from_tag(tag: u8) -> Result<Pool, PersistError> {
 
 /// One record of `state.log`.
 pub struct StateRecord {
-    pub network: NetworkKind,
+    pub network: Network,
     pub mode: Mode,
     pub base: BaseState,
     /// `(hash, time)` of the base block and up to 27 blocks before it, oldest first: with
@@ -398,9 +416,9 @@ impl StateRecord {
         // Version 3 has the layout of version 2. Version 4 adds the Sprout state at the end.
         let v2 = version >= RECORD_VERSION_2;
         let network = match r.u8()? {
-            0 => NetworkKind::Regtest,
-            1 => NetworkKind::Testnet,
-            2 => NetworkKind::Mainnet,
+            0 => Network::Regtest,
+            1 => Network::Testnet,
+            2 => Network::Mainnet,
             tag => return corrupt(format!("network tag {tag}")),
         };
         let mode = match r.u8()? {
@@ -539,7 +557,7 @@ pub struct Recovered {
 /// The block that a restart resumes from, and the first start of the node.
 pub struct ResumePoint {
     /// Network of the start record.
-    pub network: NetworkKind,
+    pub network: Network,
     /// Height of the start record: the shadow seed height, or 0.
     pub start_height: u32,
     pub height: u32,
@@ -648,7 +666,7 @@ impl StateLog {
     /// ones of the first start. [`select`] has the selection and its errors.
     pub fn open(
         dir: &Path,
-        network: NetworkKind,
+        network: Network,
         mode: Mode,
         best: Option<BestBlock>,
     ) -> Result<(Self, Recovered), PersistError> {
@@ -662,9 +680,9 @@ impl StateLog {
                 "{} belongs to a {}/{} node; the configuration is {}/{}",
                 dir.display(),
                 start.network.name(),
-                mode_name(start.mode),
+                start.mode.name(),
                 network.name(),
-                mode_name(mode),
+                mode.name(),
             ));
         }
         log.truncate_to(selected + 1)?;
@@ -705,13 +723,6 @@ impl StateLog {
     }
 }
 
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Full => "full",
-        Mode::Shadow => "shadow",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,7 +731,7 @@ mod tests {
         let sapling = SaplingFrontier::empty();
         let orchard = OrchardFrontier::empty();
         StateRecord {
-            network: NetworkKind::Regtest,
+            network: Network::Regtest,
             mode: Mode::Full,
             base: BaseState {
                 height,
@@ -748,7 +759,8 @@ mod tests {
     }
 
     fn dir() -> tempfile::TempDir {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/hayaid-persist");
+        let base =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/hayai-state-persist");
         std::fs::create_dir_all(&base).expect("scratch base");
         tempfile::tempdir_in(base).expect("scratch dir")
     }
@@ -779,12 +791,7 @@ mod tests {
             let point = StateLog::resume_point(dir.path(), best).expect("resume point");
             assert_eq!(
                 (point.network, point.start_height, point.height, point.hash),
-                (
-                    NetworkKind::Regtest,
-                    0,
-                    height,
-                    BlockHash([height as u8; 32])
-                )
+                (Network::Regtest, 0, height, BlockHash([height as u8; 32]))
             );
         }
         let Err(PersistError::Corrupt(_)) = StateLog::resume_point(dir.path(), best(7)) else {
@@ -792,7 +799,7 @@ mod tests {
         };
         assert_eq!(std::fs::read(&path).expect("read"), bytes);
         let (_, recovered) =
-            StateLog::open(dir.path(), NetworkKind::Regtest, Mode::Full, best(8)).expect("open");
+            StateLog::open(dir.path(), Network::Regtest, Mode::Full, best(8)).expect("open");
         assert_eq!(recovered.base.height, 8);
     }
 
@@ -1018,7 +1025,8 @@ mod tests {
     #[test]
     fn the_state_log_restores_the_sprout_treestates() {
         use hayai_coins::{MemBacking, MemConfig};
-        use hayai_state::{Base, Chain};
+
+        use crate::{Base, Chain};
         let tree = |leaf: u8| {
             let mut tree = SproutFrontier::empty();
             tree.append_many(&[[leaf; 32]]).expect("room");
@@ -1038,7 +1046,7 @@ mod tests {
             hash: [4; 32],
         };
         let (_, recovered) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best)).expect("open");
+            StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best)).expect("open");
         assert_eq!(recovered.sprout_trees, vec![tree(1)]);
         let (backing, _) =
             MemBacking::open(&d.path().join("coins"), &MemConfig::default()).expect("coins");
@@ -1078,7 +1086,7 @@ mod tests {
             log.append(&encode(&record(0, 0))).expect("append");
             log.append(&encode(&record(4, 1))).expect("append");
             drop(log);
-            let refused = StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best(4)));
+            let refused = StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best(4)));
             let Err(error) = refused.map(|_| ()) else {
                 panic!("a version {version} record at height 4 is refused");
             };
@@ -1103,14 +1111,13 @@ mod tests {
 
             // The start record at the genesis block has pools of zero in every version. The
             // node opens it and continues with records of the current version.
-            let (mut log, recovered) =
-                StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, None)
-                    .expect("an old start record at height 0");
+            let (mut log, recovered) = StateLog::open(d.path(), Network::Regtest, Mode::Full, None)
+                .expect("an old start record at height 0");
             assert_eq!(recovered.base.height, 0);
             log.write(&record(8, 2)).expect("write a current record");
             drop(log);
             let (_, recovered) =
-                StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best(8)))
+                StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best(8)))
                     .expect("open the mixed log");
             assert_eq!(recovered.base.height, 8);
             assert_eq!(recovered.base.bits, record(8, 2).base.bits);
@@ -1125,7 +1132,8 @@ mod tests {
     #[test]
     fn the_ironwood_state_survives_a_restart() {
         use hayai_coins::{MemBacking, MemConfig};
-        use hayai_state::{Base, Chain};
+
+        use crate::{Base, Chain};
 
         let leaf = |byte: u8| {
             hayai_crypto::orchard::tree::MerkleHashOrchard::from_bytes(&[byte; 32])
@@ -1154,7 +1162,7 @@ mod tests {
             hash: [4; 32],
         };
         let (_, recovered) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best)).expect("open");
+            StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best)).expect("open");
         assert_eq!(*recovered.base.ironwood_frontier, frontier);
         assert_eq!(recovered.base.value_pools.ironwood, 77);
         let (backing, _) =
@@ -1268,31 +1276,30 @@ mod tests {
         };
         // The coins store reached height 4 only: the record of 8 is dropped.
         let (mut log, recovered) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best(4)))
+            StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best(4)))
                 .expect("open at 4");
         assert_eq!(recovered.base.height, 4);
         assert_eq!(recovered.anchors.len(), 4, "anchors of the records 0..=4");
         assert_eq!(recovered.start_height, 0);
         log.write(&record(8, 9)).expect("write again");
         drop(log);
-        let (_, recovered) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best(8)))
-                .expect("open at 8");
+        let (_, recovered) = StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best(8)))
+            .expect("open at 8");
         assert_eq!(recovered.anchors.len(), 6);
         assert_eq!(recovered.anchors[4], (Pool::Sapling, [9; 32]));
 
         // No generation reached the coins store: the start record.
         let (_, recovered) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, None).expect("start");
+            StateLog::open(d.path(), Network::Regtest, Mode::Full, None).expect("start");
         assert_eq!(recovered.base.height, 0);
 
         let Err(e) =
-            StateLog::open(d.path(), NetworkKind::Regtest, Mode::Full, Some(best(5))).map(|_| ())
+            StateLog::open(d.path(), Network::Regtest, Mode::Full, Some(best(5))).map(|_| ())
         else {
             panic!("a best block without a record is an error");
         };
         assert!(e.to_string().contains("no record"), "{e}");
-        let Err(e) = StateLog::open(d.path(), NetworkKind::Mainnet, Mode::Full, None).map(|_| ())
+        let Err(e) = StateLog::open(d.path(), Network::Mainnet, Mode::Full, None).map(|_| ())
         else {
             panic!("another network is an error");
         };

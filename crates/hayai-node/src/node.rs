@@ -47,8 +47,10 @@ use hayai_coins::{
 use hayai_consensus::difficulty::expected_bits;
 use hayai_consensus::{ParentChain, DIFFICULTY_CONTEXT_BLOCKS};
 use hayai_crypto::zcash_protocol::consensus::{BranchId, NetworkType};
+use hayai_http::Cookie;
 use hayai_index::{BlockJob, IndexWriter, TreesBefore, WalletIndex};
 use hayai_mempool::{PreparedStore, MEMPOOL_TX_COST_LIMIT};
+use hayai_metrics::{MetricsServer, Registry};
 use hayai_net::{
     AddrBook, BlockSink, ChainSource, CompactVer, Direction, HistoryRootSource, IncomingBlock,
     PeerConfig, PeerEnv, PeerManager, PeerProtocol, Relay, RelayConfig, RelayDeps, Source,
@@ -57,14 +59,18 @@ use hayai_net::{
 use hayai_prepared::VerifyingKeys;
 use hayai_relay::{LaneId, LanePublisher};
 use hayai_rpc::{
-    BlockSubmitSink, Cookie, HttpServer, MetricsServer, Registry, Rpc, RpcConfig, SubmitOutcome,
-    SubmittedBlock, TemplateFeed, TipSource,
+    BlockSubmitSink, HttpServer, Rpc, RpcConfig, SubmitOutcome, SubmittedBlock, TemplateFeed,
+    TipSource,
 };
+use hayai_shadow::backing::{SpentLog, UpstreamBacking};
+use hayai_shadow::upstream::Upstream;
+use hayai_shadow::{self as shadow, UpstreamBlock, UpstreamSink};
 use hayai_state::history::HistoryState;
 use hayai_state::PrebuiltBody;
 use hayai_state::{Anchors, Base, Chain, ChainView, Frontiers, Layer, LAYER_WINDOW};
 use hayai_sync::download::DownloadConfig;
 use hayai_sync::headers::{HeaderChain, Status};
+use hayai_sync::index::{HeaderIndex, SeedBlock};
 use hayai_template::{
     CoinbaseSpec, LiveTemplate, SetEvent, StoredTemplate, TemplateConfig, TemplateUpdate, Tip,
     Zip317Params,
@@ -83,9 +89,8 @@ mod fault;
 mod full;
 
 use self::fault::{check_body, fault_of, Fault};
-use crate::backing::{SpentLog, UpstreamBacking};
 use crate::config::{Backend, Config, LanePublication, Mode};
-use crate::headers::{HeaderIndex, NodeHeaderCheck, SeedBlock};
+use crate::headers::NodeHeaderCheck;
 use crate::mempool::{Mempool, PublicTxs};
 use crate::metrics::{
     hash_suffix, micros, register_build_info, stage_durations, LastBlock, NodeMetrics,
@@ -93,11 +98,9 @@ use crate::metrics::{
 };
 use crate::mining::{miner_script, Producer};
 use crate::params::{NetParams, NetworkKind, REGTEST_POW_LIMIT_BITS};
-use crate::persist::{StateLog, StateRecord};
 use crate::process;
-use crate::shadow::{self, UpstreamBlock};
 use crate::sync::{Backlog, NetEvent, Sync, SyncConfig, SyncInbox, SyncParts};
-use crate::upstream::Upstream;
+use hayai_state::persist::{StateLog, StateRecord};
 
 /// Coinbase scriptSig bytes after the height.
 const MINER_DATA: &[u8] = b"hayai";
@@ -1904,6 +1907,15 @@ fn await_keys(
 
 // ----- assembly -----
 
+/// The driver as the sink of the shadow follower: each report is an [`Event::Upstream`].
+struct DriverSink(Sender<Event>);
+
+impl UpstreamSink for DriverSink {
+    fn on_upstream(&self, fork: BlockHash, blocks: Vec<UpstreamBlock>) -> bool {
+        self.0.send(Event::Upstream { fork, blocks }).is_ok()
+    }
+}
+
 /// A running node.
 pub struct Node {
     pub p2p_addr: Option<SocketAddr>,
@@ -1973,6 +1985,15 @@ fn peer_manager(
         None => AddrBook::new(config.book.clone()),
     };
     Ok(PeerManager::new(config, book, PeerEnv::system()))
+}
+
+/// [`require_empty`] for a directory that the node opens itself: a store that the caller
+/// gives ([`NodeBuilder`]) lives elsewhere, and its directory is not read.
+fn require_empty_unless_given<T>(dir: &Path, given: &Option<T>) -> Result<(), NodeError> {
+    match given {
+        Some(_) => Ok(()),
+        None => require_empty(dir),
+    }
 }
 
 fn require_empty(dir: &Path) -> Result<(), NodeError> {
@@ -2054,7 +2075,7 @@ fn state_record(
 ) -> StateRecord {
     StateRecord {
         network: params.kind,
-        mode,
+        mode: mode.into(),
         base: base.state(),
         ancestors,
         new_anchors: base.take_new_anchors(),
@@ -2241,10 +2262,81 @@ fn replay(chain: &mut Chain, r: &Replay) -> Result<usize, NodeError> {
     Ok(finalized)
 }
 
+/// The assembly of a [`Node`]: the configuration, and the components that the caller
+/// gives in place of the ones that the configuration names. A component that the caller
+/// does not give comes from the configuration: the tracer from `[network.zakura]
+/// trace_dir`, the metrics registry new, the coins store and the block store from
+/// `[state] cache_dir` and `backend`.
+pub struct NodeBuilder {
+    config: Config,
+    tracer: Option<Tracer>,
+    registry: Option<Arc<Registry>>,
+    coins: Option<(Arc<dyn CoinsBacking>, Option<BestBlock>)>,
+    blocks: Option<Arc<BlockStore>>,
+}
+
+impl NodeBuilder {
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            tracer: None,
+            registry: None,
+            coins: None,
+            blocks: None,
+        }
+    }
+
+    /// The tracer of the node, in place of the one of `[network.zakura] trace_dir`.
+    pub fn tracer(mut self, tracer: Tracer) -> Self {
+        self.tracer = Some(tracer);
+        self
+    }
+
+    /// The metrics registry, so that the caller serves the metrics of the node with its
+    /// own.
+    pub fn registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// The coins store, open, and the best block that it holds (`None` for a new store),
+    /// in place of the store of `[state] backend` under `cache_dir`. The node restarts
+    /// from that block: the state log of `cache_dir` must hold its record. A store of the
+    /// caller takes no snapshot (`[state] snapshot_interval_blocks` is for the memory
+    /// backend that the node opens).
+    pub fn coins_store(mut self, backing: Arc<dyn CoinsBacking>, best: Option<BestBlock>) -> Self {
+        self.coins = Some((backing, best));
+        self
+    }
+
+    /// The block store, open, in place of the one under `cache_dir`.
+    pub fn block_store(mut self, blocks: Arc<BlockStore>) -> Self {
+        self.blocks = Some(blocks);
+        self
+    }
+
+    /// Builds every component, starts the threads and returns once the node listens.
+    pub fn start(self) -> Result<Node, NodeError> {
+        Node::start_with(self)
+    }
+}
+
 impl Node {
     /// Builds every component from `config`, starts the threads and returns once the node
-    /// listens.
+    /// listens. [`NodeBuilder`] takes components of the caller.
     pub fn start(config: &Config) -> Result<Node, NodeError> {
+        NodeBuilder::new(config.clone()).start()
+    }
+
+    fn start_with(builder: NodeBuilder) -> Result<Node, NodeError> {
+        let NodeBuilder {
+            config,
+            tracer: own_tracer,
+            registry: own_registry,
+            coins: own_coins,
+            blocks: own_blocks,
+        } = builder;
+        let config = &config;
         let params = NetParams::new(
             config
                 .consensus_network()
@@ -2256,19 +2348,22 @@ impl Node {
         let blocks_dir = data_dir.join("blocks");
         let resuming = StateLog::exists(data_dir);
         let wallet_dir = data_dir.join(WALLET_INDEX_DIR);
+        // Before any write: a failed first start removes what it created, and a foreign
+        // file must stay.
         if !resuming {
-            require_empty(&coins_dir)?;
-            require_empty(&blocks_dir)?;
+            require_empty_unless_given(&coins_dir, &own_coins)?;
+            require_empty_unless_given(&blocks_dir, &own_blocks)?;
             require_empty(&wallet_dir)?;
         }
 
-        let tracer = match &config.network.zakura.trace_dir {
-            Some(dir) => {
+        let tracer = match (own_tracer, &config.network.zakura.trace_dir) {
+            (Some(tracer), _) => tracer,
+            (None, Some(dir)) => {
                 Tracer::open(dir, &config.trace.node).map_err(|e| fatal("trace dir", e))?
             }
-            None => Tracer::disabled(),
+            (None, None) => Tracer::disabled(),
         };
-        let registry = Registry::new();
+        let registry = own_registry.unwrap_or_else(Registry::new);
         let metrics = Arc::new(NodeMetrics::new(&registry));
         register_build_info(&registry, config);
 
@@ -2280,7 +2375,7 @@ impl Node {
             .map(|shadow| Arc::new(Upstream::new(shadow.rpc_addr)));
         let seed = match (&upstream, &config.shadow, resuming) {
             (Some(upstream), Some(shadow), false) => {
-                let seed = shadow::seed(upstream, params, shadow.start_height)
+                let seed = shadow::seed(upstream, params.kind, shadow.start_height)
                     .map_err(|e| fatal("shadow seed", e))?;
                 tracing::info!(height = seed.height, hash = %seed.hash, "shadow start state read from upstream");
                 Some(seed)
@@ -2296,14 +2391,15 @@ impl Node {
             Arc<dyn CoinsBacking>,
             Option<Arc<MemBacking>>,
             Option<BestBlock>,
-        ) = match config.state.backend {
-            Backend::Rocksdb => {
+        ) = match (own_coins, config.state.backend) {
+            (Some((backing, best)), _) => (backing, None, best),
+            (None, Backend::Rocksdb) => {
                 let rocks = RocksBacking::open(&coins_dir, &hayai_coins::Config::default())
                     .map_err(|e| fatal("coins store", e))?;
                 let best = rocks.best_block().map_err(|e| fatal("coins store", e))?;
                 (Arc::new(rocks), None, best)
             }
-            Backend::Memory => {
+            (None, Backend::Memory) => {
                 let (mem, recovery) = MemBacking::open(&coins_dir, &MemConfig::default())
                     .map_err(|e| fatal("coins store", e))?;
                 tracing::info!(?recovery, "coins store opened");
@@ -2312,14 +2408,18 @@ impl Node {
                 (mem.clone(), Some(mem), best)
             }
         };
-        let blocks = Arc::new(BlockStore::open(&blocks_dir).map_err(|e| fatal("block store", e))?);
+        let blocks = match own_blocks {
+            Some(blocks) => blocks,
+            None => Arc::new(BlockStore::open(&blocks_dir).map_err(|e| fatal("block store", e))?),
+        };
 
         // The base: restored from the state log, or the genesis block or the shadow seed.
         let spent_path = data_dir.join("spent.log");
         let (base, index, state_log, start_height) = match (resuming, seed) {
             (true, _) => {
-                let (state_log, recovered) = StateLog::open(data_dir, params.kind, mode, best)
-                    .map_err(|e| fatal("state log", e))?;
+                let (state_log, recovered) =
+                    StateLog::open(data_dir, params.kind, mode.into(), best)
+                        .map_err(|e| fatal("state log", e))?;
                 let backing: Arc<dyn CoinsBacking> = match &upstream {
                     None => store_backing,
                     Some(upstream) => Arc::new(UpstreamBacking::new(
@@ -2329,7 +2429,8 @@ impl Node {
                         params
                             .branch_at(recovered.start_height + 1)
                             .map_err(no_rules)?,
-                        metrics.clone(),
+                        metrics.trusted_coins.clone(),
+                        metrics.trusted_nullifiers.clone(),
                         SpentLog::open(&spent_path, best.map(|b| b.height))
                             .map_err(|e| fatal("spent log", e))?,
                     )),
@@ -2375,7 +2476,8 @@ impl Node {
                     upstream.clone(),
                     seed.height,
                     params.branch_at(seed.height + 1).map_err(no_rules)?,
-                    metrics.clone(),
+                    metrics.trusted_coins.clone(),
+                    metrics.trusted_nullifiers.clone(),
                     SpentLog::open(&spent_path, None).map_err(|e| fatal("spent log", e))?,
                 ));
                 let times: Vec<u32> = seed.ancestors.iter().map(|block| block.time).collect();
@@ -2516,13 +2618,13 @@ impl Node {
         }
 
         let (events_tx, events_rx) = unbounded();
-        let header_check = Arc::new(NodeHeaderCheck {
-            params,
-            index: index.clone(),
-            tracer: tracer.clone(),
-            metrics: metrics.clone(),
-            trust_short_context: mode == Mode::Shadow,
-        });
+        let header_check = Arc::new(NodeHeaderCheck::new(
+            params.kind,
+            index.clone(),
+            tracer.clone(),
+            metrics.clone(),
+            mode == Mode::Shadow,
+        ));
         let mut relay_config = RelayConfig::new(params.wire());
         relay_config.min_peer_version = min_peer_version_at(params, tip_height);
         relay_config.compact_relay = match config.network.compact_relay {
@@ -2765,9 +2867,9 @@ impl Node {
             workers.push(
                 shadow::spawn_follower(
                     upstream,
-                    params,
+                    params.kind,
                     index.clone(),
-                    events_tx.clone(),
+                    DriverSink(events_tx.clone()),
                     stop.clone(),
                     Duration::from_millis(shadow.poll_interval_ms),
                 )
@@ -3005,6 +3107,43 @@ mod tests {
     use hayai_consensus::{rules_at, BlockLimits, ConsensusError, RuleSet, Upgrade};
 
     use super::*;
+
+    /// A builder with the stores of the caller: the node starts on them, commits its
+    /// blocks into them, and a restart on the same stores resumes at the tip.
+    #[test]
+    fn a_builder_takes_the_stores_of_the_caller() {
+        use hayai_coins::{MemBacking, MemConfig};
+
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let config = crate::sync_tests::config_with(dir.path(), "builder", true, false, "");
+        let coins_dir = dir.path().join("own-coins");
+        let (mem, _) = MemBacking::open(&coins_dir, &MemConfig::default()).expect("coins store");
+        let mem = Arc::new(mem);
+        let blocks =
+            Arc::new(BlockStore::open(dir.path().join("own-blocks")).expect("block store"));
+        let node = NodeBuilder::new(config.clone())
+            .tracer(Tracer::disabled())
+            .registry(Registry::new())
+            .coins_store(mem.clone(), None)
+            .block_store(blocks.clone())
+            .start()
+            .expect("the node starts on the stores of the caller");
+        crate::sync_tests::generate(&node, 3);
+        assert_eq!(node.tip.tip().0, 3);
+        node.shutdown().expect("shutdown");
+        // The stores of the caller hold the blocks; the directory of the node holds none.
+        assert!(matches!(blocks.tip_height(), Some(h) if h >= 3));
+        assert!(!config.state.cache_dir.join("coins").exists());
+        assert!(!config.state.cache_dir.join("blocks").exists());
+        let best = mem.best_block().expect("best block");
+        let node = NodeBuilder::new(config)
+            .coins_store(mem, best)
+            .block_store(blocks)
+            .start()
+            .expect("the node resumes on the stores of the caller");
+        assert!(node.tip.tip().0 >= 3);
+        node.shutdown().expect("shutdown");
+    }
 
     /// The driver takes the rule set, and with it the block limits, from the height of the
     /// block. It stops at a height whose upgrade has no rule set.

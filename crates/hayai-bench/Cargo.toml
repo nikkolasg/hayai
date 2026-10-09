@@ -90,7 +90,6 @@ serde_json.workspace = true
 hex.workspace = true
 tempfile.workspace = true
 libc.workspace = true
-perf-event2.workspace = true
 mimalloc = { workspace = true, optional = true }
 ahash.workspace = true
 parking_lot.workspace = true
@@ -122,6 +121,11 @@ zb_chain = { package = "zebra-chain", version = "13.0.1", optional = true }
 # Zakura and its time type. A dev-dependency cannot be optional, so they are here.
 zk_header_chain = { package = "zakura-header-chain", version = "4.0.0", optional = true }
 chrono = { version = "0.4.40", default-features = false, optional = true }
+
+# The hardware counters of `sysmetrics` use `perf_event_open`, a Linux system call. On
+# another system the counters are unavailable.
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -189,4 +193,8 @@ required-features = ["baselines"]
 
 [[bench]]
 name = "structures"
+harness = false
+
+[[bench]]
+name = "headers"
 harness = false

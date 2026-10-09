@@ -19,6 +19,8 @@
 //! - [`checkpoint_layer`] builds the layer of a block at or below the last checkpoint: the
 //!   state update of [`contextual_check`] without the rules that the checkpoint hash
 //!   replaces.
+//! - [`persist`] stores the base in `state.log` before each flush of the coins store and
+//!   recovers it at a restart ([`persist::StateLog`]).
 //! - [`prebuild_body`] does the contextual work of a block body (every transaction after
 //!   the coinbase) before the block exists. [`PrebuiltBody::commit`] then applies the
 //!   header and coinbase rules to a block with that body and builds its layer from the
@@ -57,6 +59,7 @@ use parking_lot::RwLock;
 
 mod check;
 pub mod history;
+pub mod persist;
 mod window;
 
 pub use check::{

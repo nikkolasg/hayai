@@ -1,0 +1,59 @@
+[package]
+name = "hayai-shadow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shadow mode: the follower of an upstream node through its JSON-RPC, its seed state and its upstream-backed coins"
+
+[features]
+default = ["upstream"]
+# The mock upstream node and the synthetic chains of the tests (`test_support`).
+test-support = ["dep:hayai-template", "dep:tempfile"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-wire/upstream",
+    "hayai-consensus/upstream",
+    "hayai-coins/upstream",
+    "hayai-trees/upstream",
+    "hayai-state/upstream",
+    "hayai-sync/upstream",
+    "hayai-metrics/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-wire/zakura",
+    "hayai-consensus/zakura",
+    "hayai-coins/zakura",
+    "hayai-trees/zakura",
+    "hayai-state/zakura",
+    "hayai-sync/zakura",
+    "hayai-metrics/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-consensus.workspace = true
+hayai-coins.workspace = true
+hayai-trees.workspace = true
+hayai-state.workspace = true
+hayai-sync.workspace = true
+hayai-metrics.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+hex.workspace = true
+hayai-template = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+crossbeam-channel.workspace = true
+# The tests of the upstream-backed coins run on a RocksDB store.
+hayai-coins = { workspace = true, features = ["rocksdb"] }
+hayai-template.workspace = true
+tempfile.workspace = true

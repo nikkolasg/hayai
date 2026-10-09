@@ -5,9 +5,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use hayai_metrics::DURATION_BUCKETS;
+use hayai_metrics::{Counter, FloatCounter, Gauge, Histogram, Registry};
 use hayai_net::RelayCounters;
-use hayai_rpc::metrics::DURATION_BUCKETS;
-use hayai_rpc::{Counter, FloatCounter, Gauge, Histogram, Registry};
 use hayai_trace::{Table, Tracer};
 use hayai_validate::Timings;
 

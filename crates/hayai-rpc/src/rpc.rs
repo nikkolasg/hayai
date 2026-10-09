@@ -21,8 +21,8 @@ use hayai_wire::RawBlock;
 use serde_json::{json, Value};
 
 use crate::feed::{TemplateFeed, Wake};
-use crate::metrics::{Registry, DURATION_BUCKETS};
 use crate::template::block_template;
+use hayai_metrics::{Registry, DURATION_BUCKETS};
 
 /// JSON-RPC and zcashd error codes that this module uses.
 pub mod codes {

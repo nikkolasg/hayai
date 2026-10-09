@@ -1,0 +1,17 @@
+[package]
+name = "hayai-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The HTTP/1.1 server side of the services of a node, and the cookie authentication"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream"]
+zakura = ["hayai-crypto/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+tracing.workspace = true

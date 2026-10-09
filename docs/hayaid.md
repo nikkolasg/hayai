@@ -1,6 +1,6 @@
 # hayaid
 
-Date: 2026-10-04. Scope: the `hayaid` binary, its 2 modes, its configuration, its traces
+Date: 2026-10-04 (crate split 2026-10-09: the node is the library `hayai-node`, `hayaid` is the binary around it). Scope: the `hayaid` binary, its 2 modes, its configuration, its traces
 and metrics, and the limits of each mode.
 
 ## Modes
@@ -105,7 +105,7 @@ A full node needs no upstream node. It reads the chain from its peers.
   and then each 60 s. These peers announce a transaction one time, to a part of their
   peers.
 - A block that fails its validation has one of 3 faults
-  (`crates/hayaid/src/node/fault.rs`):
+  (`crates/hayai-node/src/node/fault.rs`):
 
   | Fault | Cause | Result |
   |---|---|---|

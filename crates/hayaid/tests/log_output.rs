@@ -97,7 +97,7 @@ fn the_stop_method_ends_the_process_cleanly() {
             .permissions();
         assert_eq!(mode.mode() & 0o777, 0o600);
     }
-    let authorization = hayai_rpc::cookie::authorization(&cookie).expect("cookie file");
+    let authorization = hayai_http::cookie::authorization(&cookie).expect("cookie file");
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"stop","params":[]}"#;
     let post = |authorization: &str| {
         let mut stream = std::net::TcpStream::connect(addr).expect("connect");

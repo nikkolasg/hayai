@@ -2,7 +2,7 @@
 
 **A fast, independent Zcash node for miners.**
 
-[![CI](https://github.com/nikkolasg/hayai/actions/workflows/ci.yml/badge.svg)](https://github.com/nikkolasg/hayai/actions/workflows/ci.yml)
+[![CI](https://github.com/zodl-inc/hayai/actions/workflows/ci.yml/badge.svg)](https://github.com/zodl-inc/hayai/actions/workflows/ci.yml)
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 ![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-orange)
 ![Status: experimental](https://img.shields.io/badge/status-experimental-yellow)
@@ -240,7 +240,7 @@ Code that touches consensus needs a test at the boundary of each rule. The
 ## 🔒 Security
 
 Please report a security problem privately, through a
-[GitHub security advisory](https://github.com/nikkolasg/hayai/security/advisories/new), and
+[GitHub security advisory](https://github.com/zodl-inc/hayai/security/advisories/new), and
 not in a public issue. A problem that can split the chain or stop a node has the highest
 priority.
 

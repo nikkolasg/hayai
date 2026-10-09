@@ -1712,3 +1712,142 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   transaction sink of the relay. A node with another relay reuses the crate as it is.
 - The Regtest spend builder of the node tests moves from hayaid to `hayai_fixtures::regtest`,
   so the admission tests move with the admission.
+
+## 2026-10-08 — State persistence into hayai-state (hayai-tlq, M6)
+
+- `hayaid/src/persist.rs` moves to `hayai_state::persist`: `RecordLog`, `StateRecord`,
+  `StateLog`, `Recovered`, `ResumePoint` and `PersistError`. The record format does not
+  change. Reason: the record is the encoding of `BaseState`, and a node that embeds the
+  state crate needs the same restart rule as hayaid.
+- The record names the mode of the node that wrote it. `hayai_state::persist::Mode` (full
+  or shadow) replaces `hayaid::config::Mode` in the record; hayaid converts its
+  configuration value. The network of the record is `hayai_consensus::Network`, as before
+  (`NetworkKind` is an alias of it).
+- `hayai-bench` builds on macOS: the `perf_event_open` counters are behind
+  `cfg(target_os = "linux")`, and on another system every hardware event is unavailable
+  (the `Meter` then reports no counter, as on a kernel that refuses them). The tests that
+  read `/proc` stay Linux-only.
+
+## 2026-10-08 — Layering guard (hayai-yq7, M11)
+
+- `scripts/layering.sh` fails when a crate depends on a crate after it in the crate list of
+  `docs/architecture.md`, when a pure crate names `std::fs`, `std::net`, `std::thread`, a
+  clock or a lock outside its tests, when an in-memory crate names `std::fs` or `std::net`
+  outside its tests or pulls RocksDB or tokio, and when a crate outside hayai-net, hayai-rpc
+  and hayaid names `std::net`. CI runs it as the job `layering`, without a build.
+- The scan is by token, as `hayai-consensus-core/tests/subset.rs`: the scan of a file stops
+  at its `#[cfg(test)] mod tests`, and the files named `tests.rs`, `*_tests.rs`,
+  `test_support.rs` and `test_util.rs` do not count. Lesson: a probe appended at the end of
+  a file lands after the test module and does not count; a check of the guard puts the
+  probe at the top of the file.
+- `hayai_state::persist` is the one file of an in-memory crate that names `std::fs`. The
+  exception is a list in the script, with the reason beside each entry.
+
+## 2026-10-08 — One header index component (hayai-vfx, M4)
+
+- `hayaid::headers::HeaderIndex` and `SeedBlock` move to `hayai_sync::index`. The index
+  implements `hayai_relay::HeaderContext` (`has_block`, `parent`, the system clock), and
+  `hayai_relay::StandardHeaderCheck` is the one implementation of the header check: it
+  gains `trust_short_context` and `verify`, which returns the height and the rules that a
+  trusted short context left unchecked (`Verified`). hayaid's `NodeHeaderCheck` keeps only
+  the trace row, the `trusted_bits` counter and the pending entry of the relay path. The
+  inline copy of the rules in hayaid is gone. `HeaderIndex::median_time_past` had no
+  caller and is removed.
+- Not done: in full mode the `HeaderChain` and the index stay two structures, linked by the
+  commit order of the node. The relay's check reads the index, so a relayed block whose
+  parent is a header-only entry of the chain is `ParentUnknown` and goes to the sync as a
+  `BlockInv`, and a relayed block is checked twice (relay, then `Sync::relayed`). The
+  merge (the chain as the relay's context, a seeded chain for shadow mode) changes the sync
+  and needs the node network tests, which bind `127.0.0.x` and do not run on macOS. It is
+  the follow-up issue of M4.
+- Measurement, on this machine (macOS, wall time, 3 runs each): `parent_context` 150 to
+  158 ns before and 157 to 170 ns after, `verify` on Regtest 730 to 750 ns before and 719
+  to 773 ns after. The bands overlap: no change above the noise. The bench
+  `hayai-bench/benches/headers.rs` stays for the gate of M13 on Linux (instruction counts).
+
+## 2026-10-08 — Sans-IO relay policy (hayai-set, M3)
+
+- `hayai-net/src/relay.rs` splits into `policy` and `relay`. `RelayPolicy` holds the peer
+  set and every decision of the both-paths relay; it names no socket and no thread. Every
+  message that leaves and every connection that ends goes through the trait `Io` (`send`,
+  `queued_bytes`, `close`) that the caller passes with each event, and the tick takes its
+  `now`. `Relay` is the shell: the TCP transports, the acceptor, the dialler and the
+  ticker; it implements `Io` with the transport of each peer and keeps the public API, so
+  no caller changes.
+- Decision: the policy keeps the locks of the state (15 mutexes over the peers, the recent
+  blocks, the pending compact blocks, the lanes, the candidates), one `Io` call replaces
+  each transport call (one indirect call), and the bodies of the handlers do not change.
+  Reason: one lock in place of the fine-grained ones would serialize the reader threads of
+  the peers behind the header check and the parsing, and this machine cannot measure that
+  (no perf counters, and the peer tests bind `127.0.0.x`). A state machine that returns
+  its messages in place of calling `Io` is the next step when the gate can measure it.
+- Performance: no algorithm, lock, loop or thread changes. Each transport call becomes one
+  call through `&dyn Io` (an indirect call that the shell answers with one map lookup under
+  the transports lock, the send after its release); the handler bodies and the lock order
+  are the same. The relay bench `forward_latency` of the baseline (v2 forward on ids 260 µs
+  to 1.0 ms, v1 26 to 31 ms with the simulated 20 ms round trip) is in the M13 gate.
+- The policy tests drive it with a recording `Io` and the stores of an empty node: the
+  handshake, an `inv` answered with `getdata` and the bytes announced onwards, a block
+  announced to the legacy peers after its validation except to its source, a peer whose
+  queue is full closed through `Io`. The loopback tests (24) and the peer tests are
+  unchanged.
+
+## 2026-10-09 — The node as a library (hayai-341, M1)
+
+- The library of hayaid moves to the crate `hayai-node`: `Config` with its TOML form,
+  `Node`, the driver, the sync, the shadow follower, the wallet index attachment, the RPC
+  and the metrics. `hayaid` is the binary: `main.rs` reads the configuration file, the
+  signals and the logs, and has the CLI (`start`, `generate`, `tip-height`). The module
+  paths do not change (`hayai_node::node`, `hayai_node::config`, ...).
+- Decision: `Config` goes with the library. The node tests build nodes from TOML through
+  `Config::parse`, and another node constructs the same struct; the TOML derive is its
+  serialization, not a file format of the binary. hayaid keeps the file lookup and the
+  defaults of `generate`.
+- `NodeBuilder` takes components of the caller in place of the ones that the
+  configuration names: the tracer, the metrics registry, the coins store with its best
+  block, and the block store. `Node::start(&config)` is `NodeBuilder::new(config).start()`.
+  A store of the caller skips the empty-directory check of its path, and takes no
+  snapshot. The test starts a Regtest node on a memory store and a block store of the
+  caller, mines 3 blocks, and restarts on the same stores.
+- Owner decisions of 2026-10-09: the driver is in the library; shadow mode is a library
+  component; the wallet index is an optional library component. Shadow mode is in the
+  library by `Config` (`[shadow]`), not yet behind a trait of the block source: that trait
+  is the follow-up of M1, with the relay transport (the `Io` of M3) as its second
+  implementation.
+- `scripts/check_metric_names.py` and the docs point at `crates/hayai-node/src/`; the
+  Zakura configuration fixtures of the config tests move to `crates/hayai-node/tests/fixtures`.
+
+## 2026-10-09 — Smaller splits (hayai-vif, M10)
+
+- `hayai-template-messages`: the messages of the template push protocol with their
+  binary-frame and JSON-lines encodings, out of `hayai-template`. A miner decodes the push
+  without the live template, the consensus rules or the trees. `hayai_template::messages`
+  re-exports the crate, so no caller changes.
+- `hayai-http`: the HTTP/1.1 server side (one request read with its bounds, one response
+  written) and the cookie authentication, out of `hayai-rpc`. `hayai-metrics`: the
+  Prometheus registry and the `/metrics` endpoint, out of `hayai-rpc`. `hayai-rpc` keeps
+  the JSON-RPC methods and its HTTP front end on `hayai-http`, and counts its requests in a
+  `hayai_metrics::Registry`. A node that serves no RPC takes the metrics alone.
+- `hayai-shadow`: the upstream JSON-RPC client, the seed, the follower and the
+  upstream-backed coins, out of `hayai-node`. The couplings to the node are cut without a
+  copy: `parse_hash` is `hayai_wire::header::parse_hash`; the follower and the seed take
+  `hayai_consensus::Network` in place of `NetParams`; the follower reports to the trait
+  `UpstreamSink` (the node implements it with its event channel) in place of the driver's
+  `Event`; `UpstreamBacking` takes the two counters of the trusted coins and nullifiers in
+  place of `NodeMetrics`. Static dispatch everywhere (`Follower<S: UpstreamSink>`): no new
+  call on the block path.
+
+## 2026-10-09 — The links of docs/consensus.md follow the split
+
+- The 1,883 links of the Code and Test columns pointed at `nikkolasg/hayai` at the commit
+  `163279a`, before the crate split and before the consensus core. They now point at
+  `zodl-inc/hayai/blob/main` and the files of the split. `scripts/consensus_links.py`
+  rewrites them: it reads the text of each linked line in the old commit and finds it in
+  the current tree (1,441 in the same file, 246 in the file that the split moved it to, 8
+  elsewhere), then the definition of the symbol of the label (119), then a table of
+  overrides for the rules that the core rewrote with other text (69, each read by hand).
+  None is unresolved: no linked rule is gone. The script checks that each new link names
+  an existing line, and a second run changes nothing.
+- Lesson: a link pinned to a commit stays valid and goes stale. The script keeps the
+  table on `main` and reports the links whose code moved without its text, which is the
+  list of rules to read after a refactor of the rules.

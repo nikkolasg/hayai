@@ -12,9 +12,9 @@ use std::process::ExitCode;
 use std::sync::Mutex;
 
 use crossbeam_channel::{bounded, select};
-use hayaid::config::StateSection;
-use hayaid::node::stored_tip;
-use hayaid::{default_toml, Config, NetworkKind, Node};
+use hayai_node::config::StateSection;
+use hayai_node::node::stored_tip;
+use hayai_node::{default_toml, Config, NetworkKind, Node};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use tracing::level_filters::LevelFilter;
@@ -299,7 +299,7 @@ fn generate(network: NetworkKind, output: Option<PathBuf>) -> Result<(), String>
 }
 
 /// Prints the height of the best tip that the data directory holds: the tip that a
-/// restart of the node resumes at (`hayaid::node::stored_tip`). The command starts no
+/// restart of the node resumes at (`hayai_node::node::stored_tip`). The command starts no
 /// node and writes nothing. The directory is `cache_dir`, or `[state] cache_dir` of the
 /// configuration file, or the default of that key when there is no file.
 ///

@@ -41,7 +41,7 @@ hayaid reads a configuration of `zakurad` as follows.
 - One error has each such line and each warning line of the file.
 - Each other unknown key is an error.
 
-`crates/hayaid/src/config.rs` has the 2 lists (`ZAKURA_UNUSED`, `ZAKURA_REFUSED`).
+`crates/hayai-node/src/config.rs` has the 2 lists (`ZAKURA_UNUSED`, `ZAKURA_REFUSED`).
 Tests read `docker/default-zakura-config.toml` of Zakura, the output of
 `zakurad generate` and `docker/config/zakurad.testnet.toml`, and compare the exact lines.
 

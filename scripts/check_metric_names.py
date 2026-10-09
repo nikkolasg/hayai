@@ -34,7 +34,7 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SOURCES = [
-    REPO / "crates/hayaid/src/metrics.rs",
+    REPO / "crates/hayai-node/src/metrics.rs",
     REPO / "crates/hayai-rpc/src/rpc.rs",
 ]
 USERS = [

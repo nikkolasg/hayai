@@ -6,6 +6,8 @@
 //! starts with `hayai_`. The registry keeps one series per name and label set. Updates are
 //! single atomic operations. Rendering takes the registration lock.
 
+#![forbid(unsafe_code)]
+
 use std::fmt::Write as _;
 use std::io::{self, BufReader};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -14,7 +16,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
 
-use crate::http::{read_request, write_typed_response, HttpError, IDLE_TIMEOUT};
+use hayai_http::{read_request, write_typed_response, HttpError, IDLE_TIMEOUT};
 
 /// Content type of the text exposition format.
 pub const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";

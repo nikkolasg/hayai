@@ -6,7 +6,9 @@
 //! - [`protocol`]: service bit, versions, feature bits and the negotiation rule.
 //! - [`session`]: the per-peer handshake and keepalive state machine.
 //! - [`transport`]: blocking-socket transport with one reader thread per peer.
-//! - [`relay`]: the peer set and the both-paths relay of blocks, transactions and lanes.
+//! - [`policy`]: the relay policy, the peer set and the both-paths relay of blocks,
+//!   transactions and lanes, without a socket: events in, messages out through [`policy::Io`].
+//! - [`relay`]: the shell of the policy: the TCP transports, the acceptor and the ticker.
 //! - [`addrbook`]: the bounded address book, its selection rule and its file.
 //! - [`connect`]: the peer manager: limits, bans, DNS seeders and outbound connections.
 //!
@@ -18,6 +20,7 @@
 pub mod addrbook;
 pub mod codec;
 pub mod connect;
+pub mod policy;
 pub mod protocol;
 pub mod relay;
 pub mod session;

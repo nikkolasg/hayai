@@ -74,7 +74,7 @@ classes, on both backends, on the current tree: no finding. Test time: 9 s on an
 - Rule: none in the consensus rules. The block and its hash are the same with and without the
   bytes. The difference is in the wire policy. hayai is the stricter side.
 - Effect in hayaid: a block message with bytes after the block is a malformed body
-  (`hayaid/src/sync.rs`, `parse_body`, `BodyError::Malformed`). The header does not become
+  (`hayai-node/src/sync.rs`, `parse_body`, `BodyError::Malformed`). The header does not become
   invalid. A node that forwards a block writes it again from the parsed form, so the bytes
   do not spread.
 - Count: 14,468 cases in run 1, 7,081 in run 3. For each case the fuzzer removes the bytes

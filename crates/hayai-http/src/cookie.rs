@@ -60,7 +60,7 @@ impl Cookie {
         &self.path
     }
 
-    pub(crate) fn secret(&self) -> Arc<str> {
+    pub fn secret(&self) -> Arc<str> {
         self.secret.clone()
     }
 }
@@ -77,7 +77,7 @@ impl Drop for Cookie {
 /// `Authorization` is the base64 form of `user:password`, and the password must be the
 /// secret. The rule does not read the scheme and the user name. The comparison of the
 /// password with the secret takes constant time.
-pub(crate) fn accepts(secret: &str, authorization: Option<&str>) -> bool {
+pub fn accepts(secret: &str, authorization: Option<&str>) -> bool {
     let credentials = authorization
         .and_then(|value| value.split_whitespace().nth(1))
         .and_then(base64_decode)

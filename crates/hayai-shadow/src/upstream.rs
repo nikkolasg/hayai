@@ -15,7 +15,7 @@ use hayai_crypto::zcash_primitives::transaction::TxId;
 use hayai_wire::header::BlockHash;
 use serde_json::{json, Value};
 
-use crate::params::parse_hash;
+use hayai_wire::header::parse_hash;
 
 /// zcashd `RPC_INVALID_ADDRESS_OR_KEY`: unknown transaction or block.
 const RPC_NOT_FOUND: i64 = -5;

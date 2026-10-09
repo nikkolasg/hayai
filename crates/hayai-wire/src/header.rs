@@ -304,6 +304,16 @@ pub fn check_equihash(header: &BlockHeader, params: PowParams) -> Result<(), equ
     )
 }
 
+/// Parses a block hash in display (byte-reversed) hex.
+pub fn parse_hash(display: &str) -> Result<BlockHash, String> {
+    let mut bytes: [u8; 32] = hex::decode(display)
+        .map_err(|e| format!("block hash {display}: {e}"))?
+        .try_into()
+        .map_err(|_| format!("block hash {display} is not 32 bytes"))?;
+    bytes.reverse();
+    Ok(BlockHash(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

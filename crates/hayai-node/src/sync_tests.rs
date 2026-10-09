@@ -2868,7 +2868,7 @@ pub(crate) fn rpc_call(node: &Node, method: &str, params: Value) -> Value {
     let body = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })
         .to_string();
     let cookie = node.rpc_cookie.as_ref().expect("the node has a cookie");
-    let authorization = hayai_rpc::cookie::authorization(cookie).expect("cookie file");
+    let authorization = hayai_http::cookie::authorization(cookie).expect("cookie file");
     let mut stream =
         TcpStream::connect(node.rpc_addr.expect("the node serves RPC")).expect("connect");
     stream.set_read_timeout(Some(WAIT)).expect("a read timeout");

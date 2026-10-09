@@ -1,20 +1,26 @@
-//! Shadow mode: the start state seeded from the followed node, and the follower thread
-//! that reports the upstream best chain.
+//! Shadow mode: a node that follows an upstream node (Zakura or zcashd) through its
+//! JSON-RPC and validates every block of its best chain against its own rules.
 //!
-//! Trust model (`docs/hayaid.md`, Shadow mode limits):
+//! - [`upstream`]: the JSON-RPC client of the followed node.
+//! - [`seed`]: the start state of a shadow node at a height of the upstream chain: the
+//!   note commitment trees, the value pools and the header context, read from upstream.
+//! - [`spawn_follower`] and [`Follower`]: the poll of the upstream tip; each new part of
+//!   the upstream best chain goes to an [`UpstreamSink`] (the driver of the node).
+//! - [`backing`]: the coins store of a shadow node, which reads the coins below its start
+//!   height from upstream.
 //!
-//! - Start state: the hash of the start block, the time and the `nBits` of the start block
-//!   and of the blocks before it, `DIFFICULTY_CONTEXT_BLOCKS` (113) blocks in all, the Sapling,
-//!   Orchard and Ironwood frontiers
-//!   (`z_gettreestate`) and the chain value pools (`getblock <hash> 1`: transparent,
-//!   Sprout, Sapling, Orchard, Ironwood and deferred) come from upstream.
-//! - After every block, hayai's frontiers are compared with upstream's `z_gettreestate` of
-//!   the same block hash. A difference is a disagreement. hayai therefore holds every root
-//!   from the start height on, and an anchor it does not hold can only be older than the
-//!   start height: such an anchor is accepted and counted.
-//! - hayai computes the block subsidy, the funding streams and the lockbox terms of every
-//!   block itself (`hayai_consensus::coinbase::CoinbaseTerms`), and the expected `nBits`
-//!   from the first block after the start.
+//! The crate names no type of the node: the network is `hayai_consensus::Network`, the
+//! blocks go through [`UpstreamSink`], and the counters of the trusted coins are
+//! `hayai_metrics::Counter`s that the node registers.
+
+#![forbid(unsafe_code)]
+
+pub mod backing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+#[cfg(test)]
+mod tests;
+pub mod upstream;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,18 +28,15 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel::Sender;
-use hayai_consensus::{Upgrade, DIFFICULTY_CONTEXT_BLOCKS};
+use hayai_consensus::{rules_at, Network, Upgrade, DIFFICULTY_CONTEXT_BLOCKS};
 use hayai_crypto::zcash_primitives::merkle_tree::read_frontier_v0;
 use hayai_state::ValuePools;
 use hayai_trees::{IronwoodFrontier, OrchardFrontier, SaplingFrontier};
 use hayai_wire::header::BlockHash;
 use hayai_wire::RawBlock;
 
-use crate::headers::{HeaderIndex, SeedBlock};
-use crate::node::Event;
-use crate::params::NetParams;
 use crate::upstream::{BlockInfo, TreeState, Upstream, UpstreamError};
+use hayai_sync::index::{HeaderIndex, SeedBlock};
 
 /// Blocks the follower fetches in one report at most. A node further behind stops.
 pub const MAX_CATCH_UP: usize = 1000;
@@ -98,7 +101,7 @@ pub fn frontiers(trees: &TreeState, ironwood_active: bool) -> Result<UpstreamTre
 /// Reads the start state from upstream. `start_height` defaults to the upstream tip.
 pub fn seed(
     upstream: &Upstream,
-    params: NetParams,
+    network: Network,
     start_height: Option<u32>,
 ) -> Result<Seed, String> {
     let e = |e: UpstreamError| e.to_string();
@@ -140,13 +143,12 @@ pub fn seed(
             ancestors.len()
         ));
     }
-    let ironwood_active = params
-        .rules_at(height)
+    let ironwood_active = rules_at(network, height)
         .map_err(|e| e.to_string())?
         .pools
         .ironwood;
     let trees = frontiers(&upstream.tree_state(&hash).map_err(e)?, ironwood_active)?;
-    let value_pools = seed_pools(params, &info, ironwood_active)?;
+    let value_pools = seed_pools(network, &info, ironwood_active)?;
     Ok(Seed {
         height,
         hash,
@@ -165,7 +167,7 @@ pub fn seed(
 /// disbursement leaves the part of its own block), so a pool of zero at such a height is
 /// an error too.
 fn seed_pools(
-    params: NetParams,
+    network: Network,
     info: &BlockInfo,
     ironwood_active: bool,
 ) -> Result<ValuePools, String> {
@@ -180,7 +182,7 @@ fn seed_pools(
         }
     };
     let deferred_active =
-        matches!(params.kind.activation_height(Upgrade::Nu6), Some(nu6) if height >= nu6);
+        matches!(network.activation_height(Upgrade::Nu6), Some(nu6) if height >= nu6);
     let deferred = match (info.deferred_pool, deferred_active) {
         (Some(0) | None, true) => {
             return Err(format!(
@@ -211,21 +213,29 @@ pub struct UpstreamBlock {
     pub ironwood_root: [u8; 32],
 }
 
+/// Where the follower reports the upstream chain: the driver of the node.
+pub trait UpstreamSink: Send + 'static {
+    /// A new part of the upstream best chain: `fork` is the fork point (a block the
+    /// receiver holds or a block of an earlier report) and `blocks` the blocks after it,
+    /// oldest first. Returns `false` when the receiver is gone: the follower stops.
+    fn on_upstream(&self, fork: BlockHash, blocks: Vec<UpstreamBlock>) -> bool;
+}
+
 /// Polls the upstream tip and reports every new part of the upstream best chain to the
-/// driver as [`Event::Upstream`]: the fork point (a block the driver holds or a block of
+/// driver as the [`UpstreamSink`]: the fork point (a block the driver holds or a block of
 /// an earlier report) and the blocks after it, oldest first.
-pub fn spawn_follower(
+pub fn spawn_follower<S: UpstreamSink>(
     upstream: Arc<Upstream>,
-    params: NetParams,
+    network: Network,
     index: Arc<HeaderIndex>,
-    events: Sender<Event>,
+    sink: S,
     stop: Arc<AtomicBool>,
     poll: Duration,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("shadow-follower".into())
         .spawn(move || {
-            let mut follower = Follower::new(upstream, params, index, events);
+            let mut follower = Follower::new(upstream, network, index, sink);
             while !stop.load(Ordering::Acquire) {
                 match follower.step() {
                     Ok(true) => {}
@@ -237,29 +247,29 @@ pub fn spawn_follower(
         })
 }
 
-pub(crate) struct Follower {
+pub struct Follower<S> {
     upstream: Arc<Upstream>,
-    params: NetParams,
+    network: Network,
     index: Arc<HeaderIndex>,
-    events: Sender<Event>,
+    sink: S,
     /// Heights of reported blocks, which the driver may not have committed yet.
     reported: HashMap<BlockHash, u32>,
     order: VecDeque<BlockHash>,
     last_best: Option<BlockHash>,
 }
 
-impl Follower {
-    pub(crate) fn new(
+impl<S: UpstreamSink> Follower<S> {
+    pub fn new(
         upstream: Arc<Upstream>,
-        params: NetParams,
+        network: Network,
         index: Arc<HeaderIndex>,
-        events: Sender<Event>,
+        sink: S,
     ) -> Self {
         Self {
             upstream,
-            params,
+            network,
             index,
-            events,
+            sink,
             reported: HashMap::new(),
             order: VecDeque::new(),
             last_best: None,
@@ -272,8 +282,8 @@ impl Follower {
             .or_else(|| self.reported.get(hash).copied())
     }
 
-    /// Returns `false` when the driver is gone.
-    pub(crate) fn step(&mut self) -> Result<bool, String> {
+    /// One poll. Returns `false` when the sink is gone.
+    pub fn step(&mut self) -> Result<bool, String> {
         let best = self.upstream.best_block_hash().map_err(|e| e.to_string())?;
         if self.last_best == Some(best) {
             return Ok(true);
@@ -294,9 +304,8 @@ impl Follower {
                 .block_bytes(&cursor)
                 .map_err(|e| e.to_string())?;
             let height_hint = self.index.tip().0 + 1;
-            let branch = self
-                .params
-                .branch_at(height_hint)
+            let branch = rules_at(self.network, height_hint)
+                .map(|rules| rules.branch_id)
                 .map_err(|e| e.to_string())?;
             let raw = RawBlock::parse(bytes, branch)
                 .map_err(|e| format!("upstream block {cursor}: {e}"))?;
@@ -309,9 +318,7 @@ impl Follower {
         for (i, raw) in path.into_iter().enumerate() {
             let hash = raw.hash();
             let height = fork_height + 1 + i as u32;
-            let ironwood_active = self
-                .params
-                .rules_at(height)
+            let ironwood_active = rules_at(self.network, height)
                 .map_err(|e| e.to_string())?
                 .pools
                 .ironwood;
@@ -335,7 +342,7 @@ impl Follower {
                 }
             }
         }
-        if self.events.send(Event::Upstream { fork, blocks }).is_err() {
+        if !self.sink.on_upstream(fork, blocks) {
             return Ok(false);
         }
         self.last_best = Some(best);

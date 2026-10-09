@@ -5,86 +5,34 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The hayai node binary: Regtest full node and Testnet shadow follower"
+description = "The hayai node binary: the configuration file, the signals and the logs around hayai-node"
 
 [features]
 default = ["upstream"]
-upstream = [
-    "hayai-crypto/upstream",
-    "hayai-consensus/upstream",
-    "hayai-wire/upstream",
-    "hayai-coins/upstream",
-    "hayai-trees/upstream",
-    "hayai-prepared/upstream",
-    "hayai-mempool/upstream",
-    "hayai-state/upstream",
-    "hayai-validate/upstream",
-    "hayai-relay/upstream",
-    "hayai-template/upstream",
-    "hayai-blockstore/upstream",
-    "hayai-index/upstream",
-    "hayai-net/upstream",
-    "hayai-sync/upstream",
-    "hayai-rpc/upstream",
-    "hayai-fixtures/upstream",
-]
-zakura = [
-    "hayai-crypto/zakura",
-    "hayai-consensus/zakura",
-    "hayai-wire/zakura",
-    "hayai-coins/zakura",
-    "hayai-trees/zakura",
-    "hayai-prepared/zakura",
-    "hayai-mempool/zakura",
-    "hayai-state/zakura",
-    "hayai-validate/zakura",
-    "hayai-relay/zakura",
-    "hayai-template/zakura",
-    "hayai-blockstore/zakura",
-    "hayai-index/zakura",
-    "hayai-net/zakura",
-    "hayai-sync/zakura",
-    "hayai-rpc/zakura",
-    "hayai-fixtures/zakura",
-]
+upstream = ["hayai-node/upstream", "hayai-fixtures/upstream"]
+zakura = ["hayai-node/zakura", "hayai-fixtures/zakura"]
 
 [dependencies]
-hayai-crypto.workspace = true
-hayai-consensus.workspace = true
-hayai-wire.workspace = true
-hayai-coins = { workspace = true, features = ["rocksdb"] }
-hayai-trees.workspace = true
-hayai-prepared.workspace = true
-hayai-mempool.workspace = true
-hayai-state.workspace = true
-hayai-validate.workspace = true
-hayai-relay.workspace = true
-hayai-template.workspace = true
-hayai-blockstore.workspace = true
-hayai-index.workspace = true
-hayai-net.workspace = true
-hayai-sync.workspace = true
-hayai-rpc.workspace = true
-hayai-trace.workspace = true
-rand.workspace = true
-crc32c.workspace = true
-bytes.workspace = true
+hayai-node.workspace = true
 crossbeam-channel.workspace = true
-parking_lot.workspace = true
-rayon.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-hex.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-toml.workspace = true
 signal-hook.workspace = true
 
 [dev-dependencies]
-# The Regtest spend builder of the node tests (`hayai_fixtures::regtest`).
+# The Regtest spend builder of the pair tests (`hayai_fixtures::regtest`).
 hayai-fixtures.workspace = true
 tempfile.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+hayai-consensus.workspace = true
+hayai-net.workspace = true
+hayai-rpc.workspace = true
+hayai-http.workspace = true
+hayai-metrics.workspace = true
+hex.workspace = true
 
 # The Regtest pair of one hayaid and one zakurad (`docs/regtest-pair.md`). It has its own
 # `main`: the path of the zakurad binary is a command-line argument. Without that argument

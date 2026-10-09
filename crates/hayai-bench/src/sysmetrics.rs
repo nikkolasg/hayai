@@ -35,8 +35,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware};
-use perf_event::{Builder, Counter};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------- counting allocator
@@ -401,23 +399,6 @@ impl HwEvent {
             HwEvent::BranchMisses => "branch_misses",
         }
     }
-
-    fn builder(self) -> Builder<'static> {
-        let llc = |operation, result| Cache {
-            which: CacheId::LL,
-            operation,
-            result,
-        };
-        match self {
-            HwEvent::Cycles => Builder::new(Hardware::CPU_CYCLES),
-            HwEvent::Instructions => Builder::new(Hardware::INSTRUCTIONS),
-            HwEvent::CacheRefs => Builder::new(Hardware::CACHE_REFERENCES),
-            HwEvent::CacheMisses => Builder::new(Hardware::CACHE_MISSES),
-            HwEvent::LlcLoads => Builder::new(llc(CacheOp::READ, CacheResult::ACCESS)),
-            HwEvent::LlcMisses => Builder::new(llc(CacheOp::READ, CacheResult::MISS)),
-            HwEvent::BranchMisses => Builder::new(Hardware::BRANCH_MISSES),
-        }
-    }
 }
 
 /// Counts per event; `None` where the PMU does not provide the event (the kernel answers
@@ -477,9 +458,10 @@ impl HwCounts {
 }
 
 /// One `perf_event_open` counter per available event, process-wide (`inherit`), user space
-/// only; the events the kernel refused, with the error, alongside.
+/// only; the events the kernel refused, with the error, alongside. On a system without
+/// `perf_event_open` every event is unavailable.
 pub struct HwCounters {
-    counters: Vec<(HwEvent, Counter)>,
+    counters: Vec<(HwEvent, counter::Counter)>,
     unavailable: Vec<(HwEvent, io::Error)>,
 }
 
@@ -490,16 +472,7 @@ impl HwCounters {
         let mut counters = Vec::new();
         let mut unavailable = Vec::new();
         for event in HwEvent::ALL {
-            let built = event
-                .builder()
-                .observe_self()
-                .any_cpu()
-                .inherit(true)
-                .exclude_kernel(true)
-                .exclude_hv(true)
-                .enabled(false)
-                .build();
-            match built {
+            match counter::open(event) {
                 Ok(c) => counters.push((event, c)),
                 Err(e) => unavailable.push((event, e)),
             }
@@ -526,8 +499,7 @@ impl HwCounters {
 
     fn start(&mut self) -> io::Result<()> {
         for (_, c) in &mut self.counters {
-            c.reset()?;
-            c.enable()?;
+            counter::start(c)?;
         }
         Ok(())
     }
@@ -535,18 +507,90 @@ impl HwCounters {
     /// Disables the counters and adds their multiplexing-scaled counts to `total`.
     fn stop_into(&mut self, total: &mut HwCounts) -> io::Result<()> {
         for (event, c) in &mut self.counters {
-            c.disable()?;
-            let data = c.read_full()?;
-            let count = data.count();
-            let scaled = match (data.time_enabled(), data.time_running()) {
-                (Some(enabled), Some(running)) if !running.is_zero() && running < enabled => {
-                    (count as f64 * enabled.as_secs_f64() / running.as_secs_f64()) as u64
-                }
-                _ => count,
-            };
-            total.add(*event, scaled);
+            total.add(*event, counter::stop(c)?);
         }
         Ok(())
+    }
+}
+
+/// The counters of `perf_event_open`.
+#[cfg(target_os = "linux")]
+mod counter {
+    use std::io;
+
+    use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware};
+    use perf_event::Builder;
+    pub use perf_event::Counter;
+
+    use super::HwEvent;
+
+    pub fn open(event: HwEvent) -> io::Result<Counter> {
+        let llc = |operation, result| Cache {
+            which: CacheId::LL,
+            operation,
+            result,
+        };
+        let builder = match event {
+            HwEvent::Cycles => Builder::new(Hardware::CPU_CYCLES),
+            HwEvent::Instructions => Builder::new(Hardware::INSTRUCTIONS),
+            HwEvent::CacheRefs => Builder::new(Hardware::CACHE_REFERENCES),
+            HwEvent::CacheMisses => Builder::new(Hardware::CACHE_MISSES),
+            HwEvent::LlcLoads => Builder::new(llc(CacheOp::READ, CacheResult::ACCESS)),
+            HwEvent::LlcMisses => Builder::new(llc(CacheOp::READ, CacheResult::MISS)),
+            HwEvent::BranchMisses => Builder::new(Hardware::BRANCH_MISSES),
+        };
+        builder
+            .observe_self()
+            .any_cpu()
+            .inherit(true)
+            .exclude_kernel(true)
+            .exclude_hv(true)
+            .enabled(false)
+            .build()
+    }
+
+    pub fn start(c: &mut Counter) -> io::Result<()> {
+        c.reset()?;
+        c.enable()
+    }
+
+    /// Disables `c` and returns its count, scaled for multiplexing.
+    pub fn stop(c: &mut Counter) -> io::Result<u64> {
+        c.disable()?;
+        let data = c.read_full()?;
+        let count = data.count();
+        Ok(match (data.time_enabled(), data.time_running()) {
+            (Some(enabled), Some(running)) if !running.is_zero() && running < enabled => {
+                (count as f64 * enabled.as_secs_f64() / running.as_secs_f64()) as u64
+            }
+            _ => count,
+        })
+    }
+}
+
+/// No hardware counters: the system has no `perf_event_open`.
+#[cfg(not(target_os = "linux"))]
+mod counter {
+    use std::io;
+
+    use super::HwEvent;
+
+    /// No value: [`open`] never returns a counter.
+    pub enum Counter {}
+
+    pub fn open(_: HwEvent) -> io::Result<Counter> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "perf_event_open is a Linux system call",
+        ))
+    }
+
+    pub fn start(c: &mut Counter) -> io::Result<()> {
+        match *c {}
+    }
+
+    pub fn stop(c: &mut Counter) -> io::Result<u64> {
+        match *c {}
     }
 }
 
