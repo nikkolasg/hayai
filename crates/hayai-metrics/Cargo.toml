@@ -1,0 +1,17 @@
+[package]
+name = "hayai-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Prometheus metrics: a registry of atomic counters, gauges and histograms, and the /metrics endpoint"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-http/upstream"]
+zakura = ["hayai-http/zakura"]
+
+[dependencies]
+hayai-http.workspace = true
+tracing.workspace = true

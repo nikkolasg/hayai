@@ -1,4 +1,5 @@
 //! `MemBacking`: equality with `RocksBacking`, crash recovery, snapshots and concurrent reads.
+//! The tests that use `RocksBacking` need the feature `rocksdb`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,9 +9,12 @@ use std::sync::Arc;
 use bytes::Bytes;
 use hayai_coins::stored_best_block;
 use hayai_coins::{
-    BestBlock, Coin, CoinsBacking, Config, Error, FlushGeneration, MemBacking, MemConfig, OutPoint,
-    PersistError, Pool, Recovery, RocksBacking,
+    BestBlock, Coin, CoinsBacking, Error, FlushGeneration, MemBacking, MemConfig, OutPoint,
+    PersistError, Pool, Recovery,
 };
+#[cfg(feature = "rocksdb")]
+use hayai_coins::{Config, RocksBacking};
+#[cfg(feature = "rocksdb")]
 use proptest::prelude::*;
 
 const LOG: &str = "coins.log";
@@ -26,6 +30,7 @@ fn open_mem(dir: &Path) -> (MemBacking, Recovery) {
     MemBacking::open(dir, &MemConfig::default()).expect("open mem store")
 }
 
+#[cfg(feature = "rocksdb")]
 fn open_rocks(dir: &Path) -> RocksBacking {
     let config = Config {
         block_cache_bytes: 8 << 20,
@@ -108,6 +113,7 @@ fn view(backing: &dyn CoinsBacking) -> (Vec<Option<Coin>>, Vec<Vec<bool>>) {
     (coins, sets)
 }
 
+#[cfg(feature = "rocksdb")]
 #[derive(Clone, Debug)]
 enum Op {
     Generation {
@@ -127,6 +133,7 @@ enum Op {
     Reopen,
 }
 
+#[cfg(feature = "rocksdb")]
 fn op() -> impl Strategy<Value = Op> {
     let adds = proptest::collection::vec((0..KEYS, any::<u32>()), 0..12);
     let spends = proptest::collection::vec(0..KEYS, 0..12);
@@ -146,6 +153,7 @@ fn op() -> impl Strategy<Value = Op> {
     ]
 }
 
+#[cfg(feature = "rocksdb")]
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 48,
@@ -351,6 +359,7 @@ fn a_corrupt_middle_record_fails_the_open() {
 /// A snapshot holds the set at its sequence number; a restart loads it and replays only
 /// the later records. Log records the snapshot already holds (a crash between the rename
 /// and the truncation) are skipped.
+#[cfg(feature = "rocksdb")]
 #[test]
 fn snapshot_and_log_replay_round_trip() {
     let dir = scratch();
@@ -601,20 +610,23 @@ fn the_stored_best_block_is_read_without_a_write() {
     assert_eq!(stored_best_block(dir.path()).expect("both"), Some(best(5)));
 
     // RocksDB backend: the generation is in the write-ahead log only.
-    let dir = scratch();
-    let rocks = open_rocks(dir.path());
-    assert_eq!(stored_best_block(dir.path()).expect("empty store"), None);
-    rocks
-        .write_generation(&generation(7, &[(1, 1)], &[], &[]))
-        .expect("write");
-    drop(rocks);
-    let before = listing(dir.path());
-    assert_eq!(stored_best_block(dir.path()).expect("rocks"), Some(best(7)));
-    assert_eq!(listing(dir.path()), before);
-    assert_eq!(
-        open_rocks(dir.path()).best_block().expect("best"),
-        Some(best(7))
-    );
+    #[cfg(feature = "rocksdb")]
+    {
+        let dir = scratch();
+        let rocks = open_rocks(dir.path());
+        assert_eq!(stored_best_block(dir.path()).expect("empty store"), None);
+        rocks
+            .write_generation(&generation(7, &[(1, 1)], &[], &[]))
+            .expect("write");
+        drop(rocks);
+        let before = listing(dir.path());
+        assert_eq!(stored_best_block(dir.path()).expect("rocks"), Some(best(7)));
+        assert_eq!(listing(dir.path()), before);
+        assert_eq!(
+            open_rocks(dir.path()).best_block().expect("best"),
+            Some(best(7))
+        );
+    }
 
     // A directory without a store is an error, and the read makes no file in it.
     let dir = scratch();

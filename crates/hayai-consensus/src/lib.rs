@@ -1,24 +1,33 @@
-//! Network parameters and one rule set per network upgrade.
+//! The networks and the adapter around the pure consensus core (hayai-consensus-core).
 //!
 //! Contract: `docs/architecture.md`, section hayai-consensus.
 //!
-//! - [`Network`] names the three networks. [`NetworkParams`] holds the values that depend
-//!   only on the network: genesis block, Equihash parameters, proof-of-work limit, halving
-//!   interval, slow start.
+//! - [`Network`] names the three built-in networks and a custom chain. A [`ChainSpec`]
+//!   holds every value of a network that the rules read: the activation heights,
+//!   [`NetworkParams`] (genesis block, Equihash parameters, proof-of-work limit, halving
+//!   interval, slow start), the checkpoints, the funding streams, the lockbox
+//!   disbursements, the founders' addresses and the NSM seed. [`Network::spec`] gives the
+//!   spec of a network, and [`Network::core`] the [`CoreSpec`] that the rules of the core
+//!   read: the same values with the addresses decoded to scripts. A crate defines another
+//!   chain as a spec, and [`ChainSpec::network`] checks it and gives its
+//!   [`Network::Custom`].
 //! - [`Upgrade`] names every network upgrade. [`Network::activation_height`] gives the
-//!   height of each one. Mainnet and Testnet heights come from the `zcash_protocol` crate of
-//!   the crypto backend. The NU7 height is a constant of this crate on every backend.
-//! - A [`RuleSet`] holds the rules of one upgrade. [`rules_at`] is the one interface that
-//!   selects it for a network and a height. An upgrade that is active and has no rule set is
+//!   height of each one. The Mainnet and Testnet heights are the heights of the
+//!   `zcash_protocol` crate of the crypto backend, and the NU7 height is the same on every
+//!   backend. [`branch_id`] gives the upstream branch id of an upgrade when the backend has
+//!   it.
+//! - A [`RuleSet`] holds the rules of one upgrade with the upstream branch id and script
+//!   flags. [`rules_at`] is the one interface that selects it for a network and a height.
+//!   An upgrade that is active and has no rule set is
 //!   [`ConsensusError::UnsupportedUpgrade`]. The caller must stop: it must not apply the
 //!   rule set of an earlier upgrade. The NU7 rule set exists when the crypto backend has
 //!   the NU7 branch id.
-//! - [`subsidy`] holds the block subsidy schedule.
-//! - [`nsm`] holds the Network Sustainability Mechanism of NU7: the fee share, the value
-//!   balance and the reissuance.
-//! - [`difficulty`] holds the difficulty adjustment: the expected `nBits` of a block and the
-//!   work of a block.
-//! - [`header`] holds the header rules. Every path that accepts a header calls it.
+//! - [`subsidy`], [`funding`], [`lockbox`], [`founders`], [`nsm`], [`difficulty`] and
+//!   [`coinbase`] wrap the modules of the core for a caller with a [`Network`]. They do no
+//!   rule work.
+//! - [`header`] holds the header rules. Every path that accepts a header calls it. The
+//!   proof of work (solution length, hash, Equihash) is here; the other rules are in the
+//!   core.
 //! - [`Checkpoints`] is a checkpoint list. [`Network::checkpoints`] gives the list of a
 //!   network, and [`Network::mandatory_checkpoint_height`] the height below which a block
 //!   has no full validation.
@@ -27,93 +36,56 @@
 
 #![forbid(unsafe_code)]
 
+mod address;
 mod checkpoints;
 pub mod coinbase;
 pub mod difficulty;
 pub mod founders;
 pub mod funding;
 pub mod header;
-mod limits;
 pub mod lockbox;
 mod network;
 pub mod nsm;
 mod rules;
 pub mod subsidy;
 
+pub use address::address_of;
 pub use checkpoints::{Checkpoints, DuplicateCheckpoint};
-pub use difficulty::{ContextTooShort, ParentChain};
+pub use hayai_consensus_core::rules::{
+    CoinbaseRules, DifficultyParams, HistoryVersion, ShieldedPools, TxVersions,
+};
+pub use hayai_consensus_core::{
+    BlockLimits, ConsensusError, ContextTooShort, CoreSpec, P2shScript, ParentChain, Upgrade,
+    COINBASE_MATURITY, DIFFICULTY_CONTEXT_BLOCKS, LOCKTIME_THRESHOLD, MAX_MONEY, MEDIAN_TIME_SPAN,
+    POST_BLOSSOM_TARGET_SPACING, POST_NU7_TARGET_SPACING, PRE_BLOSSOM_TARGET_SPACING,
+    TX_EXPIRY_HEIGHT_THRESHOLD,
+};
 pub use header::{HeaderRuleError, HeaderVerdict};
-pub use limits::BlockLimits;
 pub use network::{
-    Network, NetworkParams, RegtestConfig, RegtestConfigError, RegtestDisbursement,
-    RegtestFundingStreams, RegtestRecipient, Upgrade,
+    branch_id, ChainSpec, ChainSpecError, CheckedSpec, Network, NetworkParams, RegtestConfig,
+    RegtestDisbursement, RegtestFundingStreams, RegtestRecipient,
 };
-pub use rules::{
-    rules_at, CoinbaseRules, DifficultyParams, HistoryVersion, RuleSet, ShieldedPools, TxVersions,
-};
+pub use rules::{rules_at, RuleSet};
 
-use hayai_crypto::zcash_protocol;
-
-/// Blocks a coinbase output must age before a transaction can spend it.
-/// Spec §7.1.2: no spend of a coinbase output less than 100 blocks old.
-/// ZIP 218: the value stays 100 blocks from NU7.
-pub const COINBASE_MATURITY: u32 = zcash_protocol::consensus::COINBASE_MATURITY_BLOCKS;
 /// Depth below the tip at which a block is final: the node does not reorganize deeper.
 /// The value of Zebra and Zakura (`MAX_BLOCK_REORG_HEIGHT`).
 ///
 /// ZIP 218: a node should set `MAX_REORG_LENGTH` to 600 blocks from NU7. hayai keeps
 /// 1,000 blocks at every height, as Zakura (`zakura-chain/src/parameters/constants.rs:30`).
 pub const FINALITY_DEPTH: u32 = 1_000;
-/// Expiry heights at or above this value are not valid (zcashd
-/// `TX_EXPIRY_HEIGHT_THRESHOLD`).
-pub const TX_EXPIRY_HEIGHT_THRESHOLD: u32 = 500_000_000;
-/// Lock times below this value are block heights. Lock times at or above it are Unix times.
-pub const LOCKTIME_THRESHOLD: u32 = 500_000_000;
-/// Target block spacing before Blossom, in seconds.
-/// ZIP 208: `PreBlossomPoWTargetSpacing` is 150 s.
-pub const PRE_BLOSSOM_TARGET_SPACING: u32 = 150;
-/// Target block spacing from Blossom until NU7, in seconds.
-/// ZIP 208: `PostBlossomPoWTargetSpacing` is 75 s.
-pub const POST_BLOSSOM_TARGET_SPACING: u32 = 75;
-/// Target block spacing from NU7, in seconds.
-/// ZIP 218: `PostNU7PoWTargetSpacing` is 25 s.
-pub const POST_NU7_TARGET_SPACING: u32 = 25;
-/// Blocks whose times form the median-time-past.
-/// Spec §7.6: `PoWMedianBlockSpan` is 11 blocks.
-pub const MEDIAN_TIME_SPAN: usize = 11;
-/// Newest blocks whose time and `bits` the difficulty rule of the next block reads: the
-/// largest averaging window of the rule sets plus [`MEDIAN_TIME_SPAN`].
-pub const DIFFICULTY_CONTEXT_BLOCKS: usize =
-    DifficultyParams::POST_NU7.averaging_window as usize + MEDIAN_TIME_SPAN;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ConsensusError {
-    /// The upgrade is active at the height and this build has no rule set for it.
-    #[error("{upgrade:?} is active at height {height} and this build has no rule set for it")]
-    UnsupportedUpgrade { upgrade: Upgrade, height: u32 },
-    #[error("this build has no rule set for {0:?}")]
-    NoRuleSet(Upgrade),
-    #[error("consensus branch id {0:#010x} belongs to no network upgrade")]
-    UnknownBranch(u32),
-    /// NSM reissuance is active at the height: the block subsidy depends on the issued
-    /// supply after the parent block, and the caller gave none.
-    #[error("the block subsidy at height {height} needs the issued supply after the parent block")]
-    IssuedSupplyUnknown { height: u32 },
-    /// The chain value pools hold more than the subsidy schedule issued: the NSM value
-    /// balance is negative.
-    #[error("the NSM value balance at height {height} is negative: the schedule issued {scheduled} zatoshis and the chain value pools hold {issued}")]
-    NegativeNsmBalance {
-        height: u32,
-        scheduled: u128,
-        issued: u64,
-    },
-    /// The network has no lockbox disbursement for its NU6.1 activation block. Zakura
-    /// refuses each block at that height (`zakura-consensus/src/block/check.rs:279-283`).
-    #[error(
-        "the network has no lockbox disbursement for the NU6.1 activation block at height {height}"
-    )]
-    NoLockboxDisbursement { height: u32 },
-    /// The NSM value balance before NU7 is not the value of the network.
-    #[error("the NSM value balance before NU7 is {found} zatoshis and must be {expected}")]
-    NsmSeedMismatch { expected: u64, found: u64 },
+#[cfg(test)]
+mod tests {
+    use hayai_crypto::zcash_protocol;
+
+    /// The constants of the core are the constants of the upstream crates.
+    #[test]
+    fn the_core_constants_are_the_upstream_constants() {
+        assert_eq!(
+            super::COINBASE_MATURITY,
+            zcash_protocol::consensus::COINBASE_MATURITY_BLOCKS
+        );
+        assert_eq!(super::MAX_MONEY, zcash_protocol::value::MAX_MONEY);
+        assert_eq!(super::DIFFICULTY_CONTEXT_BLOCKS, 113);
+    }
 }

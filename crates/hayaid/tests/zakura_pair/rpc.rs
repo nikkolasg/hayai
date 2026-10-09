@@ -22,7 +22,7 @@ pub fn set_cookie(addr: SocketAddr, file: PathBuf) {
 /// start, so each request reads the file.
 fn authorization(addr: SocketAddr) -> Result<String, String> {
     match COOKIES.lock().expect("cookie table").get(&addr) {
-        Some(file) => hayai_rpc::cookie::authorization(file)
+        Some(file) => hayai_http::cookie::authorization(file)
             .map(|value| format!("Authorization: {value}\r\n"))
             .map_err(|e| format!("cookie file {}: {e}", file.display())),
         None => Ok(String::new()),

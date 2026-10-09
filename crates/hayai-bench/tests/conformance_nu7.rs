@@ -13,7 +13,6 @@
 //!    the NU7 rule set.
 
 use chrono::DateTime;
-use hayai_consensus::coinbase::CoinbaseTerms;
 use hayai_consensus::difficulty::expected_bits;
 use hayai_consensus::funding::funding_streams;
 use hayai_consensus::{
@@ -186,18 +185,9 @@ fn the_testnet_funding_streams_across_nu7_match_zakura_chain() {
     for height in heights {
         let total = halving_subsidy(network, height);
         let mut hayai: Vec<(u64, Option<Vec<u8>>)> = funding_streams(network, height, total)
+            .expect("a subsidy of the schedule")
             .into_iter()
-            .map(|stream| {
-                let script = stream.address.map(|address| {
-                    address
-                        .parse::<zk_chain::transparent::Address>()
-                        .expect("an address")
-                        .script()
-                        .as_raw_bytes()
-                        .to_vec()
-                });
-                (stream.value, script)
-            })
+            .map(|stream| (stream.value, stream.script.map(|script| script.to_vec())))
             .collect();
         hayai.sort();
         let mut zakura = Vec::new();
@@ -231,7 +221,7 @@ fn the_testnet_funding_streams_across_nu7_match_zakura_chain() {
 fn the_coinbase_terms_across_nu7_match_zakura_chain() {
     for (network, baseline, nu7) in networks() {
         let Some(_) = RuleSet::of(Upgrade::Nu7) else {
-            let Err(_) = CoinbaseTerms::at(network, nu7) else {
+            let Err(_) = hayai_consensus::coinbase::terms_at(network, nu7) else {
                 panic!("{network:?}: terms without the NU7 rule set");
             };
             continue;
@@ -243,7 +233,7 @@ fn the_coinbase_terms_across_nu7_match_zakura_chain() {
             .into_iter()
             .filter(|height| (start..end).contains(height));
         for height in heights {
-            let terms = CoinbaseTerms::at(network, height).unwrap();
+            let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
             let subsidy = zk_subsidy::block_subsidy(Height(height), &baseline, None).unwrap();
             assert_eq!(
                 terms.subsidy.total,
@@ -266,7 +256,7 @@ fn the_coinbase_terms_across_nu7_match_zakura_chain() {
             // The fee share of the miner follows the upgrade of the height.
             for fees in [0, 1, 9, 10, 1_001, 123_456_789] {
                 assert_eq!(
-                    terms.miner_fees(fees),
+                    terms.miner_fees(fees).expect("fees below MAX_MONEY"),
                     zatoshis(zk_subsidy::miner_fee_share(
                         Height(height),
                         &baseline,
@@ -295,7 +285,7 @@ fn the_nsm_values_match_zakura_chain() {
         };
         // From NU7 the miner gets the share. Before NU7 the miner gets all the fees.
         assert_eq!(
-            nsm::miner_fee_share(fees),
+            nsm::miner_fee_share(fees).expect("fees below MAX_MONEY"),
             zatoshis(zk_subsidy::miner_fee_share(
                 Height(TESTNET_NU7),
                 &testnet,
@@ -313,7 +303,7 @@ fn the_nsm_values_match_zakura_chain() {
         );
         let balance = fees;
         assert_eq!(
-            nsm::reissuance_bonus(balance),
+            nsm::reissuance_bonus(balance).expect("a balance below MAX_MONEY"),
             zatoshis(zk_subsidy::reissuance_bonus(amount(balance)).unwrap()),
             "{balance}"
         );
@@ -372,7 +362,9 @@ fn the_subsidy_with_the_reissuance_bonus_matches_zakura_chain() {
                 1 => rng.gen_range(0..100_000_000_000),
                 _ => rng.gen_range(0..=scheduled),
             };
-            let terms = CoinbaseTerms::after(network, height, scheduled - balance).unwrap();
+            let terms =
+                hayai_consensus::coinbase::terms_after(network, height, scheduled - balance)
+                    .unwrap();
             let expected =
                 zk_subsidy::block_subsidy(Height(height), &baseline, Some(amount(balance)))
                     .unwrap();
@@ -384,7 +376,7 @@ fn the_subsidy_with_the_reissuance_bonus_matches_zakura_chain() {
         }
     }
     // The height before: no bonus in either implementation.
-    let before = CoinbaseTerms::after(network, start - 1, 0).unwrap();
+    let before = hayai_consensus::coinbase::terms_after(network, start - 1, 0).unwrap();
     assert_eq!(
         before.subsidy.total,
         zatoshis(zk_subsidy::block_subsidy(Height(start - 1), &baseline, None).unwrap())

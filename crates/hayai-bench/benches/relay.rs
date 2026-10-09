@@ -17,7 +17,7 @@
 //!   carries the transaction as a full id, verifies the id list against the header and
 //!   forwards at once.
 //!
-//! Fixtures: the transparent, Orchard and mixed blocks of `hayai_bench::fixtures` and two
+//! Fixtures: the transparent, Orchard and mixed blocks of `hayai_fixtures` and two
 //! real mainnet NU5 blocks from `crates/hayai-wire/tests/vectors`.
 
 hayai_bench::bench_allocator!();

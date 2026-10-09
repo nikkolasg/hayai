@@ -96,8 +96,8 @@ fn generate_and_config_print_a_default_configuration() {
     let (code, mainnet, stderr) = run(&["generate"]);
     assert_eq!((code, stderr.as_str()), (Some(0), ""));
     assert_eq!(run(&["config", "--network", "mainnet"]).1, mainnet);
-    let config = hayaid::Config::parse(&mainnet).expect("the default configuration");
-    assert_eq!(config.network.network, hayaid::NetworkKind::Mainnet);
+    let config = hayai_node::Config::parse(&mainnet).expect("the default configuration");
+    assert_eq!(config.network.network, hayai_node::NetworkKind::Mainnet);
     assert_eq!(config.zakura_unused, Vec::<String>::new());
 
     let dir = scratch();
@@ -108,12 +108,12 @@ fn generate_and_config_print_a_default_configuration() {
         assert_eq!(std::fs::read_to_string(&file).expect("file"), mainnet);
     }
     for (name, network) in [
-        ("regtest", hayaid::NetworkKind::Regtest),
-        ("testnet", hayaid::NetworkKind::Testnet),
+        ("regtest", hayai_node::NetworkKind::Regtest),
+        ("testnet", hayai_node::NetworkKind::Testnet),
     ] {
         let (code, text, _) = run(&["config", "--network", name]);
         assert_eq!(code, Some(0));
-        let config = hayaid::Config::parse(&text).expect("the default configuration");
+        let config = hayai_node::Config::parse(&text).expect("the default configuration");
         assert_eq!(config.network.network, network);
     }
 }
@@ -342,7 +342,7 @@ fn tip_height_prints_the_tip_that_a_restart_resumes_at() {
     for backend in ["memory", "rocksdb"] {
         let dir = scratch();
         let data = dir.path().join("data");
-        let config = hayaid::Config::parse(&format!(
+        let config = hayai_node::Config::parse(&format!(
             "[network]\nnetwork = \"Regtest\"\n\
              [state]\ncache_dir = \"{}\"\nbackend = \"{backend}\"\n\
              flush_interval_blocks = 4\n\
@@ -350,7 +350,7 @@ fn tip_height_prints_the_tip_that_a_restart_resumes_at() {
             data.display()
         ))
         .expect("test config");
-        let generate = |node: &hayaid::Node, n: u32| {
+        let generate = |node: &hayai_node::Node, n: u32| {
             let producer = node.producer.as_ref().expect("a producer");
             producer.generate(n).expect("generate");
             node.tip.tip().0
@@ -365,12 +365,12 @@ fn tip_height_prints_the_tip_that_a_restart_resumes_at() {
             stdout
         };
 
-        let node = hayaid::Node::start(&config).expect("first start");
+        let node = hayai_node::Node::start(&config).expect("first start");
         assert_eq!(generate(&node, 1_010), 1_010, "{backend}");
         node.shutdown().expect("clean stop");
         assert_eq!(tip_height(), "1010\n", "{backend}: clean stop");
 
-        let node = hayaid::Node::start(&config).expect("restart");
+        let node = hayai_node::Node::start(&config).expect("restart");
         assert_eq!(node.tip.tip().0, 1_010, "{backend}");
         let tip = generate(&node, 7);
         // The node runs on the directory, and it wrote each block before it set its tip.
@@ -382,7 +382,7 @@ fn tip_height_prints_the_tip_that_a_restart_resumes_at() {
         );
         node.abandon().expect("stop as a crash");
         let printed = tip_height();
-        let node = hayaid::Node::start(&config).expect("restart after the crash");
+        let node = hayai_node::Node::start(&config).expect("restart after the crash");
         assert_eq!(
             printed,
             format!("{}\n", node.tip.tip().0),

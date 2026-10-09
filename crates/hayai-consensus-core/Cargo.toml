@@ -1,0 +1,18 @@
+[package]
+name = "hayai-consensus-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The consensus rules as pure functions in the Rust subset of Charon and Aeneas"
+
+[features]
+# The crate has no crypto backend. The two features exist so that every hayai crate takes
+# the same `--no-default-features --features upstream|zakura` flags.
+default = ["upstream"]
+upstream = []
+zakura = []
+
+[dependencies]
+thiserror.workspace = true

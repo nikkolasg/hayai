@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hayai_rpc::cookie::COOKIE_FILE;
+use hayai_http::cookie::COOKIE_FILE;
 use serde_json::{json, Value};
 
 use crate::rpc;

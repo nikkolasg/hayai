@@ -52,7 +52,7 @@ fn headers(network: Network) -> Vec<BlockHeader> {
     let name = match network {
         Network::Mainnet => "main",
         Network::Testnet => "test",
-        Network::Regtest | Network::ConfiguredRegtest(_) => {
+        Network::Regtest | Network::Custom(_) => {
             panic!("Regtest has no block vectors")
         }
     };

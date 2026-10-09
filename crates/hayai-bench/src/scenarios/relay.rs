@@ -19,7 +19,7 @@ use zcash_protocol::consensus::BranchId;
 use zk_chain::serialization::ZcashDeserialize;
 
 use super::{Built, Impl};
-use crate::fixtures;
+use hayai_fixtures as fixtures;
 
 pub struct Fixture {
     pub name: String,
@@ -37,7 +37,7 @@ impl From<fixtures::Fixture> for Fixture {
     }
 }
 
-/// Synthetic blocks from `crate::fixtures` (real signatures and Orchard proofs, cached under
+/// Synthetic blocks from `hayai_fixtures` (real signatures and Orchard proofs, cached under
 /// `bench-fixtures/`).
 pub fn synthetic_fixtures() -> Vec<Fixture> {
     vec![

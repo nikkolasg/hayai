@@ -1,0 +1,53 @@
+[package]
+name = "hayai-mempool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Mempool: the prepared-transaction store, the relay policy and the admission order"
+
+[features]
+default = ["upstream"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-consensus/upstream",
+    "hayai-wire/upstream",
+    "hayai-coins/upstream",
+    "hayai-prepared/upstream",
+    "hayai-state/upstream",
+    "hayai-template/upstream",
+    "hayai-fixtures/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-consensus/zakura",
+    "hayai-wire/zakura",
+    "hayai-coins/zakura",
+    "hayai-prepared/zakura",
+    "hayai-state/zakura",
+    "hayai-template/zakura",
+    "hayai-fixtures/zakura",
+]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-consensus.workspace = true
+hayai-wire.workspace = true
+hayai-coins.workspace = true
+hayai-prepared.workspace = true
+hayai-state.workspace = true
+hayai-template.workspace = true
+ahash.workspace = true
+crossbeam-channel.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The Regtest spend builder (`hayai_fixtures::regtest`) of the admission tests.
+hayai-fixtures.workspace = true
+bytes.workspace = true
+tempfile.workspace = true

@@ -7,26 +7,24 @@
 //! - [`HttpServer`]: the HTTP/1.1 front end that pool software connects to.
 //! - [`index`]: the methods of the wallet index (`getrawtransaction`, `gettxout`,
 //!   `getaddressbalance`, `getaddresstxids`, `getaddressutxos`, `z_getsubtreesbyindex`).
-//! - [`cookie`]: the cookie authentication of the HTTP front end, as Zakura.
+//! - The HTTP front end reads and writes with `hayai_http`, whose `cookie` module is the
+//!   authentication, as Zakura.
 //! - [`BlockSubmitSink`], [`TipSource`], [`NodeQuery`] and, on test networks,
 //!   [`BlockGenerator`]: the parts that the node supplies.
-//! - [`metrics`]: the Prometheus registry and the `/metrics` endpoint ([`MetricsServer`]).
+//! - The request counters of [`Rpc`] are in a `hayai_metrics::Registry`; the `/metrics`
+//!   endpoint is `hayai_metrics::MetricsServer`.
 
 #![forbid(unsafe_code)]
 
-pub mod cookie;
 pub mod feed;
 pub mod http;
 pub mod index;
 pub mod info;
-pub mod metrics;
 pub mod rpc;
 pub mod template;
 
-pub use cookie::Cookie;
 pub use feed::{TemplateFeed, Wake};
 pub use http::HttpServer;
-pub use metrics::{Counter, FloatCounter, Gauge, Histogram, MetricsServer, Registry};
 pub use rpc::{
     AddressUtxo, BlockGenerator, BlockInfo, BlockState, BlockSubmitSink, ChainTip, IndexError,
     NodeQuery, NodeState, PeerRow, Pools, Rpc, RpcConfig, SubmitOutcome, SubmittedBlock,

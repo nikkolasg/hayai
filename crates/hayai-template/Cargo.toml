@@ -9,13 +9,24 @@ description = "Live block template with incremental updates and push delivery"
 
 [features]
 default = ["upstream"]
-upstream = ["hayai-crypto/upstream", "hayai-wire/upstream", "hayai-consensus/upstream"]
-zakura = ["hayai-crypto/zakura", "hayai-wire/zakura", "hayai-consensus/zakura"]
+upstream = [
+    "hayai-crypto/upstream",
+    "hayai-template-messages/upstream",
+    "hayai-wire/upstream",
+    "hayai-consensus/upstream",
+]
+zakura = [
+    "hayai-crypto/zakura",
+    "hayai-template-messages/zakura",
+    "hayai-wire/zakura",
+    "hayai-consensus/zakura",
+]
 
 [dependencies]
 hayai-wire.workspace = true
 hayai-consensus.workspace = true
 hayai-crypto.workspace = true
+hayai-template-messages.workspace = true
 blake2b_simd.workspace = true
 bytes.workspace = true
 crossbeam-channel.workspace = true

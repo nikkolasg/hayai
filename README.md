@@ -2,7 +2,7 @@
 
 **A fast, independent Zcash node for miners.**
 
-[![CI](https://github.com/nikkolasg/hayai/actions/workflows/ci.yml/badge.svg)](https://github.com/nikkolasg/hayai/actions/workflows/ci.yml)
+[![CI](https://github.com/zodl-inc/hayai/actions/workflows/ci.yml/badge.svg)](https://github.com/zodl-inc/hayai/actions/workflows/ci.yml)
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 ![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-orange)
 ![Status: experimental](https://img.shields.io/badge/status-experimental-yellow)
@@ -171,9 +171,11 @@ describes a comparison of a Zakura node and a hayai node on 2 equal machines.
 | Crate | Purpose |
 |---|---|
 | `hayaid` | The node binary |
-| `hayai-consensus` | Network parameters, rule sets of each upgrade, checkpoints |
+| `hayai-consensus-core` | Consensus rules as pure functions, in the Rust subset of Charon and Aeneas |
+| `hayai-consensus` | Networks, address decoding, checkpoints: the adapter around the core |
 | `hayai-validate` | Block validation |
-| `hayai-prepared` | Transactions verified one time, mempool policy |
+| `hayai-prepared` | Transactions verified one time |
+| `hayai-mempool` | Store of verified transactions, mempool policy, admission order |
 | `hayai-state` | Chain state in memory, contextual checks |
 | `hayai-coins` | Coin set and its storage |
 | `hayai-trees` | Note commitment trees |
@@ -188,6 +190,7 @@ describes a comparison of a Zakura node and a hayai node on 2 equal machines.
 | `hayai-wire` | Parse and encoding of blocks and transactions |
 | `hayai-crypto` | The one entry point to the cryptography crates |
 | `hayai-trace` | Trace files |
+| `hayai-fixtures` | Synthetic test blocks with real signatures and proofs |
 | `hayai-bench` | Benchmarks and comparisons with Zakura and Zebra |
 | `hayai-fuzz` | Differential fuzzer against Zakura's checks |
 
@@ -237,7 +240,7 @@ Code that touches consensus needs a test at the boundary of each rule. The
 ## 🔒 Security
 
 Please report a security problem privately, through a
-[GitHub security advisory](https://github.com/nikkolasg/hayai/security/advisories/new), and
+[GitHub security advisory](https://github.com/zodl-inc/hayai/security/advisories/new), and
 not in a public issue. A problem that can split the chain or stop a node has the highest
 priority.
 

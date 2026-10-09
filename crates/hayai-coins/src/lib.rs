@@ -10,8 +10,9 @@
 //! Layers:
 //!
 //! - [`CoinsBacking`] is the disk: batched point reads and one write batch per flush, plus the
-//!   per-pool nullifier sets. [`RocksBacking`] implements it on RocksDB. [`MemBacking`] keeps
-//!   the whole set in memory and persists it with an append-only log and snapshots.
+//!   per-pool nullifier sets. `RocksBacking` implements it on RocksDB, under the feature
+//!   `rocksdb`. [`MemBacking`] keeps the whole set in memory and persists it with an
+//!   append-only log and snapshots.
 //! - [`CoinsCache`] sits in front of a backing and is the only writer.
 //! - [`NullifierSet`] and [`NullifierStore`] keep the unflushed nullifiers in memory in front of
 //!   the backing's sets.
@@ -21,7 +22,7 @@
 //! [`FlushGeneration`] (the entries stay readable from the caches), the generation is
 //! written outside the lock as one atomic batch together with its [`BestBlock`] record
 //! ([`CoinsBacking::write_generation`]), and `end_flush` marks the written entries clean.
-//! Recovery after a crash reads the best block ([`RocksBacking::best_block`]) and replays
+//! Recovery after a crash reads the best block (`best_block` of the backing) and replays
 //! the blocks after it: the batch is atomic, so the disk is always the state after exactly
 //! that block.
 
@@ -34,16 +35,21 @@ pub use zcash_transparent::bundle::OutPoint;
 mod cache;
 mod mem;
 mod nullifiers;
+#[cfg(feature = "rocksdb")]
 mod rocks;
 
 pub use cache::{CoinsCache, CoinsFlush, FlushStats};
 pub use mem::{MemBacking, MemConfig, PersistError, Recovery};
 pub use nullifiers::{NullifierSet, NullifierStore};
+#[cfg(feature = "rocksdb")]
 pub use rocks::{Config, RocksBacking};
 
 /// The best block of the coins store in `dir`, of the memory backend or of the RocksDB
 /// backend, read without a write to `dir` and without a load of the coin set. It is the
 /// value that `best_block` gives after an open of the store.
+///
+/// Without the feature `rocksdb`, a directory without the log of the memory backend is an
+/// error.
 ///
 /// The function is safe while a node has the store open: it gives a best block that the
 /// store had, or an error when the node changes the files during the read.
@@ -51,7 +57,11 @@ pub fn stored_best_block(dir: &std::path::Path) -> Result<Option<BestBlock>, Err
     // The memory backend makes its log at the first open.
     match dir.join(mem::LOG_FILE).exists() {
         true => MemBacking::stored_best_block(dir),
+        #[cfg(feature = "rocksdb")]
         false => RocksBacking::stored_best_block(dir),
+        // The open of the missing log gives the error.
+        #[cfg(not(feature = "rocksdb"))]
+        false => MemBacking::stored_best_block(dir),
     }
 }
 
@@ -172,8 +182,10 @@ impl fmt::Display for Pool {
 /// Errors of the coins and nullifier stores.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[cfg(feature = "rocksdb")]
     #[error("rocksdb: {0}")]
     Rocks(#[from] rocksdb::Error),
+    #[cfg(feature = "rocksdb")]
     #[error("column family {0} is missing from the database")]
     MissingColumnFamily(&'static str),
     #[error("coin {outpoint:?}: {reason}")]
@@ -287,6 +299,14 @@ mod tests {
         let mut bytes = [0u8; COIN_HEADER_BYTES];
         bytes[12] = 7;
         assert_eq!(Coin::decode(&bytes), Err(MalformedCoin::CoinbaseFlag(7)));
+    }
+
+    #[test]
+    fn stored_best_block_of_a_directory_without_a_store_is_an_error() {
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let Err(_) = stored_best_block(dir.path()) else {
+            panic!("a directory without a store");
+        };
     }
 
     #[test]

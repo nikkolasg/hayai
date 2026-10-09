@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{orchard_block, FIXTURE_BRANCH};
+use hayai_fixtures::{orchard_block, FIXTURE_BRANCH};
 use hayai_prepared::{PrepareError, RuleEpoch, VerifyingKeys};
 use hayai_validate::{validate_block, BlockError};
 use rayon::prelude::*;

@@ -74,9 +74,9 @@ impl TryFromAddress for TransparentAddress {
 /// The network type of the transparent addresses of `network`: the test networks share one
 /// encoding.
 fn transparent_network(network: Network) -> NetworkType {
-    match network {
-        Network::Mainnet => NetworkType::Main,
-        Network::Testnet | Network::Regtest | Network::ConfiguredRegtest(_) => NetworkType::Test,
+    match network.network_type() {
+        NetworkType::Main => NetworkType::Main,
+        NetworkType::Test | NetworkType::Regtest => NetworkType::Test,
     }
 }
 

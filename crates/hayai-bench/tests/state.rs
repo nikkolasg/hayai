@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{
-    coinbase_terms, mixed_block, orchard_block, transparent_block, CoinbaseChange, FIXTURE_HEIGHT,
-};
 use hayai_coins::{Coin, CoinsView, OutPoint, Pool};
 use hayai_consensus::coinbase::{CoinbaseError, OutputKind};
 use hayai_consensus::funding::Receiver;
 use hayai_consensus::{rules_at, BlockLimits, Network, RuleSet, Upgrade, LOCKTIME_THRESHOLD};
 use hayai_crypto::{zcash_primitives, zcash_transparent};
+use hayai_fixtures::{
+    coinbase_terms, mixed_block, orchard_block, transparent_block, CoinbaseChange, FIXTURE_HEIGHT,
+};
 use hayai_prepared::PreparedTx;
 use hayai_state::{
     block_outputs, contextual_check, contextual_check_with_outputs, prebuild_body, resolve_inputs,
@@ -600,7 +600,7 @@ fn block_totals() {
 /// The fixture block of `h` with the coinbase changes `changes`, through the contextual
 /// check.
 fn check_coinbase(
-    fixture: &hayai_bench::fixtures::Fixture,
+    fixture: &hayai_fixtures::Fixture,
     changes: &[CoinbaseChange],
 ) -> Result<hayai_state::Checked, ContextError> {
     let mut h = harness(fixture);
@@ -661,7 +661,7 @@ fn the_coinbase_pays_its_terms_exactly() {
         Err(ContextError::Coinbase(CoinbaseError::MissingOutput {
             kind,
             value: stream.value,
-            script: stream.script.clone(),
+            script: stream.script.to_vec(),
         }))
     );
     let wrong_value = [
@@ -690,7 +690,7 @@ fn the_coinbase_pays_its_terms_exactly() {
     else {
         panic!("a funding stream output to another script");
     };
-    assert_eq!((found_kind, expected), (kind, stream.script.clone()));
+    assert_eq!((found_kind, expected), (kind, stream.script.to_vec()));
 }
 
 /// The six chain value pools after a block: the transparent pool gains the coinbase and

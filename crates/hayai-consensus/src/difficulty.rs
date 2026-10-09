@@ -1,77 +1,26 @@
-//! Difficulty adjustment: the `nBits` that a block must have (protocol specification
-//! §7.7.3, `ThresholdBits`), the Testnet minimum-difficulty rule (ZIP 205, ZIP 208 and
-//! ZIP 218) and the work of a block (§7.7.5).
-//!
-//! References: zcashd `pow.cpp` (`GetNextWorkRequired`, `CalculateNextWorkRequired`) and
-//! Zakura `zakura-header-chain/src/validation/contextual/adjusted_difficulty.rs`.
-//!
-//! The parameters come from the rule set of `height` ([`DifficultyParams`]). The averaging
-//! window `W` is 17 blocks before NU7 and 102 blocks from NU7 (ZIP 218). The rule for the
-//! block at `height` with time `time`:
-//!
-//! 1. Testnet only, from height 299,188: when `time` is more than 450 s after the time of
-//!    the parent (6 target spacings before NU7, 18 from NU7; 900 s before Blossom), the
-//!    block must have the proof-of-work limit.
-//! 2. When `height <= W`, the result is the proof-of-work limit.
-//! 3. `MeanTarget` is the mean of the targets of the `W` blocks before `height`.
-//! 4. `ActualTimespan` is `MedianTime(height) - MedianTime(height - W)`. `MedianTime(h)`
-//!    is the median of the times of the 11 blocks before `h`.
-//! 5. `ActualTimespanDamped` is `AveragingWindowTimespan + (ActualTimespan -
-//!    AveragingWindowTimespan) / 4`, with a division that truncates toward zero.
-//!    `AveragingWindowTimespan` is `W` target spacings of `height`.
-//! 6. `ActualTimespanBounded` keeps the damped value between 84 % and 132 % of
-//!    `AveragingWindowTimespan`.
-//! 7. The target is `floor(MeanTarget / AveragingWindowTimespan) * ActualTimespanBounded`,
-//!    at most the proof-of-work limit. The result is its compact form.
-//!
-//! The rule reads the times of the `W + 11` blocks before `height` and the `nBits` of the
-//! `W` blocks before it: 28 and 17 before NU7, 113 and 102 from NU7. A shorter context is
-//! [`DifficultyError::ContextTooShort`]: the function never computes a value from a part
-//! of the window.
+//! Difficulty adjustment (protocol specification §7.7): the wrappers of
+//! `hayai_consensus_core::difficulty` for a caller with a [`Network`] or with the
+//! `primitive_types::U256` of the ZIP 221 history tree. The rules are in the core.
 
+use hayai_consensus_core::difficulty as core;
+pub use hayai_consensus_core::difficulty::{
+    median_time, median_time_past, DifficultyError, Uint256,
+};
 use hayai_crypto::primitive_types::U256;
-use hayai_wire::header::{compact_from_target, expand_target};
 
-use crate::{rules_at, ConsensusError, DifficultyParams, Network, MEDIAN_TIME_SPAN};
+use crate::network::checked;
+use crate::rules::core_rules_at;
+use crate::{Network, ParentChain};
 
-/// The blocks before a header, as the header rules read them.
-#[derive(Clone, Copy, Debug)]
-pub struct ParentChain<'a> {
-    /// Height of the header that the rules check: the height of its parent plus 1.
-    pub height: u32,
-    /// `nTime` of the blocks before the header, newest first. The first entry belongs to
-    /// the parent.
-    pub times: &'a [u32],
-    /// `nBits` of the blocks before the header, newest first. The first entry belongs to
-    /// the parent.
-    pub bits: &'a [u32],
+/// The `U256` of the history tree with the value of `value`. Both types hold 4
+/// little-endian 64-bit limbs.
+pub fn u256(value: Uint256) -> U256 {
+    U256(value.0)
 }
 
-/// The context holds fewer blocks than a rule reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "the context holds {times} block times and {bits} nBits values, the rule reads \
-     {needed_times} and {needed_bits}"
-)]
-pub struct ContextTooShort {
-    pub times: usize,
-    pub needed_times: usize,
-    pub bits: usize,
-    pub needed_bits: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum DifficultyError {
-    #[error("the genesis block has no difficulty rule")]
-    Genesis,
-    #[error(transparent)]
-    ContextTooShort(#[from] ContextTooShort),
-    #[error(transparent)]
-    Rules(#[from] ConsensusError),
-    /// A block of the context has `nBits` that encode no target. Such a block is not valid,
-    /// so the context is not a chain of checked headers.
-    #[error("nBits {0:#010x} of a block of the context encode no target")]
-    InvalidContextBits(u32),
+/// The [`Uint256`] of the core with the value of `value`.
+pub fn uint256(value: U256) -> Uint256 {
+    Uint256(value.0)
 }
 
 /// The target that `bits` encodes. `None` when `bits` encode no target (negative, zero or
@@ -79,54 +28,26 @@ pub enum DifficultyError {
 ///
 /// Spec §7.7.4: `ToTarget`.
 pub fn target_from_compact(bits: u32) -> Option<U256> {
-    expand_target(bits).map(|target| U256::from_little_endian(&target))
+    core::target_from_compact(bits).map(u256)
 }
 
 /// The compact form of `target` (zcashd `arith_uint256::GetCompact`).
 ///
 /// Spec §7.7.4: `ToCompact`.
 pub fn compact_from_u256(target: U256) -> u32 {
-    let mut bytes = [0u8; 32];
-    target.to_little_endian(&mut bytes);
-    compact_from_target(&bytes)
+    checked(uint256(target).to_compact())
 }
 
 /// The work of a block with target `bits`: `floor(2^256 / (target + 1))` (protocol
 /// specification §7.7.5, the ZIP 221 field `nSubTreeTotalWork`). The cumulative work of a
 /// chain is the sum of the work of its blocks. `None` when `bits` encode no target.
-///
-/// Spec §7.7.5: the work of a block is `floor(2^256 / (ToTarget(nBits) + 1))`.
 pub fn block_work(bits: u32) -> Option<U256> {
-    let target = target_from_compact(bits)?;
-    // `expand_target` bounds the target below 2^256 - 1, so `target + 1` does not overflow.
-    // `floor((2^256 - 1 - target) / (target + 1)) + 1` equals the formula (Bitcoin's
-    // `GetBlockProof`) without a 257-bit numerator.
-    Some((!target / (target + 1)) + 1)
+    checked(core::block_work(bits)).map(u256)
 }
 
-/// The median of `times` as the specification defines it: the element at index
-/// `floor(len / 2)` of the sorted list. `None` for an empty list.
-///
-/// Spec §7.7.3: `median(S)` is `sorted(S)` at the 1-based index `ceiling((len + 1) / 2)`.
-pub fn median_time(times: &[u32]) -> Option<u32> {
-    let mut sorted = times.to_vec();
-    sorted.sort_unstable();
-    sorted.get(sorted.len() / 2).copied()
-}
-
-/// The median-time-past of the header after `times` (newest first): the median of the
-/// newest [`MEDIAN_TIME_SPAN`] times. `None` for an empty list.
-pub fn median_time_past(times: &[u32]) -> Option<u32> {
-    median_time(&times[..times.len().min(MEDIAN_TIME_SPAN)])
-}
-
-/// The times that the rule of the block at `height` reads: one per block before `height`,
-/// at most `span`.
-fn needed(height: u32, span: usize) -> usize {
-    span.min(usize::try_from(height).unwrap_or(usize::MAX))
-}
-
-/// The `nBits` that the block at `chain.height` with time `time` must have on `network`.
+/// The `nBits` that the block at `chain.height` with time `time` must have on `network`
+/// (`hayai_consensus_core::difficulty::expected_bits`). An upgrade without a rule set in
+/// this build is [`DifficultyError::Rules`].
 ///
 /// Regtest has no such rule in hayai (`NetworkParams::disable_pow`): the header rules do
 /// not call this function there.
@@ -135,167 +56,16 @@ pub fn expected_bits(
     time: u32,
     chain: &ParentChain<'_>,
 ) -> Result<u32, DifficultyError> {
-    let height = chain.height;
-    if height == 0 {
-        return Err(DifficultyError::Genesis);
-    }
-    let params = &rules_at(network, height)?.difficulty;
-    let net = network.params();
-    let short = |needed_times: usize, needed_bits: usize| ContextTooShort {
-        times: chain.times.len(),
-        needed_times,
-        bits: chain.bits.len(),
-        needed_bits,
-    };
-
-    // ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more
-    // than 6 target spacings (18 from NU7) after its parent has `nBits` =
-    // ToCompact(PoWLimit) (zcashd `nPowAllowMinDifficultyBlocksAfterHeight`).
-    if matches!(net.min_difficulty_start_height, Some(start) if height >= start) {
-        let Some(parent_time) = chain.times.first() else {
-            return Err(short(1, 0).into());
-        };
-        let gap = i64::from(time) - i64::from(*parent_time);
-        if gap > i64::from(params.min_difficulty_gap_spacings * params.target_spacing) {
-            return Ok(net.pow_limit_bits);
-        }
-    }
-
-    let window = params.averaging_window as usize;
-    // Spec §7.7.3: `MeanTarget` is `PoWLimit` up to `PoWAveragingWindow`. hayai gives
-    // `PoWLimit` as the threshold there, as zcashd and Zakura do (`adjusted_difficulty.rs:
-    // 227-235`): the specification leaves `ActualTimespan` without a value at these heights.
-    if height <= params.averaging_window {
-        return Ok(net.pow_limit_bits);
-    }
-
-    let needed_times = needed(height, window + MEDIAN_TIME_SPAN);
-    if chain.times.len() < needed_times || chain.bits.len() < window {
-        return Err(short(needed_times, window).into());
-    }
-    let times = &chain.times[..needed_times];
-    // Spec §7.7.3: `MeanTarget` is the mean target of the `PoWAveragingWindow` blocks
-    // before the height.
-    let mean = mean_target(&chain.bits[..window])?;
-    // Spec §7.7.3: `ActualTimespan` is `MedianTime(height) - MedianTime(height - W)`.
-    let (Some(newer), Some(older)) = (median_time_past(times), median_time(&times[window..]))
-    else {
-        unreachable!("the height is above the window, so both spans hold a time");
-    };
-    let timespan = bounded_timespan(params, i64::from(newer) - i64::from(older));
-
-    // Spec §7.7.3: `Threshold` is `min(PoWLimit, floor(MeanTarget /
-    // AveragingWindowTimespan) * ActualTimespanBounded)`, and `ThresholdBits` its compact
-    // form.
-    let limit = U256::from_little_endian(&net.pow_limit);
-    let scaled = mean / U256::from(averaging_window_timespan(params));
-    // A product above 2^256 - 1 is above the limit.
-    let target = scaled
-        .checked_mul(U256::from(timespan))
-        .map_or(limit, |target| target.min(limit));
-    Ok(compact_from_u256(target))
-}
-
-/// `AveragingWindowTimespan`: the averaging window at the target spacing, in seconds.
-fn averaging_window_timespan(params: &DifficultyParams) -> u32 {
-    params.averaging_window * params.target_spacing
-}
-
-/// `MeanTarget`: the mean of the targets of `bits`, rounded down.
-///
-/// The sum of the quotients plus the quotient of the sum of the remainders equals the
-/// quotient of the sum, and no step exceeds 256 bits for any window length (Zakura
-/// `mean_target_difficulty`).
-fn mean_target(bits: &[u32]) -> Result<U256, DifficultyError> {
-    let count = U256::from(bits.len());
-    let mut quotients = U256::zero();
-    let mut remainders = U256::zero();
-    for compact in bits {
-        let Some(target) = target_from_compact(*compact) else {
-            return Err(DifficultyError::InvalidContextBits(*compact));
-        };
-        quotients += target / count;
-        remainders += target % count;
-    }
-    Ok(quotients + remainders / count)
-}
-
-/// `ActualTimespanBounded` of `actual` (`ActualTimespan`, in seconds).
-///
-/// Spec §7.7.3: `ActualTimespanDamped` with `trunc`, then the bounds `MinActualTimespan`
-/// and `MaxActualTimespan` (84 % and 132 % of `AveragingWindowTimespan`, rounded down).
-fn bounded_timespan(params: &DifficultyParams, actual: i64) -> u64 {
-    let window = i64::from(averaging_window_timespan(params));
-    // Rust's integer division truncates toward zero, as the specification requires.
-    let damped = window + (actual - window) / i64::from(params.damping_factor);
-    let min = window * i64::from(100 - params.max_adjust_up_percent) / 100;
-    let max = window * i64::from(100 + params.max_adjust_down_percent) / 100;
-    let bounded = damped.clamp(min, max);
-    u64::try_from(bounded).expect("the lower bound is not negative")
+    let rules = core_rules_at(network, chain.height)?;
+    core::expected_bits(network.core(), rules, time, chain)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn median_is_the_upper_middle_element() {
-        assert_eq!(median_time(&[]), None);
-        assert_eq!(median_time(&[7]), Some(7));
-        assert_eq!(median_time(&[9, 3]), Some(9));
-        assert_eq!(median_time(&[5, 1, 3]), Some(3));
-        assert_eq!(median_time(&[4, 2, 1, 3]), Some(3));
-        // The median-time-past reads the newest 11 times only.
-        let times: Vec<u32> = (0..28).rev().collect();
-        assert_eq!(median_time_past(&times), Some(22));
-        assert_eq!(median_time_past(&times[20..]), Some(4));
-        assert_eq!(median_time_past(&[]), None);
-    }
-
-    #[test]
-    fn timespan_bounds_of_both_spacings() {
-        let pre = DifficultyParams::PRE_BLOSSOM;
-        let post = DifficultyParams::POST_BLOSSOM;
-        assert_eq!(averaging_window_timespan(&pre), 2_550);
-        assert_eq!(averaging_window_timespan(&post), 1_275);
-        // On target: no change.
-        assert_eq!(bounded_timespan(&pre, 2_550), 2_550);
-        assert_eq!(bounded_timespan(&post, 1_275), 1_275);
-        // The damping divides the difference by 4 and truncates toward zero.
-        assert_eq!(bounded_timespan(&pre, 2_550 + 7), 2_551);
-        assert_eq!(bounded_timespan(&pre, 2_550 - 7), 2_549);
-        assert_eq!(bounded_timespan(&pre, 2_550 - 3), 2_550);
-        // The bounds: 84 % and 132 %, rounded down.
-        assert_eq!(bounded_timespan(&pre, 0), 2_142);
-        assert_eq!(bounded_timespan(&pre, -1_000_000), 2_142);
-        assert_eq!(bounded_timespan(&pre, 1_000_000), 3_366);
-        assert_eq!(bounded_timespan(&post, 0), 1_071);
-        assert_eq!(bounded_timespan(&post, 1_000_000), 1_683);
-        // The first actual timespans that reach each bound: damped = window + (a - w) / 4.
-        assert_eq!(bounded_timespan(&pre, 2_550 - 4 * 408), 2_142);
-        assert_eq!(bounded_timespan(&pre, 2_550 - 4 * 407), 2_143);
-        assert_eq!(bounded_timespan(&pre, 2_550 + 4 * 816), 3_366);
-        assert_eq!(bounded_timespan(&pre, 2_550 + 4 * 815), 3_365);
-    }
-
-    #[test]
-    fn mean_target_is_the_floor_of_the_exact_mean() {
-        // Nine targets of 2^216 and eight of 2^217: floor(25 * 2^216 / 17).
-        let bits: Vec<u32> = (0..17)
-            .map(|i| if i % 2 == 0 { 0x1c01_0000 } else { 0x1c02_0000 })
-            .collect();
-        let expected = (U256::from(25u8) << 216) / U256::from(17u8);
-        assert_eq!(mean_target(&bits), Ok(expected));
-        // 17 Regtest limits sum to 2^256 - 1: the mean does not overflow.
-        assert_eq!(
-            mean_target(&[0x200f_0f0f; 17]),
-            Ok(target_from_compact(0x200f_0f0f).unwrap())
-        );
-        assert_eq!(
-            mean_target(&[0x1f07_ffff, 0x1f80_0001]),
-            Err(DifficultyError::InvalidContextBits(0x1f80_0001))
-        );
-    }
+    use hayai_wire::header::{compact_from_target, expand_target};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     /// Bitcoin's known values and the golden values of Zakura's
     /// `zakura-chain/src/work/difficulty/tests/vectors.rs` (`COMPACT_DIFFICULTY_CASES`).
@@ -357,6 +127,108 @@ mod tests {
             let params = network.params();
             let limit = U256::from_little_endian(&params.pow_limit);
             assert_eq!(compact_from_u256(limit), params.pow_limit_bits);
+        }
+    }
+
+    /// The work of a block in `U256`: `floor(2^256 / (target + 1))` as
+    /// `floor((2^256 - 1 - target) / (target + 1)) + 1` (Bitcoin's `GetBlockProof`).
+    fn reference_work(target: U256) -> U256 {
+        (!target / (target + 1)) + 1
+    }
+
+    fn random_u256(rng: &mut StdRng) -> U256 {
+        // Values of every size: a random number of random limbs, the rest zero.
+        let limbs = rng.gen_range(1..=4);
+        let mut words = [0u64; 4];
+        for word in &mut words[..limbs] {
+            *word = rng.gen();
+        }
+        if rng.gen_bool(0.2) {
+            words[limbs - 1] >>= rng.gen_range(0..64);
+        }
+        U256(words)
+    }
+
+    /// The 256-bit type of the core against `primitive_types::U256` and the compact codec
+    /// of hayai-wire, on random and edge inputs: the compact forms, the work, the sum, the
+    /// difference, the product by a small integer and the division by a small integer.
+    #[test]
+    fn the_core_arithmetic_matches_u256() {
+        let mut rng = StdRng::seed_from_u64(0x7_7_3);
+        let mut edges = vec![
+            U256::zero(),
+            U256::one(),
+            U256::MAX,
+            U256::MAX - 1,
+            U256::one() << 255,
+            U256::one() << 64,
+            (U256::one() << 64) - 1,
+            U256::from(0x7f_ffffu64) << 232,
+        ];
+        for _ in 0..2_000 {
+            edges.push(random_u256(&mut rng));
+        }
+        for a in &edges {
+            let core_a = uint256(*a);
+            assert_eq!(u256(core_a), *a);
+            let mut le = [0u8; 32];
+            a.to_little_endian(&mut le);
+            assert_eq!(core_a.to_le_bytes(), le);
+            assert_eq!(Uint256::from_le_bytes(&le), core_a);
+            assert_eq!(compact_from_u256(*a), compact_from_target(&le), "{a:#x}");
+            assert_eq!(core_a.bit_length(), 256 - a.leading_zeros(), "{a:#x}");
+            for b in edges.iter().take(16) {
+                let core_b = uint256(*b);
+                assert_eq!(
+                    core_a.checked_add(core_b).map(u256),
+                    a.checked_add(*b),
+                    "{a:#x} + {b:#x}"
+                );
+                assert_eq!(
+                    core_a.checked_sub(core_b).map(u256),
+                    a.checked_sub(*b),
+                    "{a:#x} - {b:#x}"
+                );
+                assert_eq!(core_a.cmp(&core_b), a.cmp(b));
+            }
+            for small in [1u64, 2, 3, 17, 102, 1275, 2550, 0xffff_ffff, u64::MAX] {
+                assert_eq!(
+                    core_a.checked_mul_u64(small).map(u256),
+                    a.checked_mul(U256::from(small)),
+                    "{a:#x} * {small}"
+                );
+                let (quotient, remainder) = core_a.div_rem_u64(small).expect("a divisor above 0");
+                assert_eq!(u256(quotient), *a / U256::from(small), "{a:#x} / {small}");
+                assert_eq!(
+                    U256::from(remainder),
+                    *a % U256::from(small),
+                    "{a:#x} % {small}"
+                );
+            }
+        }
+        // The compact codec on random bits, and the work on every valid target.
+        let mut bits: Vec<u32> = (0..20_000).map(|_| rng.gen()).collect();
+        bits.extend([
+            0x1d00_ffff,
+            0x1f07_ffff,
+            0x2007_ffff,
+            0x200f_0f0f,
+            0x0101_0000,
+            0x2200_00ff,
+            0x2200_01ff,
+            0x1f80_0001,
+            0x1f00_0000,
+            0,
+            u32::MAX,
+        ]);
+        for bits in bits {
+            let expected = expand_target(bits).map(|le| U256::from_little_endian(&le));
+            assert_eq!(target_from_compact(bits), expected, "{bits:#010x}");
+            assert_eq!(
+                block_work(bits),
+                expected.map(reference_work),
+                "{bits:#010x}"
+            );
         }
     }
 }

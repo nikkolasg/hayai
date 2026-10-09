@@ -3,7 +3,7 @@
 - Task tracking: `bd` (beads). Run `bd create` for an issue at the start of multi-step work. Run `bd close` when the work is done. Never commit, push or `bd dolt push`: the repository owner commits.
 - During work, run only what the change touches: `cargo fmt --all --check`, clippy on the changed crates, and the tests that the change adds or changes plus the test targets of the changed files. Do not run the full suite for each change: it takes too long. CI runs the wide set on each push.
 - The full gate (`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --release` on both backends, with the comparisons with Zakura and Zebra, hayai-fuzz and the slow tests) runs once before a release or when the owner asks for it.
-- The CI of each push (`.github/workflows/ci.yml`) runs a smaller set: `cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release -- --skip slow::`, and clippy with the same package set and features. This set builds no zakura-* crate and no zebra-chain.
+- The CI of each push (`.github/workflows/ci.yml`) runs a smaller set: `cargo test --workspace --exclude hayai-fuzz --no-default-features --features upstream --release -- --skip slow::`, and clippy with the same package set and features. This set builds no zakura-* crate and no zebra-chain. It also runs `scripts/layering.sh`, the crate layering guard: run it after a change of a `Cargo.toml` or of a `use` line.
 - A test that costs much and that a push does not need goes into a module named `slow` (`mod slow { use super::*; ... }`). No other test path can contain `slow::`.
 - `CHANGES.md` records design decisions and lessons (short sections, behaviour-level). `CHANGELOG.md` records user-visible changes in one line each.
 - Rust style: use pattern matching (`let Some(x) = .. else`, `match`, `matches!`) instead of `.is_some()/.is_none()/.is_ok()/.is_err()`. No speculative abstractions. No dangling code. Every feature has a test.
@@ -17,6 +17,20 @@
 
   No vector that grows for the life of the process, no unbounded queue, no random access without a measured reason. Measure before and after. Never adopt a method on a claim.
 - Code reaches cryptographic primitives through the `hayai-crypto` facade. The facade re-exports the upstream Zcash crates by default and the `zakura-*` forks under its `zakura` feature. Crates never name `orchard`, `zcash_primitives`, `pasta_curves`, ... directly, so both backends build. `hayai-bench` also depends on the `zakura-*` crates and on `zebra-chain` as the comparison baselines, behind its default feature `baselines`. The Zakura backend with the baselines is `--no-default-features --features zakura,baselines`.
+
+- `hayai-consensus-core` is the code that Lean proofs will cover. Every change to it keeps the rules of `docs/formal-verification.md`, section "Design rules of the core". Consensus rules go into the core; the other crates only fetch data, run the cryptography and call the core.
+
+## Branch modular-crates: how to continue
+
+The work of the epic "Modular crates" (bd `hayai-7yq`). When the owner asks to continue this branch:
+
+1. Read `CHANGES.md` (the sections from 2026-10-07 on) and `docs/architecture.md`.
+2. Run `bd show hayai-7yq` for the open items. If `bd` has no database, run `bd bootstrap --yes`: it imports `.beads/issues.jsonl`.
+3. Owner decision of 2026-10-08: no formal verification work for now. The epic does the crate split only: independent crates that another node can use alone. M2 (`hayai-rlg`) and M14 (`hayai-7yq.1`) are deferred; `docs/formal-verification.md` keeps the plan. The split must keep the rules of `hayai-consensus-core` as they are (`docs/formal-verification.md`, section "Design rules of the core").
+4. Done: M5 to M9, M11 (layering guard), M4 (header index in hayai-sync), M3 (sans-IO relay policy), M1 (hayai-node + NodeBuilder). Open: M10 (smaller splits), M13 (the performance gate, last, on the Linux machine), and the follow-ups in bd: the HeaderChain as the relay context in full mode, the block source as a trait of hayai-node.
+5. On macOS: `hayai-bench` builds, but its tests that read `/proc` and the `hayai-net` and node tests that bind `127.0.0.x` fail there; they pass on Linux. `cargo` needs `LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib` for RocksDB.
+
+Remove this section when the epic merges into `main`.
 
 ## Containers
 

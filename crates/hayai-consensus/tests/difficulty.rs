@@ -56,7 +56,7 @@ fn ref_net(network: Network) -> &'static RefNet {
     match network {
         Network::Mainnet => &REF_MAINNET,
         Network::Testnet => &REF_TESTNET,
-        Network::Regtest | Network::ConfiguredRegtest(_) => {
+        Network::Regtest | Network::Custom(_) => {
             panic!("Regtest has no difficulty rule")
         }
     }

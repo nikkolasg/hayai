@@ -33,7 +33,7 @@ pub fn parse_round_trip(bytes: &[u8]) -> (Vec<Hash>, Vec<AuthDigest>, Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures;
+    use hayai_fixtures as fixtures;
 
     /// Zebra's txids and auth digests equal hayai's, and the serialization is the input.
     #[test]

@@ -1,0 +1,24 @@
+[package]
+name = "hayai-template-messages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The messages of the template push protocol, with their binary-frame and JSON-lines encodings"
+
+[features]
+default = ["upstream"]
+upstream = ["hayai-crypto/upstream", "hayai-wire/upstream"]
+zakura = ["hayai-crypto/zakura", "hayai-wire/zakura"]
+
+[dependencies]
+hayai-crypto.workspace = true
+hayai-wire.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

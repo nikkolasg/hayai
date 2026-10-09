@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use hayai_net::PeerProtocol;
+use hayai_node::{Config, Node};
 use hayai_wire::header::BlockHeader;
-use hayaid::{Config, Node};
 use serde_json::{json, Value};
 
 fn scratch() -> tempfile::TempDir {
@@ -108,7 +108,7 @@ fn client(node: &Node) -> RpcClient {
     let cookie = node.rpc_cookie.as_ref().expect("the node has a cookie");
     RpcClient {
         addr: node.rpc_addr.expect("the node serves RPC"),
-        authorization: hayai_rpc::cookie::authorization(cookie).expect("cookie file"),
+        authorization: hayai_http::cookie::authorization(cookie).expect("cookie file"),
     }
 }
 
@@ -468,7 +468,7 @@ fn own_blocks_commit_from_the_prebuilt_template() {
     let rpc_a = client(&a);
     for height in 1..=3u64 {
         // Longer than PREBUILD_INTERVAL: the driver prebuilds the template meanwhile.
-        std::thread::sleep(hayaid::PREBUILD_INTERVAL * 3);
+        std::thread::sleep(hayai_node::PREBUILD_INTERVAL * 3);
         let generated = rpc(&rpc_a, "generate", json!([1]));
         assert_eq!(
             generated["result"].as_array().map(Vec::len),
@@ -574,7 +574,7 @@ fn the_rpc_server_needs_the_cookie_unless_the_config_turns_it_off() {
     let addr = node.rpc_addr.expect("RPC");
     assert_eq!(post(addr, ""), 401);
     assert_eq!(node.tip.tip().0, 0, "no block without the credentials");
-    let authorization = hayai_rpc::cookie::authorization(&file).expect("cookie file");
+    let authorization = hayai_http::cookie::authorization(&file).expect("cookie file");
     assert_eq!(
         post(addr, &format!("Authorization: {authorization}\r\n")),
         200
@@ -1153,19 +1153,14 @@ fn getdeprecationinfo_has_no_end_of_service() {
     a.shutdown().expect("a shuts down");
 }
 
-/// `stop` asks the owner of the node to stop it. The methods that need an index of the
-/// transactions or a change of the state are unknown methods.
+/// `stop` asks the owner of the node to stop it. The methods that change the state are
+/// unknown methods; the methods of the wallet index are served (the node answers their
+/// parameter errors), with or without the index.
 #[test]
 fn stop_asks_for_the_shutdown_and_unserved_methods_are_unknown() {
     let dir = scratch();
     let (a, call) = rpc_node(dir.path());
     for method in [
-        "getrawtransaction",
-        "gettxout",
-        "getaddressbalance",
-        "getaddresstxids",
-        "getaddressutxos",
-        "z_getsubtreesbyindex",
         "z_listunifiedreceivers",
         "invalidateblock",
         "reconsiderblock",
@@ -1173,6 +1168,18 @@ fn stop_asks_for_the_shutdown_and_unserved_methods_are_unknown() {
     ] {
         let answer = call(method, json!([]));
         assert_eq!(answer["error"]["code"], -32601, "{method}: {answer}");
+    }
+    for method in [
+        "getrawtransaction",
+        "gettxout",
+        "getaddressbalance",
+        "getaddresstxids",
+        "getaddressutxos",
+        "z_getsubtreesbyindex",
+    ] {
+        let answer = call(method, json!([]));
+        assert_ne!(answer["error"]["code"], -32601, "{method}: {answer}");
+        assert_ne!(answer["error"]["code"], Value::Null, "{method}: {answer}");
     }
     let Err(_) = a.stop_requested().try_recv() else {
         panic!("a stop request before the call");

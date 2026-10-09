@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness_with_history, Harness};
-use hayai_bench::fixtures::{transparent_block, Fixture, FIXTURE_BRANCH};
 use hayai_coins::Pool;
 use hayai_consensus::{rules_at, Checkpoints, Network};
 use hayai_crypto::zcash_primitives::transaction::components::sprout::{Bundle, JsDescription};
@@ -24,6 +23,7 @@ use hayai_crypto::zcash_transparent::address::Script;
 use hayai_crypto::zcash_transparent::bundle::{
     Authorized as TAuthorized, Bundle as TBundle, TxOut,
 };
+use hayai_fixtures::{transparent_block, Fixture, FIXTURE_BRANCH};
 use hayai_prepared::{draft, RuleEpoch, ScopedBatch, VerifyingKeys};
 use hayai_state::{
     contextual_check, prebuild_body, CheckConfig, ContextError, Layer, PreparedBlock,

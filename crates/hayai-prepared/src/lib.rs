@@ -13,9 +13,11 @@
 //!   bundles with the upstream batch validators and bisect a failing batch down to the
 //!   failing bundles. They also verify the Groth16 JoinSplits of a v4 transaction and the
 //!   JoinSplit signature.
-//! - [`PreparedStore`] keeps prepared transactions by [`WtxId`] with conflict detection on
-//!   spent outpoints, serves [`hayai_wire::TxLookup`] for compact-block reconstruction and
-//!   [`hayai_template::CandidateSource`] for the live template.
+//! - [`PreparedLookup`] gives the prepared transactions of a node by [`WtxId`]. A block
+//!   validation takes the transactions it finds there as known. The store of the mempool
+//!   (`hayai-mempool`) implements it.
+//!
+//! The mempool of a node, with its policy and its store, is in `hayai-mempool`.
 
 #![forbid(unsafe_code)]
 
@@ -27,40 +29,25 @@ use hayai_consensus::RuleSet;
 use hayai_crypto::orchard::tree::MerkleHashOrchard;
 use hayai_crypto::sapling_crypto::Node;
 use hayai_crypto::{zcash_protocol, zcash_script};
-use hayai_template::{Candidate, Zip317Params};
 use hayai_wire::{RawTx, WtxId};
 use zcash_protocol::consensus::BranchId;
 use zcash_script::interpreter::Flags;
 
 mod coinbase;
 mod orchard;
-mod policy;
 mod prepare;
 mod sapling;
 mod shielded;
 mod sprout;
-mod store;
-#[cfg(test)]
-mod test_support;
 
 pub use crate::coinbase::CoinbaseError;
 pub use crate::orchard::{circuit_version, OrchardKeys};
 pub use crate::sapling::{
     SaplingKeys, SAPLING_OUTPUT_PARAMS_BLAKE2B, SAPLING_SPEND_PARAMS_BLAKE2B,
 };
-pub use policy::{
-    dust_threshold, is_relayable, min_relay_fee, MempoolPolicy, PolicyContext, PolicyReject,
-    MAX_DATACARRIER_BYTES, MAX_P2SH_SIGOPS, MAX_STANDARD_MULTISIG_PUBKEYS,
-    MAX_STANDARD_SCRIPTSIG_SIZE, MAX_STANDARD_TX_SIGOPS, MIN_RELAY_FEE_CAP, MIN_RELAY_FEE_RATE,
-    ONE_THIRD_DUST_THRESHOLD_RATE, TX_EXPIRING_SOON_THRESHOLD,
-};
 pub use prepare::{check_scripts, draft, prepare, Draft};
 pub use shielded::{BatchOutcome, ScopedBatch, ShieldedBatcher, VerifyingKeys};
 pub use sprout::{SproutKey, SPROUT_GROTH16_PARAMS_BLAKE2B, SPROUT_GROTH16_VK_BLAKE2B};
-pub use store::{
-    EntryFees, InsertError, PreparedStore, EVICTION_MEMORY, EVICTION_MEMORY_ENTRIES,
-    LOW_FEE_PENALTY, MEMPOOL_COST_THRESHOLD, MEMPOOL_TX_COST_LIMIT,
-};
 
 /// The consensus rules a context-free result was computed under: the branch id the
 /// transaction was parsed and hashed with, and the script verification flags.
@@ -133,7 +120,7 @@ pub struct Commitments {
 ///
 /// `scripts_ok` is true once every transparent input passed script verification and
 /// `shielded_ok` once every shielded bundle passed a batch ([`BatchOutcome`]); a transaction
-/// without a bundle has `shielded_ok` set from the start. [`PreparedStore::insert`] rejects a
+/// without a bundle has `shielded_ok` set from the start. The store of the mempool rejects a
 /// transaction unless both are true.
 #[derive(Clone, Debug)]
 pub struct PreparedTx {
@@ -189,12 +176,14 @@ impl PreparedTx {
             .into_iter()
             .flat_map(|b| b.vin.iter().map(|i| i.prevout()))
     }
+}
 
-    /// The template candidate for this transaction. `depends_on` lists the unmined parents;
-    /// [`PreparedStore`] computes it from the transactions it holds.
-    pub fn candidate(&self, depends_on: Vec<WtxId>, params: &Zip317Params) -> Candidate {
-        Candidate::from_raw(&self.raw, self.fee, self.sigops, depends_on, params)
-    }
+/// The prepared transactions of a node by [`WtxId`]. A block validation takes a transaction
+/// that it finds here as known: it reuses the scripts and the proofs of the entry when the
+/// entry is of the epoch of the block and fully verified.
+pub trait PreparedLookup {
+    /// The prepared transaction `id`, if the source holds it.
+    fn prepared(&self, id: &WtxId) -> Option<Arc<PreparedTx>>;
 }
 
 /// Why a transaction cannot be prepared. Each variant is a consensus rule, a missing

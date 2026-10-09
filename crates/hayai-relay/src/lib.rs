@@ -22,7 +22,9 @@ pub use compact::{
     reconstruct, resolve, resolve_candidate, CandidatePartial, CompactBuilder, Entry, IdCheck,
     IdForm, Partial, ReconstructError, MAX_BLOCK_TXS,
 };
-pub use header_check::{HeaderCheck, HeaderContext, HeaderError, ParentInfo, StandardHeaderCheck};
+pub use header_check::{
+    HeaderCheck, HeaderContext, HeaderError, ParentInfo, StandardHeaderCheck, Verified,
+};
 pub use message::{
     decode, decode_payload, encode, BatchAnnounce, BatchRequest, Block, BlockTxn, BlockTxnRequest,
     CandidateAnnounce, CandidateBlock, CompactBlock, DecodeError, FullId, LaneId, Message,

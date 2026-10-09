@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Prepared-transaction store: context-free verification done once"
+description = "Prepared transactions: context-free verification done once"
 
 [features]
 default = ["upstream"]
@@ -14,32 +14,25 @@ upstream = [
     "hayai-consensus/upstream",
     "hayai-wire/upstream",
     "hayai-coins/upstream",
-    "hayai-template/upstream",
 ]
 zakura = [
     "hayai-crypto/zakura",
     "hayai-consensus/zakura",
     "hayai-wire/zakura",
     "hayai-coins/zakura",
-    "hayai-template/zakura",
 ]
 
 [dependencies]
 hayai-wire.workspace = true
 hayai-coins.workspace = true
-hayai-template.workspace = true
 hayai-crypto.workspace = true
 hayai-consensus.workspace = true
 blake2b_simd.workspace = true
 bytes.workspace = true
-dashmap.workspace = true
 ahash.workspace = true
 parking_lot.workspace = true
-crossbeam-channel.workspace = true
-rand.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

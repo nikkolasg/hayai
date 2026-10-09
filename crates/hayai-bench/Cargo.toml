@@ -13,7 +13,7 @@ default = ["upstream", "baselines"]
 # The comparison baselines: the zakura-* crates and zebra-chain, the modules that use them
 # (`zakura_*_layout`, `zakura_wire`, `zebra_*`), the scenario catalogue, the `sysbench`
 # binary, the bench targets and the tests that compare hayai with these libraries. Without
-# the feature the crate has the fixtures, the functional tests and the published vectors.
+# the feature the crate has the chain fixture, the functional tests and the published vectors.
 baselines = [
     "dep:zk_chain",
     "dep:zk_orchard",
@@ -37,12 +37,14 @@ upstream = [
     "hayai-trees/upstream",
     "hayai-coins/upstream",
     "hayai-prepared/upstream",
+    "hayai-mempool/upstream",
     "hayai-state/upstream",
     "hayai-validate/upstream",
     "hayai-relay/upstream",
     "hayai-template/upstream",
     "hayai-blockstore/upstream",
     "hayai-sync/upstream",
+    "hayai-fixtures/upstream",
 ]
 zakura = [
     "hayai-crypto/zakura",
@@ -52,12 +54,14 @@ zakura = [
     "hayai-trees/zakura",
     "hayai-coins/zakura",
     "hayai-prepared/zakura",
+    "hayai-mempool/zakura",
     "hayai-state/zakura",
     "hayai-validate/zakura",
     "hayai-relay/zakura",
     "hayai-template/zakura",
     "hayai-blockstore/zakura",
     "hayai-sync/zakura",
+    "hayai-fixtures/zakura",
 ]
 
 [dependencies]
@@ -66,15 +70,16 @@ hayai-consensus.workspace = true
 hayai-wire.workspace = true
 hayai-sinsemilla.workspace = true
 hayai-trees.workspace = true
-hayai-coins.workspace = true
+hayai-coins = { workspace = true, features = ["rocksdb"] }
 hayai-prepared.workspace = true
+hayai-mempool.workspace = true
 hayai-state.workspace = true
 hayai-validate.workspace = true
 hayai-relay.workspace = true
 hayai-template.workspace = true
 hayai-blockstore.workspace = true
 hayai-sync.workspace = true
-secp256k1.workspace = true
+hayai-fixtures.workspace = true
 rand.workspace = true
 rayon.workspace = true
 sha2.workspace = true
@@ -85,7 +90,6 @@ serde_json.workspace = true
 hex.workspace = true
 tempfile.workspace = true
 libc.workspace = true
-perf-event2.workspace = true
 mimalloc = { workspace = true, optional = true }
 ahash.workspace = true
 parking_lot.workspace = true
@@ -117,6 +121,11 @@ zb_chain = { package = "zebra-chain", version = "13.0.1", optional = true }
 # Zakura and its time type. A dev-dependency cannot be optional, so they are here.
 zk_header_chain = { package = "zakura-header-chain", version = "4.0.0", optional = true }
 chrono = { version = "0.4.40", default-features = false, optional = true }
+
+# The hardware counters of `sysmetrics` use `perf_event_open`, a Linux system call. On
+# another system the counters are unavailable.
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -184,4 +193,8 @@ required-features = ["baselines"]
 
 [[bench]]
 name = "structures"
+harness = false
+
+[[bench]]
+name = "headers"
 harness = false

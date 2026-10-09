@@ -1,13 +1,12 @@
-//! Shared benchmark fixtures and the JSON result writer used by every bench target.
+//! Shared benchmark helpers and the JSON result writer used by every bench target.
 //!
-//! Fixtures are deterministic synthetic blocks built with the upstream builders (real
-//! signatures and proofs) and cached under `bench-fixtures/` at the repository root.
+//! The fixture blocks come from `hayai-fixtures`: deterministic synthetic blocks with real
+//! signatures and proofs, cached under `bench-fixtures/` at the repository root.
 //! Timed measurements are criterion's own output under `target/criterion/`; non-timed tables
 //! (bytes on the wire) go to `bench-results/`. `scripts/collect_bench.py` and
 //! `scripts/report.py` turn both into `docs/report.html`.
 
 pub mod chain_fixture;
-pub mod fixtures;
 pub mod scenarios;
 pub mod sysmetrics;
 // Models without a reference crate. `chain_fixture` uses the block shape of the first.

@@ -5,12 +5,13 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{mixed_block, orchard_block, transparent_block};
 use hayai_consensus::{Network, COINBASE_MATURITY};
-use hayai_prepared::{
-    prepare, InsertError, MempoolPolicy, PolicyContext, PolicyReject, PreparedStore, PreparedTx,
-    ScopedBatch, MEMPOOL_COST_THRESHOLD, TX_EXPIRING_SOON_THRESHOLD,
+use hayai_fixtures::{mixed_block, orchard_block, transparent_block};
+use hayai_mempool::{
+    InsertError, MempoolPolicy, PolicyContext, PolicyReject, PreparedStore, MEMPOOL_COST_THRESHOLD,
+    TX_EXPIRING_SOON_THRESHOLD,
 };
+use hayai_prepared::{prepare, PreparedTx, ScopedBatch};
 use hayai_template::{CandidateSource, SetEvent, Zip317Params};
 use hayai_wire::RawTx;
 use rand::rngs::StdRng;

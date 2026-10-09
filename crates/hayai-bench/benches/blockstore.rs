@@ -4,7 +4,7 @@
 //! a flat file through its height index; the zakura baseline
 //! (`hayai_bench::zakura_block_layout`) reads the header row and one RocksDB row per
 //! transaction, deserializes them, assembles the block and serializes it. Parameters are the
-//! fixture names of `hayai_bench::fixtures::standard_set`.
+//! fixture names of `hayai_fixtures::standard_set`.
 
 hayai_bench::bench_allocator!();
 
@@ -13,8 +13,9 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hayai_bench::hayai_id;
 use hayai_bench::zebra_block_layout::ZebraBlockDb;
-use hayai_bench::{fixtures, scratch_dir, zakura_block_layout::ZakuraBlockDb};
+use hayai_bench::{scratch_dir, zakura_block_layout::ZakuraBlockDb};
 use hayai_blockstore::BlockStore;
+use hayai_fixtures as fixtures;
 use zk_chain::block::Block;
 use zk_chain::serialization::ZcashDeserialize;
 

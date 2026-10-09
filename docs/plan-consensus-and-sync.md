@@ -14,7 +14,7 @@ The plan comes from read-only work. The work changed no file and ran no cargo co
    - The rule "some source of funds" counts Orchard actions without the `enableSpends` flag (`prepare.rs:306-311`). The spec counts actions only when the flag is 1.
    - `check_pow` (`hayai-wire/src/header.rs:214`) does not compare the target with `PoWLimit` on Mainnet and Testnet.
    - `NetParams::max_time_enforced` returns true for every Testnet height. The rule starts at Testnet height 653,606.
-   - The header time rules run only in the relay path (`hayaid/src/headers.rs:245`), not in `validate_block`. The replay at a restart and any future sync path skip them.
+   - The header time rules run only in the relay path (`hayai-node/src/headers.rs:245`), not in `validate_block`. The replay at a restart and any future sync path skip them.
    - The driver always uses `BlockLimits::PRE_NU7`.
    - Value pools hold Sapling and Orchard only.
    - The coinbase-spend rule (no transparent outputs) applies on Regtest too. Zakura does not apply it there (`zakura-chain/src/transaction.rs:557`, `should_allow_unshielded_coinbase_spends`).
@@ -137,7 +137,7 @@ Rules that are not consensus rules and that the plan does not include:
 
 ### A0. New crate `hayai-consensus` and the small fixes (M)
 
-- **Reason for a new crate.** The network parameters are in `hayaid/src/params.rs`. hayai-state receives them through `SubsidyRule`. Difficulty, subsidy, funding streams, checkpoints and limits need one crate below hayai-state. The new crate comes after hayai-wire. Its dependencies are hayai-crypto and hayai-wire.
+- **Reason for a new crate.** The network parameters are in `hayai-node/src/params.rs`. hayai-state receives them through `SubsidyRule`. Difficulty, subsidy, funding streams, checkpoints and limits need one crate below hayai-state. The new crate comes after hayai-wire. Its dependencies are hayai-crypto and hayai-wire.
 - **Modules.**
   - `network.rs`: `Network { Mainnet, Testnet, Regtest(RegtestConfig) }`, the genesis hash and time for each network, the PoW limit, an `Upgrade` enum of hayai's own that includes `Nu7`, `activation(Upgrade) -> Option<u32>`, `branch_at(height)`, `spacing_at`, `max_time_start`, `min_difficulty_start`, `allows_unshielded_coinbase_spend`, `orchard_disabled(height)`.
   - `difficulty.rs`, `subsidy.rs`, `funding.rs`, `limits.rs`, `checkpoints.rs`, `nsm.rs`.
@@ -147,7 +147,7 @@ Rules that are not consensus rules and that the plan does not include:
   - Fix T10 (soft fork) in `draft` with a height-derived field on `RuleEpoch`, or with a contextual check in `check_txs`. The contextual check is simpler, because `RuleEpoch` has no height.
   - Fix B24 (Regtest waiver) through `CheckConfig`.
   - Fix H14 with the Testnet genesis hash (`05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38`, confirm).
-  - Remove the "full mode refuses Testnet" check in `hayaid/src/config.rs:264`.
+  - Remove the "full mode refuses Testnet" check in `hayai-node/src/config.rs:264`.
 - **Interface change.** `hayai_state::CheckConfig { limits, subsidy: &dyn SubsidyRule }` becomes `CheckConfig { rules: &hayai_consensus::Rules }`. `hayaid::params::NetParams` becomes a thin wrapper.
 - **Tests.** Each fix has unit tests. For T3, a v5 transaction with Orchard actions, `enableSpends = 0` and no other input fails.
 
@@ -168,7 +168,7 @@ Rules that are not consensus rules and that the plan does not include:
 - **Design.** The function is `hayai_consensus::difficulty::expected_bits(network, height, candidate_time, context: &[(bits, time)]) -> u32`. The context is newest first, with the length `min(height, window + 11)`. Also add `median_time_past(context)`. Use `primitive_types::U256` (in the facade). Add `compact_from_target` to `hayai-wire/src/header.rs` beside `expand_target`.
 - **Arithmetic.** Compute the mean as Zakura does (`adjusted_difficulty.rs` `mean_target_difficulty`): mean = sum of (target / n) + (sum of (target % n)) / n. This method prevents the 256-bit overflow of 102 Testnet targets (limit 2^251). Then compute `mean / AveragingWindowTimespan * bounded_timespan`, with PoWLimit as the maximum.
 - **`check_header_context(network, header, height, context, now: Option<u32>)`.** The function checks H4, H6, H7, H9 and H10, and H11 when the caller gives `now`. One function serves 3 callers:
-  - the relay header check (`hayaid/src/headers.rs`, fills `ParentInfo::expected_bits`);
+  - the relay header check (`hayai-node/src/headers.rs`, fills `ParentInfo::expected_bits`);
   - the header sync (B1);
   - `validate_block`, through a new `ChainView::header_context()`. The replay gives `now = None`.
 - **State.** A `Layer` gets `bits: u32`. `Base` keeps the last 113 `(bits, time)` pairs, in place of `times: VecDeque<u32>`. Version 2 of the `state.log` record stores them.
@@ -259,7 +259,7 @@ Rules that are not consensus rules and that the plan does not include:
   - Add Ironwood to `Anchors::get`, `Base::insert_anchor`, `has_anchor`, the shadow `trust_anchors` and `compare_roots`. Zakura `z_gettreestate` returns the Ironwood tree: confirm the field name.
 - **Tests.**
   - the `zcash_history` V3 test vectors (in the crate, `test_vectors.rs`). Copy them as `zip_0221_v3.rs` beside the V1/V2 files in `hayai-state/tests/vectors`;
-  - a fixture generator: a v6 bundle with `BundleVersion::ironwood_v3()` in `hayai-bench/src/fixtures.rs`;
+  - a fixture generator: a v6 bundle with `BundleVersion::ironwood_v3()` in `hayai-fixtures/src/lib.rs`;
   - real blocks: Mainnet 3,428,142–3,428,144 and Testnet 4,133,999–4,134,001 from the shadow node (C2);
   - the acceptance test: a shadow run across the Mainnet tip.
 - **Size.** L. It is the first item to do: the Mainnet shadow mode stops without it.
@@ -316,7 +316,7 @@ The new crate `hayai-sync` has pure state machines, no sockets and no threads. I
 
 ### B1. Fork-aware header chain (L) — `hayai-sync/src/headers.rs`
 
-- The new chain replaces `hayaid/src/headers.rs::HeaderIndex` (a single chain plus pending headers).
+- The new chain replaces `hayai-node/src/headers.rs::HeaderIndex` (a single chain plus pending headers).
 - Structure: an arena of header nodes `{hash, prev, height, time, bits, cumulative_work: U256, status}` with `HashMap<BlockHash, NodeId>`, the tip with the best work, and for each node the status `HeaderValid | BodyStored | Validated | Invalid`. Below the finality depth the tree becomes one chain. 2 options exist for that chain:
   - a flat file `headers.dat` (fixed 1,487-byte records, indexed by height, about 5.2 GB for Mainnet);
   - only `(hash, time, bits)` in memory (40 bytes x 3.5 M = 140 MB), with the full headers on disk.
@@ -356,7 +356,7 @@ The new crate `hayai-sync` has pure state machines, no sockets and no threads. I
   - the committed chain is equal to the source chain;
   - the peak memory stays under the budget.
 
-### B3. Driver integration, fork choice and reorg (M) — `hayaid/src/node.rs`
+### B3. Driver integration, fork choice and reorg (M) — `hayai-node/src/node.rs`
 
 - Fork choice: the best cumulative work among the header-valid chains whose blocks are not invalid. For a tie, zcashd selects the first chain that it sees, and Zebra uses the hash. The docs must state the choice (open question 7).
 - Reorg, when a better chain forks at depth d <= the layer window:
@@ -401,7 +401,7 @@ The new crate `hayai-sync` has pure state machines, no sockets and no threads. I
 | NU6.2 branch id within the NU6.3 grace period | 0 (`ZC/transaction.rs:94`) |
 | Stall on a requested block | 0, disconnect after 2 stalls |
 
-### B6. Restart and resume during sync (S–M) — `hayaid/src/node.rs`, `persist.rs`
+### B6. Restart and resume during sync (S–M) — `hayai-node/src/node.rs`, `persist.rs`
 
 - The coins best block and `state.log` already define the resume point. Add the header chain file (B1), with its own tail check. The node does not persist the download window. At a restart, the node reads again the bodies above the committed tip that are in the block store, and it requests the other bodies again.
 - Replay rule during the sync below the checkpoint: the replay uses the same fast path as the sync (B7), not full validation.
@@ -430,7 +430,7 @@ The new crate `hayai-sync` has pure state machines, no sockets and no threads. I
 
 - Today the store keeps the first block of a height (`DuplicateHeight`). B3 needs `hash -> Loc` as the primary index and `height -> hash` for the best chain. The store writes `height -> hash` again at a reorg. Pruning is optional, later.
 
-### B10. Mempool policy (M) — `hayai-prepared/src/store.rs`, `hayaid/src/node.rs::Mempool`
+### B10. Mempool policy (M) — `hayai-prepared/src/store.rs`, `hayai-node/src/node.rs::Mempool`
 
 - Consensus rules in the mempool:
   - no coinbase;
@@ -520,7 +520,7 @@ Measured unit costs (`bench-results/summary.json`, Ryzen 9 9950X, 32 threads):
   1. From genesis: Mainnet 0–10 and Testnet 0–10 run with no seed. This class tests the slow start, the founders' reward (from height 1), the difficulty for height <= 17 and the genesis rules.
   2. Contiguous triples at boundaries (h−1, h, h+1; 1,687,106–108; 419,199–202; 299,187–189). Seed a context fixture at the parent of the first block. Then run the triple. Most of these blocks have only a coinbase, or almost only a coinbase.
   3. Isolated blocks (202, 395, 396, 415,000, 434,873, 949,496, 975,066, 982,681, 1,180,900, 1,687,113/118/121, the Testnet singles): one fixture each.
-- **Context fixture.** One JSON file for each run, with the fields above. The generator `hayai-bench/src/bin/mkcontext.rs` calls a synced reference node (`getblock`, `z_gettreestate`, `getrawtransaction`, history peaks). The shadow seed of hayai (`hayaid/src/shadow.rs`, `upstream.rs`) already reads the same items: use its client again. Pre-seed nullifiers as empty, and mark anchors as "trusted from the fixture".
+- **Context fixture.** One JSON file for each run, with the fields above. The generator `hayai-bench/src/bin/mkcontext.rs` calls a synced reference node (`getblock`, `z_gettreestate`, `getrawtransaction`, history peaks). The shadow seed of hayai (`hayai-node/src/shadow.rs`, `upstream.rs`) already reads the same items: use its client again. Pre-seed nullifiers as empty, and mark anchors as "trusted from the fixture".
 - **History peaks.** Zakura has no RPC for peaks (confirm). For V1/V2 trees, compute the peaks with a replay of headers + roots from the activation height (roots from `z_gettreestate`). Alternatively, start runs at activation blocks, where the tree is empty. The boundary triples at Heartwood, Canopy and NU5 already start there.
 - **Assertions.**
   - every vector passes `validate_block` with `VerifyLevel::Full`;
@@ -536,7 +536,7 @@ Measured unit costs (`bench-results/summary.json`, Ryzen 9 9950X, 32 threads):
 ### C3. Differential fuzzer for negative tests (L)
 
 - No official set of invalid blocks exists. Design: the new crate `crates/hayai-fuzz`, outside the default workspace build of the node. It has `cargo-fuzz`/libFuzzer targets and a proptest mode for stable CI.
-- **Seeds.** The Zebra vectors with their contexts (C2), the synthetic fixtures of hayai-bench (real proofs), the transactions of the ZIP 244 vectors.
+- **Seeds.** The Zebra vectors with their contexts (C2), the synthetic fixtures of hayai-fixtures (real proofs), the transactions of the ZIP 244 vectors.
 - **Mutators.**
   - Byte level: bit flips and splices inside the byte ranges of transactions and headers (ranges from `hayai-wire/src/scan.rs`). Then a fix-up of the merkle root and the auth root, so that the mutation reaches the rule and not only the root check. Optional: a fix-up of PoW on Regtest parameters.
   - Structure-aware:
@@ -592,12 +592,12 @@ Measured unit costs (`bench-results/summary.json`, Ryzen 9 9950X, 32 threads):
 Sizes: S <= 2 days, M <= 1 week, L > 1 week (one agent). Each item lists the files that it owns, so parallel items do not edit the same files.
 
 **Phase 0 (serial, first):**
-- **W0 = A0** (M). New `crates/hayai-consensus/*`; `hayai-crypto/src/lib.rs` (NU7 helpers, `zcash_note_encryption`, `bellman`/`bls12_381` re-exports); `hayai-state/src/check.rs` (`CheckConfig`); `hayaid/src/params.rs`, `config.rs`. All other items depend on it.
+- **W0 = A0** (M). New `crates/hayai-consensus/*`; `hayai-crypto/src/lib.rs` (NU7 helpers, `zcash_note_encryption`, `bellman`/`bls12_381` re-exports); `hayai-state/src/check.rs` (`CheckConfig`); `hayai-node/src/params.rs`, `config.rs`. All other items depend on it.
 - **W0c = C1 + C2 harness skeleton** (S + M). `hayai-bench/tests/conformance_blocks.rs`, `hayai-bench/src/bin/mkcontext.rs`, vector copies. It runs in parallel to W0 (no shared files). It merges with a list of expected failures.
 
 **Phase 1 (4 agents in parallel after W0):**
-- **W1 = A6 Ironwood** (L). `hayai-prepared/src/{prepare.rs,shielded.rs,lib.rs}`, `hayai-trees/src/lib.rs`, `hayai-state/src/{lib.rs,history.rs,check.rs (trees, anchors, pools)}`, `hayaid/src/{persist.rs,shadow.rs,node.rs (roots compare)}`. It has the highest priority.
-- **W2 = A1 difficulty and time** (M). `hayai-consensus/src/difficulty.rs`, `hayai-wire/src/header.rs`, `hayai-relay/src/header_check.rs`, `hayaid/src/headers.rs`. W2 also changes `hayai-state/src/lib.rs` (`Base` context). Coordinate with W1: merge the `Base`/`Layer` field additions of W1 and W2 in one preliminary commit (**W0b**, S: add `bits`, the Ironwood fields, the extended `ValuePools` and `state.log` version 2).
+- **W1 = A6 Ironwood** (L). `hayai-prepared/src/{prepare.rs,shielded.rs,lib.rs}`, `hayai-trees/src/lib.rs`, `hayai-state/src/{lib.rs,history.rs,check.rs (trees, anchors, pools)}`, `hayai-node/src/{persist.rs,shadow.rs,node.rs (roots compare)}`. It has the highest priority.
+- **W2 = A1 difficulty and time** (M). `hayai-consensus/src/difficulty.rs`, `hayai-wire/src/header.rs`, `hayai-relay/src/header_check.rs`, `hayai-node/src/headers.rs`. W2 also changes `hayai-state/src/lib.rs` (`Base` context). Coordinate with W1: merge the `Base`/`Layer` field additions of W1 and W2 in one preliminary commit (**W0b**, S: add `bits`, the Ironwood fields, the extended `ValuePools` and `state.log` version 2).
 - **W3 = A2 subsidy/funding/coinbase** (L). `hayai-consensus/src/{subsidy.rs,funding.rs,coinbase.rs}`, data files, `hayai-template/src/coinbase.rs`; one call site in `hayai-state/src/check.rs::check_coinbase_value` (after W1 merges its part, or in a separate file `hayai-state/src/coinbase.rs`).
 - **W4 = A4 Sapling keys** (S), then **A3 ZIP 213** (S). `hayai-prepared/src/shielded.rs` (Sapling part; after the edit of W1 to the same file, or split `shielded.rs` into `orchard.rs` and `sapling.rs` in W0b), new `hayai-prepared/src/coinbase.rs`.
 - **W5 = B4 address book + B5 scoring** (M + M). `hayai-net/src/{addrbook.rs,relay.rs,session.rs,protocol.rs}`, `hayai-sync/src/score.rs`. It does not depend on an A item.
@@ -608,7 +608,7 @@ Sizes: S <= 2 days, M <= 1 week, L > 1 week (one agent). Each item lists the fil
 - **W7 = A5 Sprout** (L). `hayai-trees/src/sprout.rs`, `hayai-prepared/src/sprout.rs`, `check_version`, the Sprout part of `check_txs`, the Sprout tree map of `Base`. It comes after W1 (same structs).
 - **W8 = A7 NU7** (M). `hayai-consensus/src/{nsm.rs,limits.rs}`, additions in `subsidy.rs`, `funding.rs`. It comes after W2, W3 and W1.
 - **W9 = B9 block store by hash** (S), **B2 download window** (L), **B7 fast path** (M), **A9 checkpoints** (M). `hayai-blockstore/src/lib.rs`, `hayai-sync/src/download.rs`, `hayai-validate/src/lib.rs`, `hayai-consensus/src/checkpoints.rs`. B2 comes after W6. B7 comes after W1.
-- **W10 = B3 driver, fork choice, reorg, speculative pipeline** (M–L). `hayaid/src/node.rs` (single owner: no other item edits `node.rs` in this phase, and earlier items limit their `node.rs` edits to call-site changes). It comes after W6 and W9.
+- **W10 = B3 driver, fork choice, reorg, speculative pipeline** (M–L). `hayai-node/src/node.rs` (single owner: no other item edits `node.rs` in this phase, and earlier items limit their `node.rs` edits to call-site changes). It comes after W6 and W9.
 - **W11 = B10 mempool** (M). `hayai-prepared/src/store.rs`, new `hayai-prepared/src/policy.rs`, `hayaid` `Mempool`. It comes after W0, in parallel to W9.
 - **W11c = C3 process-oracle tier and nightly CI** (M). It comes after W3 and W1.
 
@@ -666,13 +666,13 @@ Dependency summary: W0 → {W1, W2, W3, W4, W6c}; W2 → W6 → W9(B2) → W10 �
 - crates/hayai-prepared/src/prepare.rs
 - crates/hayai-prepared/src/shielded.rs
 - crates/hayai-state/src/history.rs
-- crates/hayaid/src/node.rs
+- crates/hayai-node/src/node.rs
 
 Related files:
 
 - crates/hayai-state/src/lib.rs
-- crates/hayaid/src/params.rs
-- crates/hayaid/src/headers.rs
+- crates/hayai-node/src/params.rs
+- crates/hayai-node/src/headers.rs
 - crates/hayai-relay/src/header_check.rs
 - crates/hayai-net/src/relay.rs
 - crates/hayai-crypto/src/lib.rs

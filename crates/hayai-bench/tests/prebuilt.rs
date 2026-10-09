@@ -4,12 +4,10 @@
 //! it.
 
 use hayai_bench::chain_fixture::{chain_with_layers, harness_with_history, Harness};
-use hayai_bench::fixtures::{
-    mixed_block, orchard_block, transparent_block, CoinbaseChange, Fixture,
-};
 use hayai_bench::zakura_chain_clone::BlockShape;
 use hayai_coins::{CoinsView, OutPoint, Pool};
 use hayai_consensus::coinbase::CoinbaseError;
+use hayai_fixtures::{mixed_block, orchard_block, transparent_block, CoinbaseChange, Fixture};
 use hayai_state::{ContextError, Layer};
 use hayai_validate::{
     commit_prebuilt, prebuild, validate_block, BlockError, CommitError, PrebuildError,

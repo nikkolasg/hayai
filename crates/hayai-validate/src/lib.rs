@@ -4,8 +4,8 @@
 //! two halves:
 //!
 //! - [`build_layer`]: the merkle root and the ZIP 244 authorizing-data root (hashed in
-//!   parallel); the split of the transactions into known (prepared store hit by [`WtxId`],
-//!   same epoch) and unknown; the parent check and one coin round for every input of the
+//!   parallel); the split of the transactions into known (a hit of the [`PreparedLookup`]
+//!   by [`WtxId`], same epoch) and unknown; the parent check and one coin round for every input of the
 //!   block that is not created in the block (`hayai_state::resolve_inputs`); the drafts of
 //!   the unknown transactions in parallel; then the contextual rules with batched nullifier
 //!   and anchor rounds, the tree appends, the header commitment to the parent's ZIP 221
@@ -53,7 +53,8 @@ use hayai_coins::{Coin, OutPoint};
 use hayai_consensus::header::{check_contextual, HeaderRuleError, HeaderVerdict, Unchecked};
 use hayai_consensus::{Checkpoints, Network, ParentChain, RuleSet};
 use hayai_prepared::{
-    check_scripts, draft, Draft, PrepareError, PreparedTx, RuleEpoch, ScopedBatch, VerifyingKeys,
+    check_scripts, draft, Draft, PrepareError, PreparedLookup, PreparedTx, RuleEpoch, ScopedBatch,
+    VerifyingKeys,
 };
 use hayai_state::{
     block_outputs, check_parent, checkpoint_layer, contextual_check_with_outputs, prebuild_body,
@@ -63,8 +64,6 @@ use hayai_state::{
 use hayai_wire::header::BlockHash;
 use hayai_wire::{auth_data_root, duplicate_txid, merkle_root, ParseError, RawBlock, WtxId};
 use rayon::prelude::*;
-
-pub use hayai_prepared::PreparedStore;
 
 /// Everything a validation needs besides the block, the store and the view.
 #[derive(Clone)]
@@ -243,9 +242,9 @@ struct Drafted<'k> {
 }
 
 /// Parses then validates; `Timings::parse` covers the parse.
-pub fn validate_bytes(
+pub fn validate_bytes<S: PreparedLookup>(
     bytes: Bytes,
-    store: &PreparedStore,
+    store: &S,
     view: &ChainView,
     cfg: &ValidateConfig,
 ) -> Result<(Layer, Timings), BlockError> {
@@ -261,9 +260,20 @@ pub fn validate_bytes(
 /// Validates a parsed block on top of `view`, reusing the store's prepared transactions,
 /// and returns the layer to push: [`build_layer`] and [`verify`] in one call, with the
 /// contextual rules concurrent with the scripts and the shielded batch.
-pub fn validate_block(
+pub fn validate_block<S: PreparedLookup>(
     raw: RawBlock,
-    store: &PreparedStore,
+    store: &S,
+    view: &ChainView,
+    cfg: &ValidateConfig,
+) -> Result<(Layer, Timings), BlockError> {
+    validate_known(raw, &|raw| known_txs(raw, store, cfg.epoch()), view, cfg)
+}
+
+/// [`validate_block`] with the known transactions of `known`. The body is not generic, so
+/// hayai-validate compiles it once for every kind of store.
+fn validate_known(
+    raw: RawBlock,
+    known: KnownTxs<'_>,
     view: &ChainView,
     cfg: &ValidateConfig,
 ) -> Result<(Layer, Timings), BlockError> {
@@ -274,7 +284,7 @@ pub fn validate_block(
         verification,
         mut timings,
         started,
-    } = draft_block(raw, store, view, cfg)?;
+    } = draft_block(raw, known, view, cfg)?;
     let (verified, checked) = rayon::join(
         || verify(verification),
         || check(view, &block, created, inputs, cfg),
@@ -385,9 +395,20 @@ pub fn apply_checkpointed(
 /// unknown transactions. Returns the layer to publish as a speculative tip, the
 /// [`Verification`] to run with [`verify`] before the layer commits, and the timings of the
 /// stages that ran (`scripts` and `shielded` stay zero).
-pub fn build_layer<'k>(
+pub fn build_layer<'k, S: PreparedLookup>(
     raw: RawBlock,
-    store: &PreparedStore,
+    store: &S,
+    view: &ChainView,
+    cfg: &'k ValidateConfig,
+) -> Result<(Layer, Verification<'k>, Timings), BlockError> {
+    build_layer_known(raw, &|raw| known_txs(raw, store, cfg.epoch()), view, cfg)
+}
+
+/// [`build_layer`] with the known transactions of `known`, not generic as
+/// [`validate_known`].
+fn build_layer_known<'k>(
+    raw: RawBlock,
+    known: KnownTxs<'_>,
     view: &ChainView,
     cfg: &'k ValidateConfig,
 ) -> Result<(Layer, Verification<'k>, Timings), BlockError> {
@@ -398,7 +419,7 @@ pub fn build_layer<'k>(
         verification,
         mut timings,
         started,
-    } = draft_block(raw, store, view, cfg)?;
+    } = draft_block(raw, known, view, cfg)?;
     let checked = check(view, &block, created, inputs, cfg)?;
     record_context(&mut timings, &checked);
     timings.total = started.elapsed();
@@ -456,16 +477,16 @@ pub enum PrebuildError {
 /// Prebuilds the body `ids` (block order, without a coinbase) on top of `view`. Every
 /// transaction must be in `store`, prepared under the epoch of `cfg`, with its scripts and proofs
 /// verified: the prebuilt body then holds the whole verification of the body.
-pub fn prebuild(
+pub fn prebuild<S: PreparedLookup>(
     ids: &[WtxId],
-    store: &PreparedStore,
+    store: &S,
     view: &ChainView,
     cfg: &ValidateConfig,
 ) -> Result<PrebuiltBody, PrebuildError> {
     let mut txs = Vec::with_capacity(ids.len());
     for id in ids {
         let Some(tx) = store
-            .get(id)
+            .prepared(id)
             .filter(|p| p.epoch == cfg.epoch() && p.scripts_ok && p.shielded_ok)
         else {
             return Err(PrebuildError::NotPrepared(*id));
@@ -555,9 +576,30 @@ fn record_context(timings: &mut Timings, checked: &Checked) {
     timings.history = checked.timings.history;
 }
 
+/// The known transactions of a block, one slot for each transaction of the block: one call
+/// for each block, so the call through `dyn` is not on the path of each transaction.
+type KnownTxs<'a> = &'a dyn Fn(&RawBlock) -> Vec<Option<Arc<PreparedTx>>>;
+
+/// The transactions of `raw` that `store` holds. A store hit is reused only if it was
+/// prepared under `epoch` and fully verified; the coinbase is never stored.
+fn known_txs<S: PreparedLookup>(
+    raw: &RawBlock,
+    store: &S,
+    epoch: RuleEpoch,
+) -> Vec<Option<Arc<PreparedTx>>> {
+    raw.txs
+        .iter()
+        .map(|t| {
+            store
+                .prepared(&t.wtxid())
+                .filter(|p| p.epoch == epoch && p.scripts_ok && p.shielded_ok)
+        })
+        .collect()
+}
+
 fn draft_block<'k>(
     raw: RawBlock,
-    store: &PreparedStore,
+    known: KnownTxs<'_>,
     view: &ChainView,
     cfg: &'k ValidateConfig,
 ) -> Result<Drafted<'k>, BlockError> {
@@ -572,17 +614,8 @@ fn draft_block<'k>(
     let auth = check_roots(&raw)?;
     timings.roots = started.elapsed();
 
-    // 2. Known / unknown. A store hit is reused only if it was prepared under this epoch
-    // and fully verified; the coinbase is never stored.
-    let mut slots: Vec<Option<Arc<PreparedTx>>> = raw
-        .txs
-        .iter()
-        .map(|t| {
-            store
-                .get(&t.wtxid())
-                .filter(|p| p.epoch == cfg.epoch() && p.scripts_ok && p.shielded_ok)
-        })
-        .collect();
+    // 2. Known / unknown (`known_txs`).
+    let mut slots = known(&raw);
     let unknown: Vec<usize> = slots
         .iter()
         .enumerate()

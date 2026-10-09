@@ -29,7 +29,6 @@ hayai_bench::bench_allocator!();
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use hayai_bench::fixtures::standard_set;
 use hayai_bench::hayai_id;
 use hayai_bench::scenarios::template::{
     candidates, coinbase_reserved, coinbase_spec, hayai_build, live_with, tip, zakura_build,
@@ -37,6 +36,7 @@ use hayai_bench::scenarios::template::{
 };
 use hayai_bench::zakura_zip317::select_mempool_transactions;
 use hayai_bench::zebra_zip317::{self, CoinbaseCache};
+use hayai_fixtures::standard_set;
 use hayai_template::{Candidate, SetEvent, TemplateUpdate};
 use hayai_wire::WtxId;
 use rand::rngs::StdRng;

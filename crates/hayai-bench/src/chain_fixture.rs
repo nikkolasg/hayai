@@ -10,16 +10,17 @@ use std::sync::Arc;
 use bytes::Bytes;
 use hayai_coins::{Coin, CoinsView, Config, RocksBacking};
 use hayai_consensus::RuleSet;
-use hayai_prepared::{prepare, PreparedStore, PreparedTx, RuleEpoch, ScopedBatch, VerifyingKeys};
+use hayai_mempool::PreparedStore;
+use hayai_prepared::{prepare, PreparedTx, RuleEpoch, ScopedBatch, VerifyingKeys};
 use hayai_state::{Base, Chain, HistoryLeaf, HistoryState};
 use hayai_template::Zip317Params;
 use hayai_validate::{HeaderPolicy, ValidateConfig};
 use hayai_wire::RawBlock;
 
-pub use crate::fixtures::FIXTURE_NETWORK;
-use crate::fixtures::{Fixture, FundingCoin, FIXTURE_BRANCH, NU6_3_FIXTURE_BRANCH};
 use crate::scenarios::state::{block_hash as synthetic_block_hash, layer as synthetic_layer};
 use crate::zakura_chain_clone::{BlockEntries, BlockShape};
+pub use hayai_fixtures::FIXTURE_NETWORK;
+use hayai_fixtures::{Fixture, FundingCoin, FIXTURE_BRANCH, NU6_3_FIXTURE_BRANCH};
 
 pub fn coin(funding: &FundingCoin) -> Coin {
     Coin {

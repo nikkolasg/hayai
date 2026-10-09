@@ -74,21 +74,29 @@ perf-event2 = "0.7"
 # feature decides the backend instead of the dependency edge.
 hayai-crypto = { path = "crates/hayai-crypto", default-features = false }
 hayai-wire = { path = "crates/hayai-wire", default-features = false }
+hayai-consensus-core = { path = "crates/hayai-consensus-core", default-features = false }
 hayai-consensus = { path = "crates/hayai-consensus", default-features = false }
 hayai-sinsemilla = { path = "crates/hayai-sinsemilla", default-features = false }
 hayai-trees = { path = "crates/hayai-trees", default-features = false }
 hayai-coins = { path = "crates/hayai-coins", default-features = false }
 hayai-prepared = { path = "crates/hayai-prepared", default-features = false }
+hayai-mempool = { path = "crates/hayai-mempool", default-features = false }
 hayai-state = { path = "crates/hayai-state", default-features = false }
 hayai-validate = { path = "crates/hayai-validate", default-features = false }
 hayai-relay = { path = "crates/hayai-relay", default-features = false }
+hayai-template-messages = { path = "crates/hayai-template-messages", default-features = false }
 hayai-template = { path = "crates/hayai-template", default-features = false }
 hayai-blockstore = { path = "crates/hayai-blockstore", default-features = false }
 hayai-index = { path = "crates/hayai-index", default-features = false }
 hayai-net = { path = "crates/hayai-net", default-features = false }
+hayai-http = { path = "crates/hayai-http", default-features = false }
+hayai-metrics = { path = "crates/hayai-metrics", default-features = false }
 hayai-rpc = { path = "crates/hayai-rpc", default-features = false }
 hayai-trace = { path = "crates/hayai-trace" }
 hayai-sync = { path = "crates/hayai-sync", default-features = false }
+hayai-fixtures = { path = "crates/hayai-fixtures", default-features = false }
+hayai-shadow = { path = "crates/hayai-shadow", default-features = false }
+hayai-node = { path = "crates/hayai-node", default-features = false }
 # hayaid: configuration file, signal handling, log output.
 toml = "0.8"
 signal-hook = "0.3"

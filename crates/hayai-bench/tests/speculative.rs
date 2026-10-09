@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hayai_bench::chain_fixture::{harness_with_history, Harness};
-use hayai_bench::fixtures::{transparent_block, FIXTURE_BRANCH};
 use hayai_coins::{CoinsView, OutPoint, Pool};
+use hayai_fixtures::{transparent_block, FIXTURE_BRANCH};
 use hayai_prepared::PrepareError;
 use hayai_state::{Chain, ChainView, Layer};
 use hayai_template::messages::{Hash32, HexBytes, Submit};
@@ -27,7 +27,7 @@ fn template(h: &Harness) -> LiveTemplate {
     let candidates: Vec<Candidate> = h
         .prepare_all()
         .iter()
-        .map(|p| p.candidate(Vec::new(), &Zip317Params::ZAKURA))
+        .map(|p| Candidate::from_raw(&p.raw, p.fee, p.sigops, Vec::new(), &Zip317Params::ZAKURA))
         .collect();
     live.load(candidates).unwrap();
     live

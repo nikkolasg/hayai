@@ -16,7 +16,7 @@ mod vectors;
 
 use std::collections::BTreeMap;
 
-use hayai_consensus::coinbase::{CoinbaseTerms, OutputKind, ShieldedBalances};
+use hayai_consensus::coinbase::{OutputKind, ShieldedBalances};
 use hayai_consensus::funding::Receiver;
 use hayai_wire::RawBlock;
 
@@ -52,7 +52,7 @@ fn coinbases_of_the_block_vectors_pass_the_coinbase_check() {
                 .map_or(0, |bundle| i64::from(*bundle.value_balance())),
             ironwood: 0,
         };
-        let terms = CoinbaseTerms::at(network, vector.height).unwrap();
+        let terms = hayai_consensus::coinbase::terms_at(network, vector.height).unwrap();
         // Every vector is before NU6, so the value rule is a limit. A block with one
         // transaction has no fees. The fees of the other blocks need the spent coins, which
         // the vector set does not have: the limit is then open and the required outputs
@@ -119,7 +119,7 @@ mod baselines {
             Network::Testnet => vec![
                 1_116_000, 2_796_000, 2_976_000, 3_396_000, 3_536_500, 4_476_000, 601_876, 637_294,
             ],
-            Network::Regtest | Network::ConfiguredRegtest(_) => vec![],
+            Network::Regtest | Network::Custom(_) => vec![],
         });
         // Address period boundaries: every 35,000 blocks from the first halving, in both
         // directions.
@@ -153,13 +153,13 @@ mod baselines {
     }
 
     fn hayai_facts(network: Network, height: u32) -> Facts {
-        let terms = CoinbaseTerms::at(network, height).unwrap();
+        let terms = hayai_consensus::coinbase::terms_at(network, height).unwrap();
         let of_kind = |wanted: fn(&OutputKind) -> bool| -> Vec<(u64, Vec<u8>)> {
             let mut outputs: Vec<(u64, Vec<u8>)> = terms
                 .required
                 .iter()
                 .filter(|output| wanted(&output.kind))
-                .map(|output| (output.value, output.script.clone()))
+                .map(|output| (output.value, output.script.to_vec()))
                 .collect();
             outputs.sort();
             outputs

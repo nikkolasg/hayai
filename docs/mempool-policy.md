@@ -3,15 +3,16 @@
 The node stores and relays the transactions that the public network relays. `prepare`
 (`hayai-prepared`) refuses a transaction that breaks a context-free consensus rule.
 `MempoolPolicy::admit` refuses a valid transaction that the next block cannot contain or that
-is not standard. `PreparedStore` applies ZIP 401. The node applies these checks in
-`crates/hayaid/src/mempool.rs` to each transaction of a peer, of this node, and of a block that
-a reorg disconnected.
+is not standard. `PreparedStore` applies ZIP 401. `hayai_mempool::Mempool` applies these checks
+to each transaction of a peer, of this node, and of a block that a reorg disconnected.
+`crates/hayai-node/src/mempool.rs` adds the peer score and the metrics of the node.
 
 Code:
 
-- `crates/hayaid/src/mempool.rs`
-- `crates/hayai-prepared/src/policy.rs`
-- `crates/hayai-prepared/src/store.rs`
+- `crates/hayai-mempool/src/admission.rs`
+- `crates/hayai-mempool/src/policy.rs`
+- `crates/hayai-mempool/src/store.rs`
+- `crates/hayai-node/src/mempool.rs` (peer score, metrics, private transactions)
 - `crates/hayai-template/src/zip317.rs` (shared fee constants)
 - `crates/hayai-template/src/live.rs` (template selection)
 

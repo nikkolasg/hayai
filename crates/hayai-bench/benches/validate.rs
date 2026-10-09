@@ -23,11 +23,11 @@ hayai_bench::bench_allocator!();
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
 use hayai_bench::chain_fixture::{chain_with_layers, harness};
-use hayai_bench::fixtures::{standard_set, Fixture};
 use hayai_bench::hayai_id;
 use hayai_bench::scenarios::validate::{has_shielded, zakura_model, zebra_model};
 use hayai_bench::zakura_chain_clone::BlockShape;
 use hayai_consensus::Checkpoints;
+use hayai_fixtures::{standard_set, Fixture};
 use hayai_validate::{apply_checkpointed, validate_block, Timings};
 
 fn print_timings(name: &str, variant: &str, t: &Timings) {

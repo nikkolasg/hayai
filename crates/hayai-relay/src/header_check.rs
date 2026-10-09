@@ -57,15 +57,31 @@ pub enum HeaderError {
     ContextTooShort(Unchecked),
 }
 
-/// Known-block and parent from the context, then the header rules of `network`. A context
-/// that is too short for a rule rejects the header: this check trusts no source.
+/// Known-block and parent from the context, then the header rules of `network`.
+///
+/// A context that is too short for a rule rejects the header: the check trusts no
+/// source. A node that starts above the genesis block without the ancestors of its start
+/// (a shadow node with a short seed) sets `trust_short_context`: the header then passes
+/// the rules that did not run, and [`Verified::unchecked`] names them.
 pub struct StandardHeaderCheck<C> {
     pub context: C,
     pub network: Network,
+    pub trust_short_context: bool,
 }
 
-impl<C: HeaderContext> HeaderCheck for StandardHeaderCheck<C> {
-    fn check(&self, header: &BlockHeader) -> Result<(), HeaderError> {
+/// A header that passed [`StandardHeaderCheck::verify`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verified {
+    /// Height of the header: the height of its parent plus 1.
+    pub height: u32,
+    /// The rules that did not run because the context is too short, on a check that
+    /// trusts a short context. `None`: every rule ran.
+    pub unchecked: Option<Unchecked>,
+}
+
+impl<C: HeaderContext> StandardHeaderCheck<C> {
+    /// The rules. Returns the height of the header.
+    pub fn verify(&self, header: &BlockHeader) -> Result<Verified, HeaderError> {
         let hash = header.hash();
         if self.context.has_block(&hash) {
             return Err(HeaderError::AlreadyInChain(hash));
@@ -73,19 +89,45 @@ impl<C: HeaderContext> HeaderCheck for StandardHeaderCheck<C> {
         let Some(parent) = self.context.parent(&header.prev_hash) else {
             return Err(HeaderError::ParentUnknown(header.prev_hash));
         };
+        let height = parent.height + 1;
         let chain = ParentChain {
-            height: parent.height + 1,
+            height,
             times: &parent.times,
             bits: &parent.bits,
         };
         let now = Some(self.context.now());
         // Spec §7.6: every header rule, and the rule against the clock of the node.
         match check_header(self.network, header, &chain, now)? {
-            HeaderVerdict::Checked => Ok(()),
+            HeaderVerdict::Checked => Ok(Verified {
+                height,
+                unchecked: None,
+            }),
+            HeaderVerdict::ContextTooShort(unchecked) if self.trust_short_context => Ok(Verified {
+                height,
+                unchecked: Some(unchecked),
+            }),
             HeaderVerdict::ContextTooShort(unchecked) => {
                 Err(HeaderError::ContextTooShort(unchecked))
             }
         }
+    }
+}
+
+impl<C: HeaderContext> HeaderCheck for StandardHeaderCheck<C> {
+    fn check(&self, header: &BlockHeader) -> Result<(), HeaderError> {
+        self.verify(header).map(|_| ())
+    }
+}
+
+impl<T: HeaderContext + ?Sized> HeaderContext for std::sync::Arc<T> {
+    fn has_block(&self, hash: &BlockHash) -> bool {
+        (**self).has_block(hash)
+    }
+    fn parent(&self, hash: &BlockHash) -> Option<ParentInfo> {
+        (**self).parent(hash)
+    }
+    fn now(&self) -> u32 {
+        (**self).now()
     }
 }
 
@@ -151,6 +193,7 @@ mod tests {
         StandardHeaderCheck {
             context,
             network: Network::Mainnet,
+            trust_short_context: false,
         }
     }
 
@@ -312,6 +355,7 @@ mod tests {
         let check = StandardHeaderCheck {
             context: genesis_context(),
             network: Network::Regtest,
+            trust_short_context: false,
         };
         // The Mainnet limit is below the Regtest limit, so the contextual rules pass.
         assert_eq!(

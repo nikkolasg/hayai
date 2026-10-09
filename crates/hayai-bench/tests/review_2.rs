@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use hayai_bench::chain_fixture::{harness, Harness};
-use hayai_bench::fixtures::{transparent_block, FIXTURE_HEIGHT};
+use hayai_fixtures::{transparent_block, FIXTURE_HEIGHT};
 use hayai_state::{contextual_check, CheckConfig, PreparedBlock};
 
 fn prepared_block(h: &Harness) -> PreparedBlock {

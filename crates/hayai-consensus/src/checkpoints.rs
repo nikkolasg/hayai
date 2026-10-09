@@ -22,49 +22,49 @@
 //! Regtest has one checkpoint: the genesis block.
 //!
 //! The build script converts each file to 36 bytes for each checkpoint (`build.rs`). The
-//! first call of [`Network::checkpoints`] for a network decodes its list.
+//! compiler decodes each list into a static array ([`decode`]), so a list needs no work at
+//! run time.
 
-use std::sync::{Arc, LazyLock};
+use std::borrow::Cow;
 
 use hayai_wire::header::BlockHash;
 
-use crate::{Network, Upgrade};
+use crate::Network;
 
 /// Bytes of one embedded checkpoint: the height (`u32`, little-endian), then the hash.
 const RECORD_BYTES: usize = 36;
 
-static MAINNET: LazyLock<Checkpoints> = LazyLock::new(|| {
-    decode(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/main-checkpoints.bin"
-    )))
-});
-static TESTNET: LazyLock<Checkpoints> = LazyLock::new(|| {
-    decode(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/test-checkpoints.bin"
-    )))
-});
-static REGTEST: LazyLock<Checkpoints> = LazyLock::new(|| Checkpoints {
-    entries: Arc::new([(0, Network::Regtest.params().genesis_hash)]),
-});
+const MAINNET_RECORDS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/main-checkpoints.bin"));
+const TESTNET_RECORDS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/test-checkpoints.bin"));
 
-/// Decodes an embedded list. The build script wrote the records in height order.
-fn decode(bytes: &[u8]) -> Checkpoints {
-    let (records, []) = bytes.as_chunks::<RECORD_BYTES>() else {
-        unreachable!("the build script writes complete records");
-    };
-    let entries = records
-        .iter()
-        .map(|record| {
-            let (height, hash) = record.split_at(4);
-            (
-                u32::from_le_bytes(height.try_into().expect("4 bytes")),
-                BlockHash(hash.try_into().expect("32 bytes")),
-            )
-        })
-        .collect();
-    Checkpoints { entries }
+/// The Mainnet list, in height order.
+pub(crate) static MAINNET: [(u32, BlockHash); MAINNET_RECORDS.len() / RECORD_BYTES] =
+    decode(MAINNET_RECORDS);
+/// The Testnet list, in height order.
+pub(crate) static TESTNET: [(u32, BlockHash); TESTNET_RECORDS.len() / RECORD_BYTES] =
+    decode(TESTNET_RECORDS);
+
+/// Decodes an embedded list at compile time. The build script wrote complete records in
+/// height order.
+const fn decode<const N: usize>(bytes: &[u8]) -> [(u32, BlockHash); N] {
+    let (records, rest) = bytes.as_chunks::<RECORD_BYTES>();
+    assert!(
+        rest.is_empty() && records.len() == N,
+        "the build script writes complete records"
+    );
+    let mut entries = [(0, BlockHash([0; 32])); N];
+    let mut i = 0;
+    while i < N {
+        let Some((height, hash)) = records[i].split_first_chunk::<4>() else {
+            unreachable!();
+        };
+        let Some(hash) = hash.first_chunk::<32>() else {
+            unreachable!();
+        };
+        entries[i] = (u32::from_le_bytes(*height), BlockHash(*hash));
+        i += 1;
+    }
+    entries
 }
 
 /// Two checkpoints of a list have the same height.
@@ -72,24 +72,42 @@ fn decode(bytes: &[u8]) -> Checkpoints {
 #[error("two checkpoints have the height {0}")]
 pub struct DuplicateCheckpoint(pub u32);
 
-/// A checkpoint list. A clone shares the entries.
+/// A checkpoint list. A clone of an embedded list shares the entries. A clone of a list
+/// from [`Checkpoints::new`] copies them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Checkpoints {
     /// In height order, one checkpoint for each height.
-    entries: Arc<[(u32, BlockHash)]>,
+    entries: Cow<'static, [(u32, BlockHash)]>,
 }
 
 impl Checkpoints {
     /// A list from `entries`, in any order. A network has its list in
-    /// [`Network::checkpoints`]. This function is for a chain of generated blocks.
+    /// [`Network::checkpoints`]. This function is for a chain of generated blocks and for
+    /// the list of a [`crate::ChainSpec`].
     pub fn new(mut entries: Vec<(u32, BlockHash)>) -> Result<Self, DuplicateCheckpoint> {
         entries.sort_by_key(|(height, _)| *height);
         if let Some(pair) = entries.windows(2).find(|pair| pair[0].0 == pair[1].0) {
             return Err(DuplicateCheckpoint(pair[0].0));
         }
         Ok(Self {
-            entries: entries.into(),
+            entries: Cow::Owned(entries),
         })
+    }
+
+    /// The list with its entries in memory until the process ends. A clone of the result
+    /// shares the entries.
+    pub(crate) fn leak(self) -> Self {
+        match self.entries {
+            Cow::Owned(entries) => Self::embedded(Box::leak(entries.into_boxed_slice())),
+            Cow::Borrowed(_) => self,
+        }
+    }
+
+    /// The list of a built-in network: `entries` are in height order, one for each height.
+    pub(crate) const fn embedded(entries: &'static [(u32, BlockHash)]) -> Self {
+        Self {
+            entries: Cow::Borrowed(entries),
+        }
     }
 
     /// The checkpoint hash at `height`. `None`: the height has no checkpoint.
@@ -127,29 +145,19 @@ impl Checkpoints {
 }
 
 impl Network {
-    /// The checkpoint list of the network.
+    /// The checkpoint list of the network ([`crate::ChainSpec::checkpoints`]).
     pub fn checkpoints(self) -> &'static Checkpoints {
-        match self {
-            Network::Mainnet => &MAINNET,
-            Network::Testnet => &TESTNET,
-            Network::Regtest => &REGTEST,
-            Network::ConfiguredRegtest(config) => config.checkpoints(),
-        }
+        &self.spec().checkpoints
     }
 
-    /// The height of the mandatory checkpoint: the last block before the Canopy
-    /// activation (Zakura `mandatory_checkpoint_height`,
-    /// `zakura-chain/src/parameters/network.rs:271`). A block at or below this height has
-    /// no full validation: the node accepts it only on the checkpointed chain. A configured
-    /// Regtest has the height of its [`crate::RegtestConfig`].
+    /// The height of the mandatory checkpoint ([`crate::ChainSpec::mandatory_checkpoint_height`]).
+    /// A block at or below this height has no full validation: the node accepts it only on
+    /// the checkpointed chain. On Mainnet, Testnet and Regtest it is the last block before
+    /// the Canopy activation (Zakura `mandatory_checkpoint_height`,
+    /// `zakura-chain/src/parameters/network.rs:271`). A configured Regtest has the height
+    /// of its [`crate::RegtestConfig`].
     pub fn mandatory_checkpoint_height(self) -> u32 {
-        if let Network::ConfiguredRegtest(config) = self {
-            return config.mandatory_checkpoint_height();
-        }
-        let Some(canopy) = self.activation_height(Upgrade::Canopy) else {
-            unreachable!("each network has a Canopy activation height");
-        };
-        canopy - 1
+        self.spec().mandatory_checkpoint_height
     }
 }
 
