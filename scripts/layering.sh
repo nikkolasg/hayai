@@ -70,6 +70,8 @@ fail() {
 # The lines of the non-test sources of a crate: `path:line: text`.
 sources() {
     local crate=$1
+    # The `$0` and `$FILENAME` of the awk program are awk's, not the shell's.
+    # shellcheck disable=SC2016
     find "crates/$crate/src" -name '*.rs' \
         ! -name 'tests.rs' ! -name '*_tests.rs' \
         ! -name 'test_support.rs' ! -name 'test_util.rs' \
