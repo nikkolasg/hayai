@@ -1,9 +1,9 @@
 //! Difficulty adjustment (protocol specification §7.7): the wrappers of
-//! `hayai_consensus_core::difficulty` for a caller with a [`Network`] or with the
+//! `hayai_consensus_core::difficulty_rules` for a caller with a [`Network`] or with the
 //! `primitive_types::U256` of the ZIP 221 history tree. The rules are in the core.
 
-use hayai_consensus_core::difficulty as core;
-pub use hayai_consensus_core::difficulty::{
+use hayai_consensus_core::difficulty_rules as core;
+pub use hayai_consensus_core::difficulty_rules::{
     median_time, median_time_past, DifficultyError, Uint256,
 };
 use hayai_crypto::primitive_types::U256;
@@ -46,7 +46,7 @@ pub fn block_work(bits: u32) -> Option<U256> {
 }
 
 /// The `nBits` that the block at `chain.height` with time `time` must have on `network`
-/// (`hayai_consensus_core::difficulty::expected_bits`). An upgrade without a rule set in
+/// (`hayai_consensus_core::difficulty_rules::expected_bits`). An upgrade without a rule set in
 /// this build is [`DifficultyError::Rules`].
 ///
 /// Regtest has no such rule in hayai (`NetworkParams::disable_pow`): the header rules do
@@ -57,7 +57,7 @@ pub fn expected_bits(
     chain: &ParentChain<'_>,
 ) -> Result<u32, DifficultyError> {
     let rules = core_rules_at(network, chain.height)?;
-    core::expected_bits(network.core(), rules, time, chain)
+    core::expected_bits(network.core(), &rules, time, *chain)
 }
 
 #[cfg(test)]

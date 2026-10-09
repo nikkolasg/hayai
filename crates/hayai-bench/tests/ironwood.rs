@@ -9,7 +9,7 @@ use bytes::Bytes;
 use hayai_bench::chain_fixture::{chain_with_layers, harness, harness_with_history, keys, Harness};
 use hayai_bench::zakura_chain_clone::BlockShape;
 use hayai_coins::Pool;
-use hayai_consensus::coinbase::{CoinbaseError, ShieldedBalances};
+use hayai_consensus::coinbase::{CoinbaseError, CoinbaseOutput, ShieldedBalances};
 use hayai_consensus::{BlockLimits, RuleSet};
 use hayai_crypto::incrementalmerkletree::frontier::Frontier;
 use hayai_crypto::orchard::tree::MerkleHashOrchard;
@@ -781,12 +781,15 @@ fn the_coinbase_value_counts_the_ironwood_output() {
     check(&h, &block).expect("the coinbase pays its terms exactly");
     // The transparent outputs alone pay less than the terms by the Ironwood output.
     let fees: u64 = block.txs.iter().map(|t| t.fee).sum();
-    let outputs: Vec<(u64, &[u8])> = coinbase
+    let outputs: Vec<CoinbaseOutput> = coinbase
         .transparent_bundle()
         .expect("outputs")
         .vout
         .iter()
-        .map(|o| (o.value().into_u64(), o.script_pubkey().0 .0.as_slice()))
+        .map(|o| CoinbaseOutput {
+            value: o.value().into_u64(),
+            script: o.script_pubkey().0 .0.to_vec(),
+        })
         .collect();
     let Err(CoinbaseError::ValueNotExact { paid, required }) =
         terms.check(&outputs, ShieldedBalances::default(), fees)

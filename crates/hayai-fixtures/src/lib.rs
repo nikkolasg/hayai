@@ -1112,10 +1112,13 @@ mod tests {
             (terms.miner_subsidy, terms.required.len()),
             (125_000_000, 1)
         );
-        let outputs: Vec<(u64, &[u8])> = cb_bundle
+        let outputs: Vec<hayai_consensus::coinbase::CoinbaseOutput> = cb_bundle
             .vout
             .iter()
-            .map(|o| (o.value().into_u64(), o.script_pubkey().0 .0.as_slice()))
+            .map(|o| hayai_consensus::coinbase::CoinbaseOutput {
+                value: o.value().into_u64(),
+                script: o.script_pubkey().0 .0.to_vec(),
+            })
             .collect();
         assert_eq!(terms.check(&outputs, Default::default(), fees), Ok(()));
         let unique: HashSet<_> = f.funding.iter().map(|(o, _)| o.clone()).collect();

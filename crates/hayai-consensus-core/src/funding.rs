@@ -11,9 +11,7 @@
 //! before NU7. ZIP 2008 changes the Mainnet recipient of the last stream set at NU7:
 //! Mainnet has no NU7 height, and this module has no code for ZIP 2008.
 
-use alloc::vec::Vec;
-
-use crate::spec::SpecError;
+use crate::chain_spec::SpecError;
 use crate::{
     money, ConsensusError, CoreSpec, P2shScript, Upgrade, POST_BLOSSOM_TARGET_SPACING,
     POST_NU7_TARGET_SPACING,
@@ -63,7 +61,7 @@ pub struct Stream {
     /// deferred pool.
     ///
     /// ZIP 214: a list of one address repeated `n` times (`[a] * n`) is one entry here.
-    pub scripts: &'static [P2shScript],
+    pub scripts: Vec<P2shScript>,
 }
 
 /// The streams of one range of heights.
@@ -76,7 +74,7 @@ pub struct StreamSet {
     /// The set is the one of ZIP 214 revision 2, which ends at the third halving: NU7
     /// moves its end ([`nu7_adjusted_end`]).
     pub ends_at_third_halving: bool,
-    pub streams: &'static [Stream],
+    pub streams: Vec<Stream>,
 }
 
 /// `NU7PoWTargetSpacingRatio` of ZIP 218: 3.
@@ -120,10 +118,17 @@ fn set_end(set: &StreamSet, nu7: Option<u32>) -> Result<u32, ConsensusError> {
 /// [`Receiver::Deferred`], and an end that NU7 moves above the largest height. The adapter
 /// decodes the addresses before it builds the scripts.
 pub fn check_sets(nu7: Option<u32>, sets: &[StreamSet]) -> Result<(), SpecError> {
+    let mut failure: Option<SpecError> = None;
     for s in 0..sets.len() {
-        check_set(nu7, &sets[s])?;
+        if let Err(e) = check_set(nu7, &sets[s]) {
+            failure = Some(e);
+            break;
+        }
     }
-    Ok(())
+    match failure {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
 
 /// The checks of [`check_sets`] on one stream set.
@@ -133,19 +138,26 @@ fn check_set(nu7: Option<u32>, set: &StreamSet) -> Result<(), SpecError> {
         return Err(SpecError::StreamRange { start, end });
     }
     let mut numerators = 0u128;
+    let mut failure: Option<SpecError> = None;
     for index in 0..set.streams.len() {
         let stream = &set.streams[index];
         let receiver = stream.receiver;
-        if receiver_repeats(set.streams, index) {
-            return Err(SpecError::StreamReceiver(receiver));
+        if receiver_repeats(&set.streams, index) {
+            failure = Some(SpecError::StreamReceiver(receiver));
+            break;
         }
         let Some(sum) = numerators.checked_add(u128::from(stream.numerator)) else {
-            return Err(SpecError::Rule(ConsensusError::Overflow));
+            failure = Some(SpecError::Rule(ConsensusError::Overflow));
+            break;
         };
         numerators = sum;
         if receiver == Receiver::Deferred && stream.scripts.len() > 0 {
-            return Err(SpecError::DeferredScript);
+            failure = Some(SpecError::DeferredScript);
+            break;
         }
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     if numerators > u128::from(DENOMINATOR) {
         return Err(SpecError::StreamNumerators(numerators));
@@ -178,7 +190,7 @@ fn receiver_repeats(streams: &[Stream], index: usize) -> bool {
 /// accept more. Zakura stops at the first block of a period without an address
 /// (`funding_stream_address_index`, `zakura-consensus/src/block/subsidy.rs:18-43`).
 pub fn check_script_counts(spec: &CoreSpec, one_script_repeats: bool) -> Result<(), SpecError> {
-    let sets = spec.funding_streams;
+    let sets = &spec.funding_streams;
     if sets.len() == 0 {
         return Ok(());
     }
@@ -186,10 +198,17 @@ pub fn check_script_counts(spec: &CoreSpec, one_script_repeats: bool) -> Result<
         return Err(SpecError::NoFirstHalving);
     };
     let nu7 = spec.activation_height(Upgrade::Nu7);
+    let mut failure: Option<SpecError> = None;
     for s in 0..sets.len() {
-        check_set_scripts(spec, first_halving, nu7, &sets[s], one_script_repeats)?;
+        if let Err(e) = check_set_scripts(spec, first_halving, nu7, &sets[s], one_script_repeats) {
+            failure = Some(e);
+            break;
+        }
     }
-    Ok(())
+    match failure {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
 
 /// The check of [`check_script_counts`] on one stream set.
@@ -218,21 +237,26 @@ fn check_set_scripts(
     let Some(required) = required.checked_add(1) else {
         return Err(SpecError::Rule(ConsensusError::Overflow));
     };
+    let mut failure: Option<SpecError> = None;
     for index in 0..set.streams.len() {
-        let stream = &set.streams[index];
-        let found = stream.scripts.len();
+        let receiver = set.streams[index].receiver;
+        let found = set.streams[index].scripts.len();
         let repeated = one_script_repeats && found == 1;
-        if stream.receiver != Receiver::Deferred && found < required && !repeated {
-            return Err(SpecError::StreamScripts {
-                receiver: stream.receiver,
+        if receiver != Receiver::Deferred && found < required && !repeated {
+            failure = Some(SpecError::StreamScripts {
+                receiver,
                 start: set.start,
                 end,
                 required,
                 found,
             });
+            break;
         }
     }
-    Ok(())
+    match failure {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
 
 /// `floor(a / b)`: the quotient rounded toward negative infinity.
@@ -308,7 +332,7 @@ pub fn funding_streams(
     if subsidy == 0 || !canopy_active {
         return Ok(Vec::new());
     }
-    let sets = spec.funding_streams;
+    let sets = &spec.funding_streams;
     if sets.len() == 0 {
         return Ok(Vec::new());
     }
@@ -317,19 +341,31 @@ pub fn funding_streams(
         return Err(ConsensusError::UncheckedSpec);
     };
     let nu7 = spec.activation_height(Upgrade::Nu7);
-    let mut active: Option<&StreamSet> = None;
+    let mut active: Option<usize> = None;
+    let mut failure: Option<ConsensusError> = None;
     for s in 0..sets.len() {
-        let set = &sets[s];
         if let Some(_) = active {
             continue;
         }
-        if set.start <= height && height < set_end(set, nu7)? {
-            active = Some(set);
+        let set = &sets[s];
+        let end = match set_end(set, nu7) {
+            Ok(end) => end,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        if set.start <= height && height < end {
+            active = Some(s);
         }
     }
-    let Some(set) = active else {
+    if let Some(failure) = failure {
+        return Err(failure);
+    }
+    let Some(s) = active else {
         return Ok(Vec::new());
     };
+    let set = &sets[s];
     let Some(period) = address_period(spec, first_halving, height)?.checked_sub(address_period(
         spec,
         first_halving,
@@ -341,17 +377,22 @@ pub fn funding_streams(
         return Err(ConsensusError::UncheckedSpec);
     };
     let mut streams = Vec::with_capacity(set.streams.len());
+    let mut failure: Option<ConsensusError> = None;
     for index in 0..set.streams.len() {
         let stream = &set.streams[index];
         let Some(product) = subsidy.checked_mul(stream.numerator) else {
-            return Err(ConsensusError::MoneyOverflow);
+            failure = Some(ConsensusError::MoneyOverflow);
+            break;
         };
         let script = match stream.scripts.len() {
             0 => None,
             1 => Some(stream.scripts[0]),
             _ => match stream.scripts.get(period) {
                 Some(script) => Some(*script),
-                None => return Err(ConsensusError::UncheckedSpec),
+                None => {
+                    failure = Some(ConsensusError::UncheckedSpec);
+                    break;
+                }
             },
         };
         streams.push(FundingStream {
@@ -359,6 +400,9 @@ pub fn funding_streams(
             value: product / DENOMINATOR,
             script,
         });
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     Ok(streams)
 }
@@ -381,7 +425,7 @@ pub fn deferred_value(spec: &CoreSpec, height: u32, subsidy: u64) -> Result<u64,
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::spec::tests::regtest;
+    use crate::chain_spec::tests::regtest;
     use crate::MAX_MONEY;
 
     pub(crate) const SCRIPT_A: P2shScript = [
@@ -397,41 +441,43 @@ pub(crate) mod tests {
     /// 12 % to the deferred pool and 8 % to Major Grants, one script for each of the 3
     /// address periods of the heights 10 to 21 (6 blocks each on Regtest), then 7 % to
     /// ECC from 23 to 28.
-    pub(crate) static STREAMS: [StreamSet; 2] = [
-        StreamSet {
-            start: 10,
-            end: 22,
-            ends_at_third_halving: false,
-            streams: &[
-                Stream {
-                    receiver: Receiver::Deferred,
-                    numerator: 12,
-                    scripts: &[],
-                },
-                Stream {
-                    receiver: Receiver::MajorGrants,
-                    numerator: 8,
-                    scripts: &[SCRIPT_A, SCRIPT_C, SCRIPT_B],
-                },
-            ],
-        },
-        StreamSet {
-            start: 23,
-            end: 29,
-            ends_at_third_halving: false,
-            streams: &[Stream {
-                receiver: Receiver::Ecc,
-                numerator: 7,
-                scripts: &[SCRIPT_B],
-            }],
-        },
-    ];
+    pub(crate) fn streams() -> Vec<StreamSet> {
+        vec![
+            StreamSet {
+                start: 10,
+                end: 22,
+                ends_at_third_halving: false,
+                streams: vec![
+                    Stream {
+                        receiver: Receiver::Deferred,
+                        numerator: 12,
+                        scripts: vec![],
+                    },
+                    Stream {
+                        receiver: Receiver::MajorGrants,
+                        numerator: 8,
+                        scripts: vec![SCRIPT_A, SCRIPT_C, SCRIPT_B],
+                    },
+                ],
+            },
+            StreamSet {
+                start: 23,
+                end: 29,
+                ends_at_third_halving: false,
+                streams: vec![Stream {
+                    receiver: Receiver::Ecc,
+                    numerator: 7,
+                    scripts: vec![SCRIPT_B],
+                }],
+            },
+        ]
+    }
 
-    /// Regtest with NU6 at height 20 and the streams of [`STREAMS`].
+    /// Regtest with NU6 at height 20 and the streams of [`streams`].
     pub(crate) fn regtest_with_streams() -> CoreSpec {
         let mut spec = regtest();
         spec.activation_heights[Upgrade::Nu6.index()] = Some(20);
-        spec.funding_streams = &STREAMS;
+        spec.funding_streams = streams();
         spec.checked().expect("a valid spec")
     }
 
@@ -456,14 +502,14 @@ pub(crate) mod tests {
         };
         for (height, expected) in [
             (9, Vec::new()),
-            (10, alloc::vec![deferred, grants(SCRIPT_A)]),
-            (11, alloc::vec![deferred, grants(SCRIPT_C)]),
-            (16, alloc::vec![deferred, grants(SCRIPT_C)]),
-            (17, alloc::vec![deferred, grants(SCRIPT_B)]),
-            (21, alloc::vec![deferred, grants(SCRIPT_B)]),
+            (10, vec![deferred, grants(SCRIPT_A)]),
+            (11, vec![deferred, grants(SCRIPT_C)]),
+            (16, vec![deferred, grants(SCRIPT_C)]),
+            (17, vec![deferred, grants(SCRIPT_B)]),
+            (21, vec![deferred, grants(SCRIPT_B)]),
             (22, Vec::new()),
-            (23, alloc::vec![ecc]),
-            (28, alloc::vec![ecc]),
+            (23, vec![ecc]),
+            (28, vec![ecc]),
             (29, Vec::new()),
         ] {
             assert_eq!(
@@ -496,114 +542,124 @@ pub(crate) mod tests {
         );
     }
 
-    static RANGE: [StreamSet; 1] = [StreamSet {
-        start: 10,
-        end: 9,
-        ends_at_third_halving: false,
-        streams: &[],
-    }];
-    static RECEIVERS: [StreamSet; 1] = [StreamSet {
-        start: 11,
-        end: 17,
-        ends_at_third_halving: false,
-        streams: &[
-            Stream {
-                receiver: Receiver::MajorGrants,
-                numerator: 1,
-                scripts: &[SCRIPT_A],
-            },
-            Stream {
-                receiver: Receiver::MajorGrants,
-                numerator: 1,
-                scripts: &[SCRIPT_A],
-            },
-        ],
-    }];
-    static NUMERATORS: [StreamSet; 1] = [StreamSet {
-        start: 11,
-        end: 17,
-        ends_at_third_halving: false,
-        streams: &[
-            Stream {
+    fn range() -> Vec<StreamSet> {
+        vec![StreamSet {
+            start: 10,
+            end: 9,
+            ends_at_third_halving: false,
+            streams: vec![],
+        }]
+    }
+    fn receivers() -> Vec<StreamSet> {
+        vec![StreamSet {
+            start: 11,
+            end: 17,
+            ends_at_third_halving: false,
+            streams: vec![
+                Stream {
+                    receiver: Receiver::MajorGrants,
+                    numerator: 1,
+                    scripts: vec![SCRIPT_A],
+                },
+                Stream {
+                    receiver: Receiver::MajorGrants,
+                    numerator: 1,
+                    scripts: vec![SCRIPT_A],
+                },
+            ],
+        }]
+    }
+    fn numerators() -> Vec<StreamSet> {
+        vec![StreamSet {
+            start: 11,
+            end: 17,
+            ends_at_third_halving: false,
+            streams: vec![
+                Stream {
+                    receiver: Receiver::Deferred,
+                    numerator: 93,
+                    scripts: vec![],
+                },
+                Stream {
+                    receiver: Receiver::MajorGrants,
+                    numerator: 8,
+                    scripts: vec![SCRIPT_A],
+                },
+            ],
+        }]
+    }
+    fn deferred_script() -> Vec<StreamSet> {
+        vec![StreamSet {
+            start: 11,
+            end: 17,
+            ends_at_third_halving: false,
+            streams: vec![Stream {
                 receiver: Receiver::Deferred,
-                numerator: 93,
-                scripts: &[],
-            },
-            Stream {
-                receiver: Receiver::MajorGrants,
-                numerator: 8,
-                scripts: &[SCRIPT_A],
-            },
-        ],
-    }];
-    static DEFERRED_SCRIPT: [StreamSet; 1] = [StreamSet {
-        start: 11,
-        end: 17,
-        ends_at_third_halving: false,
-        streams: &[Stream {
-            receiver: Receiver::Deferred,
-            numerator: 1,
-            scripts: &[SCRIPT_A],
-        }],
-    }];
+                numerator: 1,
+                scripts: vec![SCRIPT_A],
+            }],
+        }]
+    }
     /// A set that ends at the third halving, so that NU7 moves its end.
-    static LATE_END: [StreamSet; 1] = [StreamSet {
-        start: 4_300_000,
-        end: u32::MAX,
-        ends_at_third_halving: true,
-        streams: &[],
-    }];
+    fn late_end() -> Vec<StreamSet> {
+        vec![StreamSet {
+            start: 4_300_000,
+            end: u32::MAX,
+            ends_at_third_halving: true,
+            streams: vec![],
+        }]
+    }
 
     #[test]
     fn the_checks_of_the_stream_sets() {
-        assert_eq!(check_sets(None, &STREAMS), Ok(()));
+        assert_eq!(check_sets(None, &streams()), Ok(()));
         assert_eq!(
-            check_sets(None, &RANGE),
+            check_sets(None, &range()),
             Err(SpecError::StreamRange { start: 10, end: 9 })
         );
         assert_eq!(
-            check_sets(None, &RECEIVERS),
+            check_sets(None, &receivers()),
             Err(SpecError::StreamReceiver(Receiver::MajorGrants))
         );
         assert_eq!(
-            check_sets(None, &NUMERATORS),
+            check_sets(None, &numerators()),
             Err(SpecError::StreamNumerators(101))
         );
         assert_eq!(
-            check_sets(None, &DEFERRED_SCRIPT),
+            check_sets(None, &deferred_script()),
             Err(SpecError::DeferredScript)
         );
-        assert_eq!(check_sets(None, &LATE_END), Ok(()));
+        assert_eq!(check_sets(None, &late_end()), Ok(()));
         assert_eq!(
-            check_sets(Some(4_200_000), &LATE_END),
+            check_sets(Some(4_200_000), &late_end()),
             Err(SpecError::StreamEnd(u32::MAX))
         );
     }
 
     #[test]
     fn each_stream_needs_one_script_for_each_period() {
-        static TWO: [StreamSet; 1] = [StreamSet {
+        let two: Vec<StreamSet> = vec![StreamSet {
             start: 10,
             end: 22,
             ends_at_third_halving: false,
-            streams: &[Stream {
+            streams: vec![Stream {
                 receiver: Receiver::MajorGrants,
                 numerator: 8,
-                scripts: &[SCRIPT_A, SCRIPT_B],
+                scripts: vec![SCRIPT_A, SCRIPT_B],
             }],
         }];
-        static ONE: [StreamSet; 1] = [StreamSet {
+        let one: Vec<StreamSet> = vec![StreamSet {
             start: 10,
             end: 22,
             ends_at_third_halving: false,
-            streams: &[Stream {
+            streams: vec![Stream {
                 receiver: Receiver::MajorGrants,
                 numerator: 8,
-                scripts: &[SCRIPT_A],
+                scripts: vec![SCRIPT_A],
             }],
         }];
         let mut spec = regtest();
-        spec.funding_streams = &TWO;
+        spec.funding_streams = two.clone();
         assert_eq!(
             spec.clone().checked(),
             Err(SpecError::StreamScripts {
@@ -614,7 +670,7 @@ pub(crate) mod tests {
                 found: 2,
             })
         );
-        spec.funding_streams = &ONE;
+        spec.funding_streams = one.clone();
         let Ok(spec) = spec.checked() else {
             panic!("one script repeats");
         };
@@ -673,18 +729,18 @@ pub(crate) mod tests {
     /// a panic. `checked` refuses the spec; the rule still returns an error.
     #[test]
     fn a_period_without_a_script_is_an_error() {
-        static SHORT: [StreamSet; 1] = [StreamSet {
+        let short: Vec<StreamSet> = vec![StreamSet {
             start: 10,
             end: 22,
             ends_at_third_halving: false,
-            streams: &[Stream {
+            streams: vec![Stream {
                 receiver: Receiver::MajorGrants,
                 numerator: 8,
-                scripts: &[SCRIPT_A, SCRIPT_B],
+                scripts: vec![SCRIPT_A, SCRIPT_B],
             }],
         }];
         let mut spec = regtest();
-        spec.funding_streams = &SHORT;
+        spec.funding_streams = short.clone();
         let Ok(streams) = funding_streams(&spec, 16, 100) else {
             panic!("period 1 has a script");
         };

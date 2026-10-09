@@ -1,7 +1,7 @@
 //! The networks, their parameters and the activation heights of the network upgrades.
 //!
 //! A [`ChainSpec`] holds each value of a network that the rules read. The rules of each
-//! upgrade are code (`hayai_consensus_core::rules`): a chain chooses only when each
+//! upgrade are code (`hayai_consensus_core::rule_sets`): a chain chooses only when each
 //! upgrade activates, and the values of its spec. Mainnet, Testnet and Regtest have built-in
 //! specs ([`Network::spec`]). Another chain is a [`Network::Custom`]: a crate clones a
 //! built-in spec, changes its fields, and calls [`ChainSpec::network`].
@@ -24,6 +24,8 @@
 //! own checkpoint list, its own mandatory checkpoint height, its own funding streams and
 //! its own lockbox disbursements ([`RegtestConfig`]). Every other value is the value of
 //! [`Network::Regtest`].
+
+use std::sync::OnceLock;
 
 use hayai_consensus_core::funding::StreamSet as CoreStreamSet;
 use hayai_consensus_core::lockbox::Disbursement as CoreDisbursement;
@@ -59,10 +61,17 @@ pub enum Network {
     Custom(CheckedSpec),
 }
 
-/// A [`ChainSpec`] that [`ChainSpec::network`] checked. The spec stays in memory until the
-/// process ends. Two values are equal when they are the same spec in memory.
+/// A [`ChainSpec`] that [`ChainSpec::network`] checked, with its [`CoreSpec`]. The spec
+/// stays in memory until the process ends. Two values are equal when they are the same
+/// spec in memory.
 #[derive(Clone, Copy)]
-pub struct CheckedSpec(&'static ChainSpec);
+pub struct CheckedSpec(&'static CustomSpec);
+
+/// A checked spec with the core that [`ChainSpec::network`] derived from it.
+struct CustomSpec {
+    spec: ChainSpec,
+    core: CoreSpec,
+}
 
 impl PartialEq for CheckedSpec {
     fn eq(&self, other: &Self) -> bool {
@@ -80,9 +89,15 @@ impl Hash for CheckedSpec {
 
 impl fmt::Debug for CheckedSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("CheckedSpec").field(&self.0.name).finish()
+        f.debug_tuple("CheckedSpec")
+            .field(&self.0.spec.name)
+            .finish()
     }
 }
+
+/// The cores of the built-in networks, built on the first use ([`Network::core`]).
+static BUILT_IN_CORES: [OnceLock<CoreSpec>; 3] =
+    [OnceLock::new(), OnceLock::new(), OnceLock::new()];
 
 /// The values of one chain. The rules read each value of a network from its spec.
 ///
@@ -90,7 +105,7 @@ impl fmt::Debug for CheckedSpec {
 /// starts from a clone of the spec of a built-in network ([`Network::spec`]), changes the
 /// public fields, and gets its [`Network`] from [`ChainSpec::network`]. The private field
 /// holds the [`CoreSpec`] that [`ChainSpec::network`] derives from the public fields.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ChainSpec {
     /// The name of the network ([`Network::name`]).
     pub name: &'static str,
@@ -121,19 +136,32 @@ pub struct ChainSpec {
     /// The NSM reissuance height of a test
     /// ([`RegtestConfig::with_test_reissuance_height`]). `None` on each built-in network.
     pub test_reissuance_height: Option<u32>,
-    /// The values that the core reads, with each address decoded to its script.
-    /// [`ChainSpec::network`] derives it from the public fields.
-    core: CoreSpec,
+    /// The tables of the core of a built-in network, as the compiler evaluates them.
+    core_tables: CoreTables,
+}
+
+/// The tables of the core of a built-in network, with the scripts of the addresses: the
+/// form that the compiler evaluates. [`Network::core`] builds the [`CoreSpec`] from them
+/// on the first use. A spec of [`ChainSpec::network`] derives its core from its public
+/// fields and does not read them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct CoreTables {
+    funding: &'static [funding::ScriptSet],
+    lockbox: &'static [CoreDisbursement],
+    founders: &'static [P2shScript],
+    /// `HeightForHalving(1)` of the network, the value that `CoreSpec::checked` derives
+    /// (the test `the_first_halving_of_each_built_in_spec_is_the_derived_one`).
+    first_halving: Option<u32>,
 }
 
 /// The core spec of `params`, `heights` and the decoded tables, with `first_halving`.
 #[allow(clippy::too_many_arguments)]
-const fn core_spec(
+fn core_spec(
     params: &NetworkParams,
     heights: [Option<u32>; UPGRADES],
-    funding_streams: &'static [CoreStreamSet],
-    lockbox_disbursements: &'static [CoreDisbursement],
-    founders_scripts: &'static [P2shScript],
+    funding_streams: Vec<CoreStreamSet>,
+    lockbox_disbursements: Vec<CoreDisbursement>,
+    founders_scripts: Vec<P2shScript>,
     nsm_seed: Option<u64>,
     test_reissuance_height: Option<u32>,
     first_halving: Option<u32>,
@@ -194,14 +222,26 @@ impl ChainSpec {
             self.test_reissuance_height,
             None,
         );
-        self.core = core.checked()?;
+        let core = core.checked()?;
         self.checkpoints = self.checkpoints.leak();
-        Ok(Network::Custom(CheckedSpec(Box::leak(Box::new(self)))))
+        Ok(Network::Custom(CheckedSpec(Box::leak(Box::new(
+            CustomSpec { spec: self, core },
+        )))))
     }
 
-    /// The values that the core reads.
-    pub fn core(&self) -> &CoreSpec {
-        &self.core
+    /// The core of a built-in network, from its tables.
+    fn build_core(&self) -> CoreSpec {
+        let tables = &self.core_tables;
+        core_spec(
+            &self.params,
+            self.activation_heights,
+            funding::core_sets_of(tables.funding),
+            tables.lockbox.to_vec(),
+            tables.founders.to_vec(),
+            self.nsm_seed,
+            self.test_reissuance_height,
+            tables.first_halving,
+        )
     }
 
     /// The checkpoint at height 0 is the genesis block, and the last checkpoint is at or
@@ -267,7 +307,7 @@ pub struct RegtestRecipient {
 
 /// The values of a Regtest network that a node operator or a test can set: a builder of
 /// the [`ChainSpec`] of a Regtest network.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RegtestConfig {
     /// The values of [`Network::Regtest`], with the values of the configuration.
     spec: ChainSpec,
@@ -726,16 +766,12 @@ static MAINNET: ChainSpec = ChainSpec {
     founders_addresses: &founders::MAINNET_ADDRESSES,
     nsm_seed: Some(nsm::MAINNET_SEED),
     test_reissuance_height: None,
-    core: core_spec(
-        &MAINNET_PARAMS,
-        MAINNET_HEIGHTS,
-        &funding::MAINNET_CORE,
-        &lockbox::MAINNET_CORE,
-        &founders::MAINNET_SCRIPTS,
-        Some(nsm::MAINNET_SEED),
-        None,
-        Some(1_046_400),
-    ),
+    core_tables: CoreTables {
+        funding: &funding::MAINNET_CORE,
+        lockbox: &lockbox::MAINNET_CORE,
+        founders: &founders::MAINNET_SCRIPTS,
+        first_halving: Some(1_046_400),
+    },
 };
 
 const TESTNET_PARAMS: NetworkParams = NetworkParams {
@@ -774,16 +810,12 @@ static TESTNET: ChainSpec = ChainSpec {
     founders_addresses: &founders::TESTNET_ADDRESSES,
     nsm_seed: Some(nsm::TESTNET_SEED),
     test_reissuance_height: None,
-    core: core_spec(
-        &TESTNET_PARAMS,
-        TESTNET_HEIGHTS,
-        &funding::TESTNET_CORE,
-        &lockbox::TESTNET_CORE,
-        &founders::TESTNET_SCRIPTS,
-        Some(nsm::TESTNET_SEED),
-        None,
-        Some(1_116_000),
-    ),
+    core_tables: CoreTables {
+        funding: &funding::TESTNET_CORE,
+        lockbox: &lockbox::TESTNET_CORE,
+        founders: &founders::TESTNET_SCRIPTS,
+        first_halving: Some(1_116_000),
+    },
 };
 
 /// `zcash-cli -regtest getblockhash 0`.
@@ -821,16 +853,12 @@ static REGTEST: ChainSpec = ChainSpec {
     founders_addresses: &[],
     nsm_seed: None,
     test_reissuance_height: None,
-    core: core_spec(
-        &REGTEST_PARAMS,
-        REGTEST_HEIGHTS,
-        &[],
-        &[],
-        &[],
-        None,
-        None,
-        Some(287),
-    ),
+    core_tables: CoreTables {
+        funding: &[],
+        lockbox: &[],
+        founders: &[],
+        first_halving: Some(287),
+    },
 };
 
 impl Network {
@@ -842,13 +870,21 @@ impl Network {
             Network::Mainnet => &MAINNET,
             Network::Testnet => &TESTNET,
             Network::Regtest => &REGTEST,
-            Network::Custom(CheckedSpec(spec)) => spec,
+            Network::Custom(CheckedSpec(custom)) => &custom.spec,
         }
     }
 
     /// The values that the rules of the core read ([`ChainSpec::core`]).
-    pub const fn core(self) -> &'static CoreSpec {
-        &self.spec().core
+    ///
+    /// A built-in network builds its core on the first call from its tables; every later
+    /// call is one load. A custom network has its core from [`ChainSpec::network`].
+    pub fn core(self) -> &'static CoreSpec {
+        match self {
+            Network::Mainnet => BUILT_IN_CORES[0].get_or_init(|| MAINNET.build_core()),
+            Network::Testnet => BUILT_IN_CORES[1].get_or_init(|| TESTNET.build_core()),
+            Network::Regtest => BUILT_IN_CORES[2].get_or_init(|| REGTEST.build_core()),
+            Network::Custom(CheckedSpec(custom)) => &custom.core,
+        }
     }
 
     pub const fn name(self) -> &'static str {
@@ -1181,7 +1217,7 @@ mod tests {
             let core = network.core();
             assert_eq!(
                 core.first_halving,
-                hayai_consensus_core::subsidy::halving_height(core, 1, u32::MAX).unwrap(),
+                hayai_consensus_core::subsidy_schedule::halving_height(core, 1, u32::MAX).unwrap(),
                 "{network:?}"
             );
             assert_eq!(core.clone().checked(), Ok(core.clone()), "{network:?}");

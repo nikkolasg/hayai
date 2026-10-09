@@ -32,10 +32,9 @@
 //! The 256-bit arithmetic is [`Uint256`]: the operations of §7.7.3 to §7.7.5 only. The
 //! adapter compares it with `primitive_types::U256`.
 
-use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use crate::rules::{DifficultyParams, RuleSet};
+use crate::rule_sets::{DifficultyParams, RuleSet};
 use crate::{ConsensusError, CoreSpec, MEDIAN_TIME_SPAN};
 
 /// A 256-bit unsigned integer: 4 little-endian 64-bit limbs.
@@ -450,7 +449,7 @@ pub(crate) fn needed(height: u32, span: usize) -> usize {
 }
 
 /// The `nBits` that the block at `chain.height` with time `time` must have on the chain of
-/// `spec`. `rules` is the rule set of that height ([`crate::rules::rules_at`]): the caller
+/// `spec`. `rules` is the rule set of that height ([`crate::rule_sets::rules_at`]): the caller
 /// selects it one time for every rule of the block.
 ///
 /// Regtest has no such rule in hayai (`CoreSpec::disable_pow`): the header rules do not
@@ -459,7 +458,7 @@ pub fn expected_bits(
     spec: &CoreSpec,
     rules: &RuleSet,
     time: u32,
-    chain: &ParentChain<'_>,
+    chain: ParentChain<'_>,
 ) -> Result<u32, DifficultyError> {
     let height = chain.height;
     if height == 0 {

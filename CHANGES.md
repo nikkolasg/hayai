@@ -1861,3 +1861,39 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
 - Lesson: `systemctl enable` on a unit without an `[Install]` section only warns, and the
   unit does not start at the next boot. A unit that must survive a reboot has
   `WantedBy=multi-user.target`.
+
+## 2026-10-09 — Formal verification, stage A: the core translates to Lean (hayai-7yq.1, M14)
+
+- `formal/` is a Lake project. A reader checks the proofs with `elan` and `lake build`
+  only: the translation of `hayai-consensus-core` is committed (`formal/Hayai/Core`), and
+  Charon and Aeneas (pinned by commit in `formal/TOOLCHAIN`) only regenerate it
+  (`formal/scripts/extract.sh`). The CI job `formal-extract` regenerates and diffs; the job
+  `formal` builds the proofs. Decision of the owner: the pins do not drive the design and a
+  reader never builds the tools.
+- The whole core is in the Aeneas subset. The first extraction refused 89 sites; each form
+  was reduced to a probe crate and the core rewritten (`docs/formal-verification.md`,
+  section "The subset in practice"). The forms with a cost in the hot path:
+  - `CoreSpec` owns its tables (`Vec`), so `hayai-consensus` builds the core of each
+    built-in network once (`OnceLock`) and of a custom network at `ChainSpec::network`.
+    `Network::core()` is one atomic load; before, the tables were `&'static` slices.
+  - `CoinbaseTerms::check` takes `&[CoinbaseOutput]` with an owned script: one small
+    `Vec<u8>` per coinbase output per block check (a coinbase has 2 to 6 outputs).
+  - `rules_at` returns the `RuleSet` by value (a `Copy` of about 100 bytes) once per
+    block-level call; the adapter keeps its `&'static` rule sets.
+  - `ParentChain` by value: it is `Copy`, three words.
+  - A loop keeps its failure in a local and `break`s; the number of operations is the same.
+- Six modules of the core are renamed, because Lean reads `spec.CoreSpec.checked` as a field
+  of a local variable `spec`: `chain_spec`, `rule_sets`, `block_limits`,
+  `subsidy_schedule`, `header_rules`, `difficulty_rules`. Rule: a module of the core has no
+  name that a local variable would have (`tests/subset.rs`).
+- The `Display`, `Debug` and `Error::source` bodies of `thiserror` are excluded from the
+  extraction (their bodies use `dyn` and the formatter); no rule reads them. The
+  standard-library items without a model in the Aeneas library are defined by hand in
+  `formal/Hayai/Core/FunsExternal.lean` (13 definitions; 17 axioms for hashing and
+  formatting).
+- Lesson: `charon --exclude` matches an impl method with the pattern
+  `{core::error::Error<_>}::source`, not with `core::error::Error::source`; and
+  `--start-from-pub` is the way to leave the derived impls of private items out.
+- Lesson: Aeneas refuses a function that borrows an argument and returns a `&'static`
+  (the two lifetimes do not unify in its borrow model), but accepts the same function with
+  a by-value result, and a function without borrowed arguments that returns `&TABLE[i]`.

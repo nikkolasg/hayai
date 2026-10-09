@@ -22,7 +22,6 @@
 //!
 //! The test `tests/subset.rs` greps the sources for the tokens outside the subset.
 
-#![no_std]
 #![forbid(unsafe_code)]
 // The subset of Aeneas has index loops, `len() == 0` and pattern matching on `Option`;
 // these lints ask for iterators, `copy_from_slice`, `is_empty()` and `is_some()`.
@@ -34,23 +33,21 @@
     clippy::redundant_pattern_matching
 )]
 
-extern crate alloc;
-
+pub mod block_limits;
+pub mod chain_spec;
 pub mod coinbase_value;
-pub mod difficulty;
+pub mod difficulty_rules;
 pub mod founders;
 pub mod funding;
-pub mod header;
-pub mod limits;
+pub mod header_rules;
 pub mod lockbox;
 pub mod nsm;
-pub mod rules;
-pub mod spec;
-pub mod subsidy;
+pub mod rule_sets;
+pub mod subsidy_schedule;
 
-pub use difficulty::{ContextTooShort, ParentChain};
-pub use limits::BlockLimits;
-pub use spec::{CoreSpec, SpecError, Upgrade, UPGRADES};
+pub use block_limits::BlockLimits;
+pub use chain_spec::{CoreSpec, SpecError, Upgrade, UPGRADES};
+pub use difficulty_rules::{ContextTooShort, ParentChain};
 
 /// `MAX_MONEY`: 21,000,000 ZEC in zatoshis (protocol specification §5.3). No amount of
 /// this crate is above it.
@@ -77,7 +74,7 @@ pub const POST_NU7_TARGET_SPACING: u32 = 25;
 /// Spec §7.6: `PoWMedianBlockSpan` is 11 blocks.
 pub const MEDIAN_TIME_SPAN: usize = 11;
 /// `PostNU7PoWAveragingWindow` (ZIP 218): the largest averaging window of the rule sets.
-/// The test `rules::tests::the_largest_window_is_the_nu7_window` compares it with the rule
+/// The test `rule_sets::tests::the_largest_window_is_the_nu7_window` compares it with the rule
 /// sets.
 pub const LARGEST_AVERAGING_WINDOW: usize = 102;
 /// Newest blocks whose time and `bits` the difficulty rule of the next block reads: the

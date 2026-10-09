@@ -125,14 +125,39 @@ token rules; the Charon and Aeneas extraction (bd M14) is the real check.
 |---|---|---|
 | 1 | Core, stage 1: chain parameters, rule sets, subsidy, funding streams, lockbox, founders' reward, NSM, difficulty, header rules, coinbase value (bd M12) | done |
 | 2 | Core, stage 2: the contextual block rules of `hayai-state/src/check.rs` (bd M2, hand-off note in `bd show hayai-rlg`) | open |
-| 3 | Charon and Aeneas extraction of the core, then in CI (bd M14) | open |
+| 3 | Charon and Aeneas extraction of the core, then in CI (bd M14) | done: `formal/`, CI jobs `formal` and `formal-extract` |
 | 4 | Lean spec, by area: header and difficulty, then subsidy and value pools, then the transaction structure, then the contextual rules | open |
 | 5 | Replay of the chains through the compiled spec; the spec as a `hayai-fuzz` oracle | open |
 | 6 | Bridge proofs from the core to the spec, by area | open |
 | 7 | Proofs of the optimized algorithms; Quint models of the concurrent state | open |
 
-The toolchain and the lessons of `multisig-formal/formal` apply: Lean 4.31, a pinned Aeneas
-nightly, an `extract.sh` that regenerates the translation, and a CI job that fails on drift.
+The toolchain: Lean 4.31, Aeneas and Charon at the commits of `formal/TOOLCHAIN`,
+`formal/scripts/extract.sh` regenerates the translation, and the CI job `formal-extract`
+fails on drift. A reader checks the proofs with `elan` and `lake build` only
+(`formal/README.md`).
+
+## The subset in practice
+
+The first extraction of the core (2026-10-09) refused 89 sites. Each refusal was reduced
+to a small probe crate and fixed in the core; the forms that Aeneas at `formal/TOOLCHAIN`
+accepts and refuses:
+
+| Refused | Used instead |
+|---|---|
+| A `&'static [T]` field in a struct; a struct reached through a reference that holds a reference (`&sets[s]` with `sets: &[Set<'_>]`) | Owned tables: `Vec<StreamSet>`, `Vec<Disbursement>`, `Vec<P2shScript>` in `CoreSpec`; the adapter builds each core once |
+| `&ParentChain` (a reference to a struct of slices) | `ParentChain` by value: it is `Copy`, three words |
+| `&[(u64, &[u8])]` (a slice of tuples with a reference) | `&[CoinbaseOutput]` with an owned script |
+| `return` or `?` inside a loop | A `failure: Option<E>` variable, `break`, and the return after the loop |
+| `let Some(x) = array[i] else` | `let item = array[i]; let Some(x) = item else` |
+| A function that borrows an argument and returns a `&'static` | The value: `rules_at` returns `RuleSet` |
+| A `const fn` that returns a `&'static` element of a const table | A plain `fn` |
+| The `Display`, `Debug` and `Error::source` bodies of `thiserror` | Excluded from the extraction (`--exclude`): no rule reads them |
+| A local variable with the name of a module (`spec`, `subsidy`, `header`): Lean reads `spec.CoreSpec.checked` as a field of the variable | Modules named as no variable is: `chain_spec`, `rule_sets`, `block_limits`, `subsidy_schedule`, `header_rules`, `difficulty_rules` |
+
+The standard-library items that the Aeneas library has no model of (integer conversions,
+`checked_shr`, the `Option` methods, hashing and formatting) are in
+`formal/Hayai/Core/FunsExternal.lean`: definitions for the ones that a rule computes with,
+axioms for hashing and formatting.
 
 ## Decisions
 
@@ -143,6 +168,11 @@ nightly, an `extract.sh` that regenerates the translation, and a CI job that fai
 - Pause (owner, 2026-10-08). Steps 2 to 7 of the plan wait. The crate split of the epic
   "Modular crates" goes on and keeps the design rules of the core, so that the plan starts
   from the same core when it resumes.
+- Resume (owner, 2026-10-09). The formal work starts with the core only, in stages:
+  A, the extraction in CI (done); B, the Lean spec and the bridge proofs of the header and
+  difficulty rules; C, the other areas of the core; D, step 2 of the plan. Tool versions
+  are pinned by commit, but the pins do not drive the design: a reader builds the proofs
+  with `elan` and `lake` only, and the translation is committed.
 
 ## Effort
 

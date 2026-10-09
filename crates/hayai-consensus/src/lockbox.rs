@@ -54,11 +54,10 @@ const fn nu6_1_core(address: &'static str) -> CoreDisbursement {
 /// The disbursements of a spec with the network type `network_type`, with each address
 /// decoded to its script. Each address must be a P2SH address of the network type, and
 /// the sum of the values a valid amount of money (Zakura `check_lockbox_disbursements`).
-/// The table stays in memory until the process ends, as the spec does.
 pub(crate) fn core_disbursements(
     network_type: NetworkType,
     disbursements: &[Disbursement],
-) -> Result<&'static [CoreDisbursement], ChainSpecError> {
+) -> Result<Vec<CoreDisbursement>, ChainSpecError> {
     let mut outputs = Vec::with_capacity(disbursements.len());
     for disbursement in disbursements {
         check_address(network_type, disbursement.address)?;
@@ -72,7 +71,7 @@ pub(crate) fn core_disbursements(
         });
     }
     core::check_disbursements(&outputs)?;
-    Ok(Box::leak(outputs.into_boxed_slice()))
+    Ok(outputs)
 }
 
 /// ZIP 271: `ZIP271DisbursementAddress` of Mainnet.

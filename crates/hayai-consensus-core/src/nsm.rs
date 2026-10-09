@@ -21,7 +21,7 @@
 //!   block subsidy is the subsidy of the halving schedule plus [`reissuance_bonus`] of the
 //!   balance after the parent block.
 
-use crate::{money, sub_money, subsidy, ConsensusError, CoreSpec, Upgrade, MAX_MONEY};
+use crate::{money, sub_money, subsidy_schedule, ConsensusError, CoreSpec, Upgrade, MAX_MONEY};
 
 /// The largest height of Zakura (`Height::MAX`, `u32::MAX / 2`). The search for the
 /// reissuance height ends there.
@@ -75,7 +75,7 @@ pub fn expected_seed(spec: &CoreSpec) -> Option<u64> {
 /// from `NU7ActivationHeight - 1`, because each block changes the pools by
 /// `ScheduledBlockSubsidy + AdditionalBlockSubsidy - removed` (ZIP 235, ZIP 236).
 pub fn balance(spec: &CoreSpec, height: u32, issued: u64) -> Result<u64, ConsensusError> {
-    let scheduled = subsidy::scheduled_issuance(spec, height)?;
+    let scheduled = subsidy_schedule::scheduled_issuance(spec, height)?;
     let negative = ConsensusError::NegativeNsmBalance {
         height,
         scheduled,
@@ -142,15 +142,17 @@ pub fn reissuance_height(spec: &CoreSpec) -> Result<Option<u32>, ConsensusError>
     if let Some(height) = spec.test_reissuance_height {
         return Ok(Some(height.max(nu7)));
     }
-    let Some(third) = subsidy::halving_height(spec, REISSUANCE_HALVING, MAX_HEIGHT)? else {
+    let Some(third) = subsidy_schedule::halving_height(spec, REISSUANCE_HALVING, MAX_HEIGHT)?
+    else {
         return Ok(None);
     };
-    let run_end = match subsidy::halving_height(spec, REISSUANCE_HALVING + 1, MAX_HEIGHT)? {
+    let run_end = match subsidy_schedule::halving_height(spec, REISSUANCE_HALVING + 1, MAX_HEIGHT)?
+    {
         Some(fourth) => fourth - 1,
         None => MAX_HEIGHT,
     };
     let first = (third + 1).max(nu7);
-    let subsidy = u128::from(subsidy::scheduled_subsidy(spec, first)?);
+    let subsidy = u128::from(subsidy_schedule::scheduled_subsidy(spec, first)?);
     if first > run_end || subsidy == 0 {
         return Ok(None);
     }
@@ -159,8 +161,8 @@ pub fn reissuance_height(spec: &CoreSpec) -> Result<Option<u32>, ConsensusError>
         return Err(ConsensusError::Overflow);
     };
     let max_reserve = max_reserve / REISSUANCE_NUMERATOR;
-    let reserve =
-        u128::from(MAX_MONEY).saturating_sub(subsidy::scheduled_issuance(spec, first - 1)?);
+    let reserve = u128::from(MAX_MONEY)
+        .saturating_sub(subsidy_schedule::scheduled_issuance(spec, first - 1)?);
     let excess = reserve.saturating_sub(max_reserve);
     // `ceil(excess / subsidy)`.
     let Some(rounded) = excess.checked_add(subsidy - 1) else {
@@ -209,7 +211,7 @@ pub fn reissuance_bonus(balance: u64) -> Result<u64, ConsensusError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::tests::regtest;
+    use crate::chain_spec::tests::regtest;
 
     /// The division rounds down, so the miner gets the remainder. The test
     /// `conformance_nu7` of hayai-bench compares the function with Zakura's
@@ -295,7 +297,8 @@ mod tests {
     fn the_balance_rules_on_a_regtest_with_nu7() {
         let mut spec = regtest_nu7(None);
         let scheduled = |height| {
-            u64::try_from(subsidy::scheduled_issuance(&regtest_nu7(None), height).unwrap()).unwrap()
+            u64::try_from(subsidy_schedule::scheduled_issuance(&regtest_nu7(None), height).unwrap())
+                .unwrap()
         };
         assert_eq!(check_balance(&spec, 7, u64::MAX), Ok(()));
         assert_eq!(check_balance(&spec, 8, u64::MAX), Ok(()));

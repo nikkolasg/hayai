@@ -7,7 +7,7 @@
 //! terms, so the template and the validator agree.
 
 pub use hayai_consensus_core::coinbase_value::{
-    CoinbaseError, CoinbaseTerms, OutputKind, RequiredOutput, ShieldedBalances,
+    CoinbaseError, CoinbaseOutput, CoinbaseTerms, OutputKind, RequiredOutput, ShieldedBalances,
 };
 
 use crate::rules::core_rules_at;
@@ -21,7 +21,7 @@ use crate::{ConsensusError, Network};
 /// the NSM reissuance height: [`terms_after`] gives the terms there.
 pub fn terms_at(network: Network, height: u32) -> Result<CoinbaseTerms, ConsensusError> {
     let rules = core_rules_at(network, height)?;
-    CoinbaseTerms::at(network.core(), rules, height)
+    CoinbaseTerms::at(network.core(), &rules, height)
 }
 
 /// The terms of the coinbase at `height` on `network`, in a block whose parent leaves
@@ -33,7 +33,7 @@ pub fn terms_after(
     issued: u64,
 ) -> Result<CoinbaseTerms, ConsensusError> {
     let rules = core_rules_at(network, height)?;
-    CoinbaseTerms::after(network.core(), rules, height, issued)
+    CoinbaseTerms::after(network.core(), &rules, height, issued)
 }
 
 #[cfg(test)]
@@ -51,20 +51,27 @@ mod tests {
 
     /// The outputs of a coinbase that pays `miner` zatoshis to the miner and every
     /// required output of `terms`.
-    fn outputs(terms: &CoinbaseTerms, miner: u64) -> Vec<(u64, &[u8])> {
-        let mut outputs = vec![(miner, MINER)];
+    fn output(value: u64, script: &[u8]) -> CoinbaseOutput {
+        CoinbaseOutput {
+            value,
+            script: script.to_vec(),
+        }
+    }
+
+    fn outputs(terms: &CoinbaseTerms, miner: u64) -> Vec<CoinbaseOutput> {
+        let mut outputs = vec![output(miner, MINER)];
         outputs.extend(
             terms
                 .required
                 .iter()
-                .map(|output| (output.value, output.script.as_slice())),
+                .map(|required| output(required.value, &required.script)),
         );
         outputs
     }
 
     fn check(
         terms: &CoinbaseTerms,
-        outputs: &[(u64, &[u8])],
+        outputs: &[CoinbaseOutput],
         fees: u64,
     ) -> Result<(), CoinbaseError> {
         terms.check(outputs, ShieldedBalances::default(), fees)
@@ -184,15 +191,15 @@ mod tests {
                 check(&terms, &outputs, 0),
                 Err(CoinbaseError::MissingOutput {
                     kind: OutputKind::FundingStream(receiver),
-                    value: removed.0,
-                    script: removed.1.to_vec(),
+                    value: removed.value,
+                    script: removed.script,
                 })
             );
         }
         // The founders' reward before Canopy.
         let terms = terms_at(Network::Mainnet, 20_000).unwrap();
         assert!(matches!(
-            check(&terms, &[(1_250_000_000, MINER)], 0),
+            check(&terms, &[output(1_250_000_000, MINER)], 0),
             Err(CoinbaseError::MissingOutput {
                 kind: OutputKind::FoundersReward,
                 value: 250_000_000,
@@ -207,14 +214,14 @@ mod tests {
         for delta in [-1i64, 1] {
             let mut outputs = outputs(&terms, terms.miner_subsidy);
             // The total stays exact: the miner output takes the difference.
-            outputs[0].0 = outputs[0].0.checked_add_signed(-delta).unwrap();
-            outputs[1].0 = outputs[1].0.checked_add_signed(delta).unwrap();
+            outputs[0].value = outputs[0].value.checked_add_signed(-delta).unwrap();
+            outputs[1].value = outputs[1].value.checked_add_signed(delta).unwrap();
             assert_eq!(
                 check(&terms, &outputs, 0),
                 Err(CoinbaseError::WrongAmount {
                     kind: OutputKind::FundingStream(Receiver::MajorGrants),
                     expected: 12_500_000,
-                    found: outputs[1].0,
+                    found: outputs[1].value,
                 })
             );
         }
@@ -226,7 +233,7 @@ mod tests {
         let mut script = terms.required[0].script;
         script[5] ^= 1;
         let mut outputs = outputs(&terms, terms.miner_subsidy);
-        outputs[1].1 = &script;
+        outputs[1].script = script.to_vec();
         assert_eq!(
             check(&terms, &outputs, 0),
             Err(CoinbaseError::WrongScript {
@@ -248,13 +255,13 @@ mod tests {
         // of the tenth, so only the count is wrong.
         let mut nine = all.clone();
         let removed = nine.pop().unwrap();
-        nine[0].0 += removed.0;
+        nine[0].value += removed.value;
         assert_eq!(
             check(&terms, &nine, 0),
             Err(CoinbaseError::MissingOutput {
                 kind: OutputKind::LockboxDisbursement,
                 value: 787_500_000_000,
-                script: removed.1.to_vec(),
+                script: removed.script,
             })
         );
     }
@@ -504,15 +511,15 @@ mod tests {
 
     /// The outputs of `outputs` with output `index` changed to `value` and `script`, and
     /// the difference of the value moved to the miner output, so that the value rule holds.
-    fn changed<'a>(
-        outputs: &[(u64, &'a [u8])],
+    fn changed(
+        outputs: &[CoinbaseOutput],
         index: usize,
         value: u64,
-        script: &'a [u8],
-    ) -> Vec<(u64, &'a [u8])> {
+        script: &[u8],
+    ) -> Vec<CoinbaseOutput> {
         let mut outputs = outputs.to_vec();
-        outputs[0].0 = outputs[0].0 + outputs[index].0 - value;
-        outputs[index] = (value, script);
+        outputs[0].value = outputs[0].value + outputs[index].value - value;
+        outputs[index] = output(value, script);
         outputs
     }
 

@@ -72,12 +72,11 @@ pub fn funding_streams(
 }
 
 /// The stream sets of a spec with the network type `network_type`, with each address
-/// decoded to its script. Each address must be a P2SH address of the network type. The
-/// tables stay in memory until the process ends, as the spec does.
+/// decoded to its script. Each address must be a P2SH address of the network type.
 pub(crate) fn core_sets(
     network_type: NetworkType,
     sets: &[StreamSet],
-) -> Result<&'static [CoreStreamSet], ChainSpecError> {
+) -> Result<Vec<CoreStreamSet>, ChainSpecError> {
     let mut core_sets = Vec::with_capacity(sets.len());
     for set in sets {
         let mut streams = Vec::with_capacity(set.streams.len());
@@ -93,17 +92,17 @@ pub(crate) fn core_sets(
             streams.push(CoreStream {
                 receiver: stream.receiver,
                 numerator: stream.numerator,
-                scripts: leak(scripts),
+                scripts,
             });
         }
         core_sets.push(CoreStreamSet {
             start: set.start,
             end: set.end,
             ends_at_third_halving: set.ends_at_third_halving,
-            streams: leak(streams),
+            streams,
         });
     }
-    Ok(leak(core_sets))
+    Ok(core_sets)
 }
 
 fn leak<T>(items: Vec<T>) -> &'static [T] {
@@ -157,15 +156,54 @@ const fn lockbox_streams(fpf_addresses: &'static [&'static str]) -> [Stream; 2] 
     ]
 }
 
+/// A funding stream of a built-in network with the scripts of its addresses: the form of
+/// the tables that the compiler evaluates. [`core_sets_of`] gives the owned form of the
+/// core.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ScriptStream {
+    pub(crate) receiver: Receiver,
+    pub(crate) numerator: u64,
+    pub(crate) scripts: &'static [P2shScript],
+}
+
+/// A stream set of a built-in network with its [`ScriptStream`]s.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ScriptSet {
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) ends_at_third_halving: bool,
+    pub(crate) streams: &'static [ScriptStream],
+}
+
+/// The stream sets of the core from the tables of a built-in network.
+pub(crate) fn core_sets_of(sets: &[ScriptSet]) -> Vec<CoreStreamSet> {
+    sets.iter()
+        .map(|set| CoreStreamSet {
+            start: set.start,
+            end: set.end,
+            ends_at_third_halving: set.ends_at_third_halving,
+            streams: set
+                .streams
+                .iter()
+                .map(|stream| CoreStream {
+                    receiver: stream.receiver,
+                    numerator: stream.numerator,
+                    scripts: stream.scripts.to_vec(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 /// [`lockbox_streams`] with the scripts of the addresses.
-const fn lockbox_core_streams(fpf_scripts: &'static [P2shScript]) -> [CoreStream; 2] {
+const fn lockbox_core_streams(fpf_scripts: &'static [P2shScript]) -> [ScriptStream; 2] {
     [
-        CoreStream {
+        ScriptStream {
             receiver: Receiver::Deferred,
             numerator: 12,
             scripts: &[],
         },
-        CoreStream {
+        ScriptStream {
             receiver: Receiver::MajorGrants,
             numerator: 8,
             scripts: fpf_scripts,
@@ -225,36 +263,36 @@ pub(crate) static MAINNET: [StreamSet; 3] = [
 
 /// [`MAINNET`] with the scripts of the addresses, for the core. The test
 /// `address::tests::the_const_scripts_are_the_decoded_addresses` compares the two tables.
-pub(crate) static MAINNET_CORE: [CoreStreamSet; 3] = [
-    CoreStreamSet {
+pub(crate) static MAINNET_CORE: [ScriptSet; 3] = [
+    ScriptSet {
         start: 1_046_400,
         end: 2_726_400,
         ends_at_third_halving: false,
         streams: &[
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::Ecc,
                 numerator: 7,
                 scripts: &scripts_of(&MAINNET_ECC_ADDRESSES),
             },
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::ZcashFoundation,
                 numerator: 5,
                 scripts: &[script_of(MAINNET_ZF)],
             },
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::MajorGrants,
                 numerator: 8,
                 scripts: &[script_of(MAINNET_MG)],
             },
         ],
     },
-    CoreStreamSet {
+    ScriptSet {
         start: 2_726_400,
         end: 3_146_400,
         ends_at_third_halving: false,
         streams: &lockbox_core_streams(&[script_of(MAINNET_FPF)]),
     },
-    CoreStreamSet {
+    ScriptSet {
         start: 3_146_400,
         end: 4_406_400,
         ends_at_third_halving: true,
@@ -305,36 +343,36 @@ pub(crate) static TESTNET: [StreamSet; 3] = [
 ];
 
 /// [`TESTNET`] with the scripts of the addresses, for the core.
-pub(crate) static TESTNET_CORE: [CoreStreamSet; 3] = [
-    CoreStreamSet {
+pub(crate) static TESTNET_CORE: [ScriptSet; 3] = [
+    ScriptSet {
         start: 1_028_500,
         end: 2_796_000,
         ends_at_third_halving: false,
         streams: &[
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::Ecc,
                 numerator: 7,
                 scripts: &scripts_of(&TESTNET_ECC_ADDRESSES),
             },
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::ZcashFoundation,
                 numerator: 5,
                 scripts: &[script_of(TESTNET_ZF)],
             },
-            CoreStream {
+            ScriptStream {
                 receiver: Receiver::MajorGrants,
                 numerator: 8,
                 scripts: &[script_of(TESTNET_MG)],
             },
         ],
     },
-    CoreStreamSet {
+    ScriptSet {
         start: 2_976_000,
         end: 3_396_000,
         ends_at_third_halving: false,
         streams: &lockbox_core_streams(&[script_of(TESTNET_FPF)]),
     },
-    CoreStreamSet {
+    ScriptSet {
         start: 3_536_500,
         end: 4_476_000,
         ends_at_third_halving: true,

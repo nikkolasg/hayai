@@ -42,7 +42,7 @@ const ERAS: usize = 3;
 /// The target spacing of each era, with the upgrade that starts the era (Zakura
 /// `NetworkUpgrade::target_spacings`, `network_upgrade.rs:497-515`). The spacing of the
 /// difficulty rule of an upgrade is the spacing of its era (the test
-/// `rules::tests::the_rules_of_each_upgrade`).
+/// `rule_sets::tests::the_rules_of_each_upgrade`).
 const SPACING_ERAS: [(Upgrade, u32); ERAS] = [
     (Upgrade::Sprout, PRE_BLOSSOM_TARGET_SPACING),
     (Upgrade::Blossom, POST_BLOSSOM_TARGET_SPACING),
@@ -95,8 +95,10 @@ pub fn halving(spec: &CoreSpec, height: u32) -> Result<u32, ConsensusError> {
     };
     let mut seconds = -shift_seconds;
     let starts = era_starts(spec);
+    let mut failure: Option<ConsensusError> = None;
     for i in 0..ERAS {
-        let Some(start) = starts[i] else {
+        let start = starts[i];
+        let Some(start) = start else {
             continue;
         };
         if start > height {
@@ -109,7 +111,8 @@ pub fn halving(spec: &CoreSpec, height: u32) -> Result<u32, ConsensusError> {
             if found {
                 continue;
             }
-            if let Some(next) = starts[j] {
+            let next = starts[j];
+            if let Some(next) = next {
                 if next <= height {
                     end = next;
                     found = true;
@@ -117,15 +120,21 @@ pub fn halving(spec: &CoreSpec, height: u32) -> Result<u32, ConsensusError> {
             }
         }
         let Some(blocks) = end.checked_sub(start) else {
-            return Err(ConsensusError::UncheckedSpec);
+            failure = Some(ConsensusError::UncheckedSpec);
+            break;
         };
         let Some(era_seconds) = i64::from(blocks).checked_mul(i64::from(SPACING_ERAS[i].1)) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         let Some(total) = seconds.checked_add(era_seconds) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         seconds = total;
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     let Some(interval_seconds) = i64::from(spec.pre_blossom_halving_interval)
         .checked_mul(i64::from(PRE_BLOSSOM_TARGET_SPACING))
@@ -153,7 +162,8 @@ pub fn next_subsidy_change(spec: &CoreSpec, height: u32) -> Result<Option<u32>, 
     let starts = era_starts(spec);
     let mut era: Option<u32> = None;
     for i in 0..ERAS {
-        let Some(start) = starts[i] else {
+        let start = starts[i];
+        let Some(start) = start else {
             continue;
         };
         if start > height {
@@ -171,16 +181,34 @@ pub fn next_subsidy_change(spec: &CoreSpec, height: u32) -> Result<Option<u32>, 
             return Err(ConsensusError::Overflow);
         };
         let mut high = u32::MAX;
+        let mut failure: Option<ConsensusError> = None;
         while low < high {
-            let middle = midpoint(low, high)?;
-            if halving(spec, middle)? > index {
+            let middle = match midpoint(low, high) {
+                Ok(middle) => middle,
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            };
+            let above = match halving(spec, middle) {
+                Ok(halving) => halving > index,
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            };
+            if above {
                 high = middle;
             } else {
                 let Some(next) = middle.checked_add(1) else {
-                    return Err(ConsensusError::Overflow);
+                    failure = Some(ConsensusError::Overflow);
+                    break;
                 };
                 low = next;
             }
+        }
+        if let Some(failure) = failure {
+            return Err(failure);
         }
         next_halving = Some(low);
     }
@@ -201,16 +229,34 @@ pub fn halving_height(
         return Ok(None);
     }
     let (mut low, mut high) = (0, max_height);
+    let mut failure: Option<ConsensusError> = None;
     while low < high {
-        let middle = midpoint(low, high)?;
-        if halving(spec, middle)? < index {
+        let middle = match midpoint(low, high) {
+            Ok(middle) => middle,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        let below = match halving(spec, middle) {
+            Ok(halving) => halving < index,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        if below {
             let Some(next) = middle.checked_add(1) else {
-                return Err(ConsensusError::Overflow);
+                failure = Some(ConsensusError::Overflow);
+                break;
             };
             low = next;
         } else {
             high = middle;
         }
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     Ok(Some(low))
 }
@@ -280,37 +326,60 @@ pub fn scheduled_issuance(spec: &CoreSpec, height: u32) -> Result<u128, Consensu
         }
     }
     let mut first = interval.max(1);
+    let mut failure: Option<ConsensusError> = None;
     while first <= height {
-        let subsidy = scheduled_subsidy(spec, first)?;
-        let last = match next_subsidy_change(spec, first)? {
+        let subsidy = match scheduled_subsidy(spec, first) {
+            Ok(subsidy) => subsidy,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        let next_change = match next_subsidy_change(spec, first) {
+            Ok(next) => next,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        let last = match next_change {
             Some(next) => {
                 let Some(before_next) = next.checked_sub(1) else {
-                    return Err(ConsensusError::Overflow);
+                    failure = Some(ConsensusError::Overflow);
+                    break;
                 };
                 before_next.min(height)
             }
             None => height,
         };
         let Some(span) = last.checked_sub(first) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         let Some(blocks) = u128::from(span).checked_add(1) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         let Some(run) = blocks.checked_mul(u128::from(subsidy)) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         let Some(sum) = total.checked_add(run) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         total = sum;
         if last == u32::MAX {
             break;
         }
         let Some(next) = last.checked_add(1) else {
-            return Err(ConsensusError::Overflow);
+            failure = Some(ConsensusError::Overflow);
+            break;
         };
         first = next;
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     Ok(total)
 }
@@ -353,7 +422,8 @@ pub fn scheduled_subsidy(spec: &CoreSpec, height: u32) -> Result<u64, ConsensusE
     let starts = era_starts(spec);
     let mut spacing: Option<u32> = None;
     for i in 0..ERAS {
-        if let Some(start) = starts[i] {
+        let start = starts[i];
+        if let Some(start) = start {
             if start <= height {
                 spacing = Some(SPACING_ERAS[i].1);
             }
@@ -375,7 +445,7 @@ pub fn scheduled_subsidy(spec: &CoreSpec, height: u32) -> Result<u64, ConsensusE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::tests::regtest;
+    use crate::chain_spec::tests::regtest;
 
     fn total(spec: &CoreSpec, height: u32) -> u64 {
         block_subsidy(spec, height).unwrap().total

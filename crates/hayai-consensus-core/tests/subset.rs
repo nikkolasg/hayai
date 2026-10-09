@@ -115,3 +115,55 @@ fn the_sources_stay_in_the_subset() {
         findings.join("\n")
     );
 }
+
+/// A module of the core has no name that a local variable has. Lean reads
+/// `spec.CoreSpec.checked` as a field of a local `spec`, not as the namespace of the module
+/// `spec`, so such a translation does not build. The test takes the binders of each
+/// function (`name:` in a signature, `let name`, `let mut name`) and reports one that is a
+/// module name.
+#[test]
+fn no_module_has_the_name_of_a_local() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&root, &mut files);
+    let modules: Vec<String> = files
+        .iter()
+        .filter_map(|path| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .filter(|stem| stem != "lib")
+        .collect();
+    assert!(!modules.is_empty(), "the crate has modules");
+    let mut findings = Vec::new();
+    for path in &files {
+        let text = fs::read_to_string(path).expect("a readable source file");
+        for (number, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for module in &modules {
+                let binder = trimmed.starts_with(&format!("let {module} "))
+                    || trimmed.starts_with(&format!("let {module}:"))
+                    || trimmed.starts_with(&format!("let mut {module} "))
+                    || trimmed.starts_with(&format!("let mut {module}:"))
+                    || line.contains(&format!(" {module}: "))
+                    || line.contains(&format!("({module}: "));
+                if binder {
+                    findings.push(format!(
+                        "{}:{}: `{module}` is a module: {}",
+                        path.display(),
+                        number + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        findings.is_empty(),
+        "locals named as a module:\n{}",
+        findings.join("\n")
+    );
+}

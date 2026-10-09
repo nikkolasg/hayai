@@ -9,7 +9,7 @@
 
 use crate::funding::{self, StreamSet};
 use crate::lockbox::{self, Disbursement};
-use crate::subsidy;
+use crate::subsidy_schedule;
 use crate::{ConsensusError, P2shScript, POST_BLOSSOM_TARGET_SPACING, PRE_BLOSSOM_TARGET_SPACING};
 
 /// The number of network upgrades: the length of [`CoreSpec::activation_heights`].
@@ -102,7 +102,7 @@ impl Upgrade {
 /// The values of one chain that the rules read.
 ///
 /// The adapter copies the values of its network into this struct. The rules of an upgrade
-/// are code ([`crate::rules`]): a chain chooses only when each upgrade activates, and the
+/// are code ([`crate::rule_sets`]): a chain chooses only when each upgrade activates, and the
 /// values of its spec.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CoreSpec {
@@ -122,7 +122,7 @@ pub struct CoreSpec {
     pub disable_pow: bool,
     /// First height at which a block whose time is more than the minimum-difficulty gap
     /// after its parent must have the proof-of-work limit as `nBits`
-    /// ([`crate::rules::DifficultyParams::min_difficulty_gap_spacings`]; zcashd
+    /// ([`crate::rule_sets::DifficultyParams::min_difficulty_gap_spacings`]; zcashd
     /// `nPowAllowMinDifficultyBlocksAfterHeight` plus 1). `None`: the network has no such
     /// rule. ZIP 205: Testnet height 299,188.
     pub min_difficulty_start_height: Option<u32>,
@@ -140,13 +140,13 @@ pub struct CoreSpec {
     /// stage 2 of the core (item M2, the contextual rules) moves the rule here.
     pub coinbase_must_be_shielded: bool,
     /// The funding stream sets, in height order ([`crate::funding`]).
-    pub funding_streams: &'static [StreamSet],
+    pub funding_streams: Vec<StreamSet>,
     /// The outputs that the coinbase of the NU6.1 activation block must have
     /// ([`crate::lockbox::disbursements`]).
-    pub lockbox_disbursements: &'static [Disbursement],
+    pub lockbox_disbursements: Vec<Disbursement>,
     /// The scripts of `FounderAddressList` (spec §7.9). Empty: the network has no
     /// founders' reward ([`crate::founders`]).
-    pub founders_scripts: &'static [P2shScript],
+    pub founders_scripts: Vec<P2shScript>,
     /// `INITIAL_NSM_VALUE_BALANCE` (ZIP 237, [`crate::nsm::expected_seed`]). `None`: the
     /// balance before NU7 is the balance that the chain gives.
     pub nsm_seed: Option<u64>,
@@ -218,16 +218,22 @@ impl CoreSpec {
     /// branch of that height. [`ConsensusError::UncheckedSpec`] when no upgrade is active:
     /// Sprout activates at height 0 on a checked spec.
     pub fn upgrade_at(&self, height: u32) -> Result<Upgrade, ConsensusError> {
+        let mut found: Option<Upgrade> = None;
         let mut i = UPGRADES;
         while i > 0 {
             i -= 1;
-            if let Some(activation) = self.activation_heights[i] {
+            let activation = self.activation_heights[i];
+            if let Some(activation) = activation {
                 if activation <= height {
-                    return Ok(Upgrade::ALL[i]);
+                    found = Some(Upgrade::ALL[i]);
+                    break;
                 }
             }
         }
-        Err(ConsensusError::UncheckedSpec)
+        match found {
+            Some(upgrade) => Ok(upgrade),
+            None => Err(ConsensusError::UncheckedSpec),
+        }
     }
 
     /// Whether the Orchard pool is off at `height`: the height is at or after the start of
@@ -251,7 +257,8 @@ impl CoreSpec {
     pub fn next_upgrade(&self, height: u32) -> Result<Option<Upgrade>, ConsensusError> {
         let mut next: Option<u32> = None;
         for i in 0..UPGRADES {
-            let Some(activation) = self.activation_heights[i] else {
+            let activation = self.activation_heights[i];
+            let Some(activation) = activation else {
                 continue;
             };
             if activation <= height {
@@ -297,17 +304,23 @@ impl CoreSpec {
             return Err(SpecError::Sprout);
         }
         let mut floor = 0;
+        let mut out_of_order: Option<(usize, u32)> = None;
         for i in 0..UPGRADES {
-            let Some(height) = self.activation_heights[i] else {
+            let activation = self.activation_heights[i];
+            let Some(height) = activation else {
                 continue;
             };
             if height < floor {
-                return Err(SpecError::Order {
-                    upgrade: Upgrade::ALL[i],
-                    height,
-                });
+                out_of_order = Some((i, height));
+                break;
             }
             floor = height;
+        }
+        if let Some((i, height)) = out_of_order {
+            return Err(SpecError::Order {
+                upgrade: Upgrade::ALL[i],
+                height,
+            });
         }
         // The address period divides by the post-Blossom interval over 48, and the halving
         // index by the pre-Blossom interval.
@@ -316,8 +329,8 @@ impl CoreSpec {
             Ok(post) if post >= funding::PERIODS_PER_HALVING_INTERVAL => {}
             _ => return Err(SpecError::HalvingInterval(interval)),
         }
-        self.first_halving = subsidy::halving_height(&self, 1, u32::MAX)?;
-        // The closed form of `subsidy::scheduled_issuance` needs a slow start shift of 1
+        self.first_halving = subsidy_schedule::halving_height(&self, 1, u32::MAX)?;
+        // The closed form of `subsidy_schedule::scheduled_issuance` needs a slow start shift of 1
         // block or more, and the halving index 0 during the slow start.
         let slow_start = self.slow_start_interval;
         let first_inside_slow_start = match self.first_halving {
@@ -333,8 +346,8 @@ impl CoreSpec {
             };
         }
         let nu7 = self.activation_height(Upgrade::Nu7);
-        funding::check_sets(nu7, self.funding_streams)?;
-        lockbox::check_disbursements(self.lockbox_disbursements)?;
+        funding::check_sets(nu7, &self.funding_streams)?;
+        lockbox::check_disbursements(&self.lockbox_disbursements)?;
         if let Some(start) = self.orchard_disabled_start_height {
             // `rules_at` gives the NU6.1 rules without the Orchard pool from the start height
             // to the block before NU6.2, and requires NU6.1 at each of these heights.
@@ -394,9 +407,9 @@ pub(crate) mod tests {
             max_time_start_height: 2,
             orchard_disabled_start_height: None,
             coinbase_must_be_shielded: false,
-            funding_streams: &[],
-            lockbox_disbursements: &[],
-            founders_scripts: &[],
+            funding_streams: Vec::new(),
+            lockbox_disbursements: Vec::new(),
+            founders_scripts: Vec::new(),
             nsm_seed: None,
             test_reissuance_height: None,
             first_halving: Some(287),

@@ -1,13 +1,13 @@
 //! The deferred pool (lockbox): what a block adds to it and takes from it.
 //!
 //! From NU6 a funding stream pays a share of the block subsidy to the deferred pool
-//! (ZIP 1015, ZIP 2001; [`crate::subsidy::Subsidy::deferred`]). The coinbase of the NU6.1
+//! (ZIP 1015, ZIP 2001; [`crate::subsidy_schedule::Subsidy::deferred`]). The coinbase of the NU6.1
 //! activation block takes 78,750 ZEC out of the pool in ten equal outputs (ZIP 271,
 //! ZIP 1016). Zakura checks the same outputs (`zakura-consensus/src/block/check.rs:
 //! 268-290`). The disbursements of a chain are data of its spec
 //! ([`CoreSpec::lockbox_disbursements`]).
 
-use crate::spec::SpecError;
+use crate::chain_spec::SpecError;
 use crate::{add_money, ConsensusError, CoreSpec, P2shScript, Upgrade, MAX_MONEY};
 
 /// Lockbox disbursement outputs of one coinbase: `count` outputs of `value` zatoshis each
@@ -61,11 +61,11 @@ pub fn check_disbursements(disbursements: &[Disbursement]) -> Result<(), SpecErr
 ///
 /// Spec §7.10: [NU6.1 onward] the disbursement outputs are in the block at
 /// `ZIP271ActivationHeight` only.
-pub fn disbursements(spec: &CoreSpec, height: u32) -> &'static [Disbursement] {
+pub fn disbursements(spec: &CoreSpec, height: u32) -> &[Disbursement] {
     if spec.activation_height(Upgrade::Nu6_1) != Some(height) {
         return &[];
     }
-    spec.lockbox_disbursements
+    &spec.lockbox_disbursements
 }
 
 /// The deferred pool after a block that adds `deferred` zatoshis and pays `disbursed`
@@ -85,8 +85,8 @@ pub fn deferred_pool_after(before: u64, deferred: u64, disbursed: u64) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_spec::tests::regtest;
     use crate::funding::tests::SCRIPT_A;
-    use crate::spec::tests::regtest;
 
     #[test]
     fn the_disbursement_is_in_the_nu6_1_activation_block_only() {
@@ -98,7 +98,7 @@ mod tests {
         let mut spec = regtest();
         spec.activation_heights[Upgrade::Nu6.index()] = Some(20);
         spec.activation_heights[Upgrade::Nu6_1.index()] = Some(30);
-        spec.lockbox_disbursements = &ONE;
+        spec.lockbox_disbursements = ONE.to_vec();
         assert_eq!(disbursements(&spec, 29), &[]);
         assert_eq!(disbursements(&spec, 31), &[]);
         assert_eq!(disbursements(&spec, 30), &ONE);

@@ -12,14 +12,12 @@
 //! share of the fees, and from the NSM reissuance height the subsidy has a bonus
 //! ([`crate::nsm`]).
 
-use alloc::vec::Vec;
-
 use crate::funding::Receiver;
-use crate::rules::RuleSet;
-use crate::subsidy::Subsidy;
+use crate::rule_sets::RuleSet;
+use crate::subsidy_schedule::Subsidy;
 use crate::{
-    add_money, founders, funding, lockbox, nsm, sub_money, subsidy, ConsensusError, CoreSpec,
-    P2shScript, Upgrade,
+    add_money, founders, funding, lockbox, nsm, sub_money, subsidy_schedule, ConsensusError,
+    CoreSpec, P2shScript, Upgrade,
 };
 
 /// Why the coinbase must have an output.
@@ -38,6 +36,15 @@ pub struct RequiredOutput {
     pub value: u64,
     /// The `scriptPubKey`: `OP_HASH160 <script hash> OP_EQUAL`.
     pub script: P2shScript,
+}
+
+/// A transparent output of a coinbase, as [`CoinbaseTerms::check`] reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoinbaseOutput {
+    /// Zatoshis.
+    pub value: u64,
+    /// The `scriptPubKey`.
+    pub script: Vec<u8>,
 }
 
 /// The value balances of the shielded bundles of a coinbase, as the transaction encodes
@@ -125,7 +132,7 @@ fn require(required: &mut Vec<RequiredOutput>, kind: OutputKind, value: u64, scr
 
 impl CoinbaseTerms {
     /// The terms of the coinbase at `height`, for a caller without the chain value pools.
-    /// `rules` is the rule set of `height` ([`crate::rules::rules_at`]): the caller selects
+    /// `rules` is the rule set of `height` ([`crate::rule_sets::rules_at`]): the caller selects
     /// it one time for every rule of the block.
     ///
     /// It fails with [`ConsensusError::IssuedSupplyUnknown`] from the NSM reissuance
@@ -157,7 +164,7 @@ impl CoinbaseTerms {
         height: u32,
         issued: Option<u64>,
     ) -> Result<Self, ConsensusError> {
-        let mut total = subsidy::scheduled_subsidy(spec, height)?;
+        let mut total = subsidy_schedule::scheduled_subsidy(spec, height)?;
         // ZIP 237: from DEPLOYMENT_BLOCK_HEIGHT, BlockSubsidy adds AdditionalBlockSubsidy of
         // NSMValueBalance(height - 1).
         if nsm::reissuance_active(spec, height)? {
@@ -197,6 +204,7 @@ impl CoinbaseTerms {
         // to totalDeferredOutput. ZIP 237: the streams take their share of the subsidy with
         // the reissuance bonus.
         let streams = funding::funding_streams(spec, height, total)?;
+        let mut failure: Option<ConsensusError> = None;
         for i in 0..streams.len() {
             let stream = streams[i];
             match stream.script {
@@ -206,8 +214,17 @@ impl CoinbaseTerms {
                     stream.value,
                     script,
                 ),
-                None => terms.subsidy.deferred = add_money(terms.subsidy.deferred, stream.value)?,
+                None => match add_money(terms.subsidy.deferred, stream.value) {
+                    Ok(deferred) => terms.subsidy.deferred = deferred,
+                    Err(e) => {
+                        failure = Some(e);
+                        break;
+                    }
+                },
             }
+        }
+        if let Some(failure) = failure {
+            return Err(failure);
         }
         // Spec §7.10, ZIP 271: ZIP271DisbursementChunks outputs at ZIP271ActivationHeight,
         // paid from the deferred pool (totalDeferredInput).
@@ -219,6 +236,7 @@ impl CoinbaseTerms {
             if disbursements.len() == 0 {
                 return Err(ConsensusError::NoLockboxDisbursement { height });
             }
+            let mut failure: Option<ConsensusError> = None;
             for d in 0..disbursements.len() {
                 let disbursement = disbursements[d];
                 for _ in 0..disbursement.count {
@@ -229,15 +247,41 @@ impl CoinbaseTerms {
                         disbursement.script,
                     );
                 }
-                disbursed = add_money(disbursed, disbursement.total()?)?;
+                let total = match disbursement.total() {
+                    Ok(total) => total,
+                    Err(e) => {
+                        failure = Some(e);
+                        break;
+                    }
+                };
+                disbursed = match add_money(disbursed, total) {
+                    Ok(disbursed) => disbursed,
+                    Err(e) => {
+                        failure = Some(e);
+                        break;
+                    }
+                };
+            }
+            if let Some(failure) = failure {
+                return Err(failure);
             }
         }
         terms.disbursed = disbursed;
         // Spec §7.8: `MinerSubsidy(height)`. The disbursement outputs are paid from the
         // deferred pool, not from the subsidy.
         let mut required = 0u64;
+        let mut failure: Option<ConsensusError> = None;
         for i in 0..terms.required.len() {
-            required = add_money(required, terms.required[i].value)?;
+            required = match add_money(required, terms.required[i].value) {
+                Ok(required) => required,
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            };
+        }
+        if let Some(failure) = failure {
+            return Err(failure);
         }
         let paid_from_subsidy = sub_money(required, disbursed)?;
         terms.miner_subsidy =
@@ -292,11 +336,12 @@ impl CoinbaseTerms {
     /// payments.
     pub fn check(
         &self,
-        outputs: &[(u64, &[u8])],
+        outputs: &[CoinbaseOutput],
         shielded: ShieldedBalances,
         fees: u64,
     ) -> Result<(), CoinbaseError> {
-        let mut matched: Vec<bool> = alloc::vec![false; outputs.len()];
+        let mut matched: Vec<bool> = vec![false; outputs.len()];
+        let mut unmatched: Option<usize> = None;
         for r in 0..self.required.len() {
             let required = &self.required[r];
             let mut found: Option<usize> = None;
@@ -304,23 +349,35 @@ impl CoinbaseTerms {
                 if let Some(_) = found {
                     continue;
                 }
-                let (value, script) = outputs[o];
-                if !matched[o] && value == required.value && script == &required.script[..] {
+                let output = &outputs[o];
+                if !matched[o]
+                    && output.value == required.value
+                    && output.script[..] == required.script[..]
+                {
                     found = Some(o);
                 }
             }
             let Some(index) = found else {
-                return Err(unmatched_error(required, outputs, &matched));
+                unmatched = Some(r);
+                break;
             };
             matched[index] = true;
         }
+        if let Some(r) = unmatched {
+            return Err(unmatched_error(&self.required[r], outputs, &matched));
+        }
 
         let mut transparent: i128 = 0;
+        let mut overflow = false;
         for o in 0..outputs.len() {
-            let Some(sum) = transparent.checked_add(i128::from(outputs[o].0)) else {
-                return Err(ConsensusError::Overflow.into());
+            let Some(sum) = transparent.checked_add(i128::from(outputs[o].value)) else {
+                overflow = true;
+                break;
             };
             transparent = sum;
+        }
+        if overflow {
+            return Err(ConsensusError::Overflow.into());
         }
         let (Some(less_sapling), Some(shielded_rest)) = (
             transparent.checked_sub(i128::from(shielded.sapling)),
@@ -368,26 +425,26 @@ impl CoinbaseTerms {
 /// The error for a required output that no unmatched output of `outputs` matches.
 fn unmatched_error(
     required: &RequiredOutput,
-    outputs: &[(u64, &[u8])],
+    outputs: &[CoinbaseOutput],
     matched: &[bool],
 ) -> CoinbaseError {
     let kind = required.kind;
     let mut same_script: Option<usize> = None;
-    let mut same_value: Option<usize> = None;
     for o in 0..outputs.len() {
-        if matched[o] {
+        if let Some(_) = same_script {
             continue;
         }
-        let (value, script) = outputs[o];
-        if let None = same_script {
-            if script == &required.script[..] {
-                same_script = Some(o);
-            }
+        if !matched[o] && outputs[o].script[..] == required.script[..] {
+            same_script = Some(o);
         }
-        if let None = same_value {
-            if value == required.value {
-                same_value = Some(o);
-            }
+    }
+    let mut same_value: Option<usize> = None;
+    for o in 0..outputs.len() {
+        if let Some(_) = same_value {
+            continue;
+        }
+        if !matched[o] && outputs[o].value == required.value {
+            same_value = Some(o);
         }
     }
     let mut expected = Vec::with_capacity(required.script.len());
@@ -398,14 +455,10 @@ fn unmatched_error(
         (Some(o), _) => CoinbaseError::WrongAmount {
             kind,
             expected: required.value,
-            found: outputs[o].0,
+            found: outputs[o].value,
         },
         (None, Some(o)) => {
-            let found_script = outputs[o].1;
-            let mut found = Vec::with_capacity(found_script.len());
-            for i in 0..found_script.len() {
-                found.push(found_script[i]);
-            }
+            let found = outputs[o].script.clone();
             CoinbaseError::WrongScript {
                 kind,
                 value: required.value,
@@ -424,10 +477,10 @@ fn unmatched_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_spec::tests::regtest;
     use crate::funding::tests::{regtest_with_streams, SCRIPT_A, SCRIPT_B, SCRIPT_C};
     use crate::lockbox::Disbursement;
-    use crate::rules::rules_at;
-    use crate::spec::tests::regtest;
+    use crate::rule_sets::rules_at;
     use crate::MAX_MONEY;
 
     const MINER: &[u8] = &[0x51];
@@ -435,27 +488,36 @@ mod tests {
 
     /// `CoinbaseTerms::at` with the rule set of `height`.
     fn at(spec: &CoreSpec, height: u32) -> Result<CoinbaseTerms, ConsensusError> {
-        CoinbaseTerms::at(spec, rules_at(spec, height)?, height)
+        let rules = rules_at(spec, height)?;
+        CoinbaseTerms::at(spec, &rules, height)
     }
 
     /// `CoinbaseTerms::after` with the rule set of `height`.
     fn after(spec: &CoreSpec, height: u32, issued: u64) -> Result<CoinbaseTerms, ConsensusError> {
-        CoinbaseTerms::after(spec, rules_at(spec, height)?, height, issued)
+        let rules = rules_at(spec, height)?;
+        CoinbaseTerms::after(spec, &rules, height, issued)
     }
 
     /// The outputs of a coinbase that pays `miner` zatoshis to the miner and every
     /// required output of `terms`.
-    fn outputs(terms: &CoinbaseTerms, miner: u64) -> Vec<(u64, &[u8])> {
-        let mut outputs = alloc::vec![(miner, MINER)];
-        for output in &terms.required {
-            outputs.push((output.value, &output.script[..]));
+    fn output(value: u64, script: &[u8]) -> CoinbaseOutput {
+        CoinbaseOutput {
+            value,
+            script: script.to_vec(),
+        }
+    }
+
+    fn outputs(terms: &CoinbaseTerms, miner: u64) -> Vec<CoinbaseOutput> {
+        let mut outputs = vec![output(miner, MINER)];
+        for required in &terms.required {
+            outputs.push(output(required.value, &required.script));
         }
         outputs
     }
 
     fn check(
         terms: &CoinbaseTerms,
-        outputs: &[(u64, &[u8])],
+        outputs: &[CoinbaseOutput],
         fees: u64,
     ) -> Result<(), CoinbaseError> {
         terms.check(outputs, ShieldedBalances::default(), fees)
@@ -467,24 +529,24 @@ mod tests {
 
     /// The outputs of `outputs` with output `index` changed to `value` and `script`, and
     /// the difference of the value moved to the miner output, so that the value rule holds.
-    fn changed<'a>(
-        outputs: &[(u64, &'a [u8])],
+    fn changed(
+        outputs: &[CoinbaseOutput],
         index: usize,
         value: u64,
-        script: &'a [u8],
-    ) -> Vec<(u64, &'a [u8])> {
+        script: &[u8],
+    ) -> Vec<CoinbaseOutput> {
         let mut outputs = outputs.to_vec();
-        outputs[0].0 = outputs[0].0 + outputs[index].0 - value;
-        outputs[index] = (value, script);
+        outputs[0].value = outputs[0].value + outputs[index].value - value;
+        outputs[index] = output(value, script);
         outputs
     }
 
     /// Regtest with NU6 at 20, NU6.1 at 30 and `disbursements` of one output each.
-    fn regtest_with_disbursements(disbursements: &'static [Disbursement]) -> CoreSpec {
+    fn regtest_with_disbursements(disbursements: &[Disbursement]) -> CoreSpec {
         let mut spec = regtest();
         spec.activation_heights[Upgrade::Nu6.index()] = Some(20);
         spec.activation_heights[Upgrade::Nu6_1.index()] = Some(30);
-        spec.lockbox_disbursements = disbursements;
+        spec.lockbox_disbursements = disbursements.to_vec();
         spec.checked().expect("a valid spec")
     }
 
@@ -560,10 +622,7 @@ mod tests {
             );
         }
         let terms = at(&spec, 30).unwrap();
-        assert_eq!(
-            kinds(&terms),
-            alloc::vec![OutputKind::LockboxDisbursement; 3]
-        );
+        assert_eq!(kinds(&terms), vec![OutputKind::LockboxDisbursement; 3]);
         assert_eq!(terms.disbursed, 2_000);
         assert_eq!(terms.miner_subsidy, REGTEST_SUBSIDY);
         assert!(terms.exact_value);
@@ -631,7 +690,7 @@ mod tests {
         let mut late = regtest();
         late.activation_heights[Upgrade::Nu6.index()] = Some(20);
         late.activation_heights[Upgrade::Nu6_1.index()] = Some(288 * 64);
-        assert_eq!(subsidy::scheduled_subsidy(&late, 288 * 64), Ok(0));
+        assert_eq!(subsidy_schedule::scheduled_subsidy(&late, 288 * 64), Ok(0));
         assert_eq!(kinds(&at(&late, 288 * 64).unwrap()), Vec::new());
     }
 
@@ -666,7 +725,7 @@ mod tests {
             assert_eq!(terms.required, required, "{height}");
             assert_eq!(terms.subsidy.deferred, deferred, "{height}");
             assert_eq!(
-                subsidy::block_subsidy(&spec, height),
+                subsidy_schedule::block_subsidy(&spec, height),
                 Ok(terms.subsidy),
                 "{height}"
             );
@@ -742,7 +801,7 @@ mod tests {
             value: 0,
             script: SCRIPT_A,
         }];
-        spec.lockbox_disbursements = &ONE;
+        spec.lockbox_disbursements = ONE.to_vec();
         spec.test_reissuance_height = Some(12);
         let spec = spec.checked().expect("a valid spec");
         let terms = at(&spec, 10).unwrap();
@@ -763,7 +822,8 @@ mod tests {
             Err(ConsensusError::IssuedSupplyUnknown { height: 12 })
         );
         assert_eq!(after(&spec, 11, 0), at(&spec, 11));
-        let scheduled = u64::try_from(subsidy::scheduled_issuance(&spec, 11).unwrap()).unwrap();
+        let scheduled =
+            u64::try_from(subsidy_schedule::scheduled_issuance(&spec, 11).unwrap()).unwrap();
         for (balance, bonus) in [(0, 0), (1, 1), (7_272_727, 1), (7_272_728, 2)] {
             let terms = after(&spec, 12, scheduled - balance).unwrap();
             assert_eq!(terms.subsidy.total, 208_333_333 + bonus, "{balance}");

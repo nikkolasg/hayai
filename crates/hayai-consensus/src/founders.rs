@@ -35,7 +35,7 @@ pub fn founders_reward(network: Network, height: u32) -> Option<FoundersReward> 
 pub(crate) fn core_scripts(
     network_type: NetworkType,
     addresses: &[&str],
-) -> Result<&'static [P2shScript], ChainSpecError> {
+) -> Result<Vec<P2shScript>, ChainSpecError> {
     let mut scripts = Vec::with_capacity(addresses.len());
     for address in addresses {
         check_address(network_type, address)?;
@@ -44,7 +44,7 @@ pub(crate) fn core_scripts(
         };
         scripts.push(script);
     }
-    Ok(Box::leak(scripts.into_boxed_slice()))
+    Ok(scripts)
 }
 
 /// The scripts of [`MAINNET_ADDRESSES`], for the core.
