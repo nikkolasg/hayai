@@ -1153,19 +1153,14 @@ fn getdeprecationinfo_has_no_end_of_service() {
     a.shutdown().expect("a shuts down");
 }
 
-/// `stop` asks the owner of the node to stop it. The methods that need an index of the
-/// transactions or a change of the state are unknown methods.
+/// `stop` asks the owner of the node to stop it. The methods that change the state are
+/// unknown methods; the methods of the wallet index are served (the node answers their
+/// parameter errors), with or without the index.
 #[test]
 fn stop_asks_for_the_shutdown_and_unserved_methods_are_unknown() {
     let dir = scratch();
     let (a, call) = rpc_node(dir.path());
     for method in [
-        "getrawtransaction",
-        "gettxout",
-        "getaddressbalance",
-        "getaddresstxids",
-        "getaddressutxos",
-        "z_getsubtreesbyindex",
         "z_listunifiedreceivers",
         "invalidateblock",
         "reconsiderblock",
@@ -1173,6 +1168,18 @@ fn stop_asks_for_the_shutdown_and_unserved_methods_are_unknown() {
     ] {
         let answer = call(method, json!([]));
         assert_eq!(answer["error"]["code"], -32601, "{method}: {answer}");
+    }
+    for method in [
+        "getrawtransaction",
+        "gettxout",
+        "getaddressbalance",
+        "getaddresstxids",
+        "getaddressutxos",
+        "z_getsubtreesbyindex",
+    ] {
+        let answer = call(method, json!([]));
+        assert_ne!(answer["error"]["code"], -32601, "{method}: {answer}");
+        assert_ne!(answer["error"]["code"], Value::Null, "{method}: {answer}");
     }
     let Err(_) = a.stop_requested().try_recv() else {
         panic!("a stop request before the call");
