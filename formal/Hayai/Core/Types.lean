@@ -30,7 +30,7 @@ structure block_limits.BlockLimits where
   shielded_cost : Std.U32
 
 /-- [hayai_consensus_core::chain_spec::Upgrade]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:0-33:1
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 21:0-34:1
     Visibility: public -/
 @[discriminant isize]
 inductive chain_spec.Upgrade where
@@ -100,7 +100,7 @@ structure funding.StreamSet where
   streams : alloc.vec.Vec funding.Stream
 
 /-- [hayai_consensus_core::chain_spec::CoreSpec]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:0-158:1
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 109:0-159:1
     Visibility: public -/
 structure chain_spec.CoreSpec where
   activation_heights : Array (Option Std.U32) 12#usize
@@ -121,7 +121,7 @@ structure chain_spec.CoreSpec where
   first_halving : Option Std.U32
 
 /-- [hayai_consensus_core::chain_spec::SpecError]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:0-206:1
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 163:0-212:1
     Visibility: public -/
 @[discriminant isize]
 inductive chain_spec.SpecError where
@@ -144,11 +144,18 @@ inductive chain_spec.SpecError where
   chain_spec.SpecError
 | DisbursementAmount : chain_spec.SpecError
 | OrchardSoftFork : Std.U32 → chain_spec.SpecError
+| PowLimitBits : Std.U32 → Std.U32 → chain_spec.SpecError
 | Rule : ConsensusError → chain_spec.SpecError
 
 /-- [hayai_consensus_core::funding::address_period::{closure}]
     Source: 'crates/hayai-consensus-core/src/funding.rs', lines 294:8-294:88 -/
 def funding.address_period.closure := Std.U32 × Std.U32
+
+/-- [hayai_consensus_core::difficulty_rules::Uint256]
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 42:0-42:33
+    Visibility: public -/
+@[reducible]
+def difficulty_rules.Uint256 := Array Std.U64 4#usize
 
 /-- [hayai_consensus_core::coinbase_value::OutputKind]
     Source: 'crates/hayai-consensus-core/src/coinbase_value.rs', lines 25:0-29:1
@@ -301,12 +308,6 @@ structure funding.FundingStream where
 structure founders.FoundersReward where
   value : Std.U64
   script : Array Std.U8 23#usize
-
-/-- [hayai_consensus_core::difficulty_rules::Uint256]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 42:0-42:33
-    Visibility: public -/
-@[reducible]
-def difficulty_rules.Uint256 := Array Std.U64 4#usize
 
 /-- [hayai_consensus_core::difficulty_rules::ParentChain]
     Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 344:0-353:1

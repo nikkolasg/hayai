@@ -121,16 +121,6 @@ axiom U32.Insts.CoreConvertTryFromI64TryFromIntError.try_from
   Std.I64 → Result (core.result.Result Std.U32
     core.num.error.TryFromIntError)
 
-/-- [core::fmt::{impl core::fmt::Display for &'_0 T}::fmt]:
-    Source: '/rustc/library/core/src/fmt/mod.rs', lines 2872:12-2872:58
-    Name pattern: [core::fmt::{core::fmt::Display<&'0 @T>}::fmt]
-    Visibility: public -/
-@[rust_fun "core::fmt::{core::fmt::Display<&'0 @T>}::fmt"]
-axiom Shared0T.Insts.CoreFmtDisplay.fmt
-  {T : Type} (DisplayInst : core.fmt.Display T) :
-  T → core.fmt.Formatter → Result ((core.result.Result Unit core.fmt.Error)
-    × core.fmt.Formatter)
-
 /-- [core::fmt::{impl core::fmt::LowerHex for &'_0 T}::fmt]:
     Source: '/rustc/library/core/src/fmt/mod.rs', lines 2872:12-2872:58
     Name pattern: [core::fmt::{core::fmt::LowerHex<&'0 @T>}::fmt]
@@ -138,6 +128,16 @@ axiom Shared0T.Insts.CoreFmtDisplay.fmt
 @[rust_fun "core::fmt::{core::fmt::LowerHex<&'0 @T>}::fmt"]
 axiom Shared0T.Insts.CoreFmtLowerHex.fmt
   {T : Type} (LowerHexInst : core.fmt.LowerHex T) :
+  T → core.fmt.Formatter → Result ((core.result.Result Unit core.fmt.Error)
+    × core.fmt.Formatter)
+
+/-- [core::fmt::{impl core::fmt::Display for &'_0 T}::fmt]:
+    Source: '/rustc/library/core/src/fmt/mod.rs', lines 2872:12-2872:58
+    Name pattern: [core::fmt::{core::fmt::Display<&'0 @T>}::fmt]
+    Visibility: public -/
+@[rust_fun "core::fmt::{core::fmt::Display<&'0 @T>}::fmt"]
+axiom Shared0T.Insts.CoreFmtDisplay.fmt
+  {T : Type} (DisplayInst : core.fmt.Display T) :
   T → core.fmt.Formatter → Result ((core.result.Result Unit core.fmt.Error)
     × core.fmt.Formatter)
 

@@ -11,3 +11,5 @@ import Hayai.Proofs.Difficulty
 import Hayai.Proofs.Median
 import Hayai.Proofs.Bytes
 import Hayai.Proofs.Compact
+import Hayai.Proofs.Expected
+import Hayai.Proofs.Contextual

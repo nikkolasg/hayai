@@ -370,6 +370,10 @@ pub enum ChainSpecError {
         found: usize,
     },
     /// A rule of the core failed on the values of the spec during the checks.
+    #[error(
+        "the compact proof-of-work limit is {found:#010x}, ToCompact(PoWLimit) is {expected:#010x}"
+    )]
+    PowLimitBits { expected: u32, found: u32 },
     #[error(transparent)]
     Rule(ConsensusError),
 }
@@ -378,6 +382,9 @@ impl From<SpecError> for ChainSpecError {
     fn from(error: SpecError) -> Self {
         match error {
             SpecError::Sprout => ChainSpecError::Sprout,
+            SpecError::PowLimitBits { expected, found } => {
+                ChainSpecError::PowLimitBits { expected, found }
+            }
             SpecError::Order { upgrade, height } => ChainSpecError::Order { upgrade, height },
             SpecError::HalvingInterval(interval) => ChainSpecError::HalvingInterval(interval),
             SpecError::SlowStart(interval) => ChainSpecError::SlowStart(interval),

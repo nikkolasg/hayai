@@ -1931,3 +1931,26 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
 - Lesson: in this Aeneas version `Result` is a coinductive tree, so `x = ok v` cannot be split
   by cases; a fact about a constant of the translation is a weakest-precondition theorem
   (`RULE_SETS ⦃ a => … ⦄`), which also shows that the constant evaluates without error.
+
+## 2026-10-11 — Formal: the §7.6 and §7.7 header and difficulty rules proven (hayai-ncv)
+
+- Proven against the specification: `check_contextual` (§7.6: version, target at most
+  `PoWLimit`, `nTime` above the median-time-past and at most 90 minutes after it,
+  `nBits = ThresholdBits`), `expected_bits`, `threshold_bits` (§7.7.3), `mean_target`,
+  `min_difficulty_block` (ZIP 205, ZIP 208, ZIP 218), `rules_at` (the difficulty parameters
+  of the epoch of the height), `from_compact` and `to_compact` (§7.7.4), and the 256-bit
+  arithmetic they use. `formal/PROGRESS.md` lists 30 rules of `docs/consensus.md` as proven.
+- `expected_bits` is two functions, `min_difficulty_block` and `threshold_bits`, with the same
+  behaviour: Aeneas copied the rest of the function into both branches of the Testnet rule,
+  and the proof would have had to follow each copy. The overflow test of `from_compact` uses
+  `|` and `&` on booleans for the same reason.
+- `CoreSpec::checked` refuses a compact proof-of-work limit other than ToCompact(PoWLimit)
+  (`SpecError::PowLimitBits`). The minimum-difficulty and low-height rules return
+  `pow_limit_bits`; the specification says ToCompact(PoWLimit). The built-in networks pass.
+- The proofs take as hypotheses what the shell gives: a context that holds the times and
+  `nBits` the rules read, `nBits` of the context that encode a target (the parents passed
+  their own header check), and the checks of `CoreSpec::checked`. The values of the network
+  data in `hayai-consensus` (Testnet start heights, the max-time start heights) are not
+  covered; `formal/proven.tsv` notes each.
+- Lesson: on a loaded machine, a change to a large proof file rebuilds it in minutes. New
+  theorems go into a file that imports the proven ones, checked with `lake env lean`.

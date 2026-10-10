@@ -119,6 +119,39 @@ def thresholdBits (powLimit window spacing : ℕ) (times bits : List ℕ) : ℕ 
   let bounded := actualTimespanBounded awt (actualTimespan window times)
   toCompact (threshold powLimit awt (meanTarget bits) bounded)
 
+/-! ## ZIP 205, ZIP 208, ZIP 218: the Testnet minimum-difficulty rule -/
+
+/-- On a chain with a minimum-difficulty start height (Testnet: 299,188), a block at or above
+it whose time is more than `gapSpacings · PoWTargetSpacing` seconds after the time of its
+parent has `nBits = ToCompact(PoWLimit)`. The gap is 6 spacings (15 minutes before Blossom,
+ZIP 205 and ZIP 208) and 18 spacings from NU7 (450 s, ZIP 218). -/
+def minDifficultyApplies (start : Option ℕ) (height : ℕ) (time parentTime : ℤ)
+    (gapSpacings spacing : ℕ) : Prop :=
+  match start with
+  | some s => s ≤ height ∧ parentTime + gapSpacings * spacing < time
+  | none => False
+
+instance (start : Option ℕ) (height : ℕ) (time parentTime : ℤ) (g sp : ℕ) :
+    Decidable (minDifficultyApplies start height time parentTime g sp) := by
+  unfold minDifficultyApplies; split <;> infer_instance
+
+/-! ## The `nBits` of a block -/
+
+/-- The `nBits` that a block at `height > 0` must have (§7.6: `nBits = ThresholdBits(height)`):
+`ToCompact(PoWLimit)` under the Testnet minimum-difficulty rule, `ToCompact(PoWLimit)` at a height
+of at most `PoWAveragingWindow`, and `ThresholdBits` above it. `times` and `bits` list the
+`nTime` and `nBits` of the blocks before `height`, newest first.
+
+At a height of at most `PoWAveragingWindow`, §7.7.3 gives `MeanTarget = PoWLimit` but no
+value for `ActualTimespan`; zcashd, Zakura and hayai give `PoWLimit` as the threshold there
+(`docs/consensus.md`, open point hayai-8sc). -/
+def expectedBits (powLimit : ℕ) (start : Option ℕ) (height : ℕ) (time parentTime : ℤ)
+    (gapSpacings spacing window : ℕ) (times bits : List ℕ) : ℕ :=
+  if minDifficultyApplies start height time parentTime gapSpacings spacing then toCompact powLimit
+  else if height ≤ window then toCompact powLimit
+  else thresholdBits powLimit window spacing (times.take (min (window + 11) height))
+    (bits.take window)
+
 /-! ## §7.7.5: work -/
 
 /-- The work of a block: `⌊2^256 / (ToTarget(nBits) + 1)⌋`. -/

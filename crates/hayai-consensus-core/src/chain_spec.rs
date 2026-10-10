@@ -7,6 +7,7 @@
 //! disbursements, the founders' scripts and the NSM seed. The adapter builds it from a
 //! network and checks it with [`CoreSpec::checked`] one time.
 
+use crate::difficulty_rules::Uint256;
 use crate::funding::{self, StreamSet};
 use crate::lockbox::{self, Disbursement};
 use crate::subsidy_schedule;
@@ -200,6 +201,11 @@ pub enum SpecError {
     DisbursementAmount,
     #[error("the heights without the Orchard pool from height {0} are not all in NU6.1")]
     OrchardSoftFork(u32),
+    /// Spec §7.7.3: the minimum-difficulty and low-height rules give ToCompact(PoWLimit).
+    #[error(
+        "the compact proof-of-work limit is {found:#010x}, ToCompact(PoWLimit) is {expected:#010x}"
+    )]
+    PowLimitBits { expected: u32, found: u32 },
     /// A rule failed on the spec during the checks.
     #[error(transparent)]
     Rule(#[from] ConsensusError),
@@ -297,11 +303,19 @@ impl CoreSpec {
     ///   scripts or more has one script for each address period of its range.
     /// - The lockbox disbursements sum to a valid amount of money.
     /// - The heights without the Orchard pool are in NU6.1.
+    /// - The compact proof-of-work limit is ToCompact(PoWLimit).
     ///
     /// The adapter decodes the addresses and checks the checkpoints before this function.
     pub fn checked(mut self) -> Result<Self, SpecError> {
         if self.activation_heights[Upgrade::Sprout.index()] != Some(0) {
             return Err(SpecError::Sprout);
+        }
+        let limit_bits = Uint256::from_le_bytes(&self.pow_limit).to_compact()?;
+        if limit_bits != self.pow_limit_bits {
+            return Err(SpecError::PowLimitBits {
+                expected: limit_bits,
+                found: self.pow_limit_bits,
+            });
         }
         let mut floor = 0;
         let mut out_of_order: Option<(usize, u32)> = None;
@@ -414,6 +428,24 @@ pub(crate) mod tests {
             test_reissuance_height: None,
             first_halving: Some(287),
         }
+    }
+
+    /// The compact proof-of-work limit must be ToCompact(PoWLimit): the minimum-difficulty
+    /// and low-height rules give it as `nBits`.
+    #[test]
+    fn the_compact_pow_limit_matches_the_limit() {
+        assert!(regtest()
+            .checked()
+            .is_ok_and(|spec| spec.pow_limit_bits == 0x200f_0f0f));
+        let mut wrong = regtest();
+        wrong.pow_limit_bits = 0x2007_ffff;
+        assert_eq!(
+            wrong.checked(),
+            Err(SpecError::PowLimitBits {
+                expected: 0x200f_0f0f,
+                found: 0x2007_ffff
+            })
+        );
     }
 
     #[test]

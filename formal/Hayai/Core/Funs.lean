@@ -45,15 +45,6 @@ def Array.Insts.CoreHashHash {T : Type} (N : Std.Usize) (hashHashInst :
     Array.Insts.CoreHashHash.hash hashHashInst hashHasherInst
 }
 
-/-- Trait implementation: [core::fmt::{impl core::fmt::Display for &'_0 T}]
-    Source: '/rustc/library/core/src/fmt/mod.rs', lines 2871:8-2871:46
-    Name pattern: [core::fmt::Display<&'0 @T>] -/
-@[reducible, rust_trait_impl "core::fmt::Display<&'0 @T>"]
-def Shared0T.Insts.CoreFmtDisplay {T : Type} (DisplayInst : core.fmt.Display T)
-  : core.fmt.Display T := {
-  fmt := Shared0T.Insts.CoreFmtDisplay.fmt DisplayInst
-}
-
 /-- Trait implementation: [core::fmt::{impl core::fmt::LowerHex for &'_0 T}]
     Source: '/rustc/library/core/src/fmt/mod.rs', lines 2871:8-2871:46
     Name pattern: [core::fmt::LowerHex<&'0 @T>] -/
@@ -61,6 +52,15 @@ def Shared0T.Insts.CoreFmtDisplay {T : Type} (DisplayInst : core.fmt.Display T)
 def Shared0T.Insts.CoreFmtLowerHex {T : Type} (LowerHexInst : core.fmt.LowerHex
   T) : core.fmt.LowerHex T := {
   fmt := Shared0T.Insts.CoreFmtLowerHex.fmt LowerHexInst
+}
+
+/-- Trait implementation: [core::fmt::{impl core::fmt::Display for &'_0 T}]
+    Source: '/rustc/library/core/src/fmt/mod.rs', lines 2871:8-2871:46
+    Name pattern: [core::fmt::Display<&'0 @T>] -/
+@[reducible, rust_trait_impl "core::fmt::Display<&'0 @T>"]
+def Shared0T.Insts.CoreFmtDisplay {T : Type} (DisplayInst : core.fmt.Display T)
+  : core.fmt.Display T := {
+  fmt := Shared0T.Insts.CoreFmtDisplay.fmt DisplayInst
 }
 
 /-- Trait implementation: [core::fmt::{impl core::fmt::Debug for [T]}]
@@ -274,19 +274,19 @@ def block_limits.BlockLimits.NU7 : block_limits.BlockLimits :=
   }
 
 /-- [hayai_consensus_core::chain_spec::UPGRADES]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 16:0-16:31
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 17:0-17:31
     Visibility: public -/
 @[global_simps, irreducible] def chain_spec.UPGRADES : Std.Usize := 12#usize
 
 /-- [hayai_consensus_core::chain_spec::{impl core::clone::Clone for hayai_consensus_core::chain_spec::Upgrade}::clone]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:9-19:14
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:9-20:14
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreCloneClone.clone
   (self : chain_spec.Upgrade) : Result chain_spec.Upgrade := do
   ok self
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::PartialEq<hayai_consensus_core::chain_spec::Upgrade> for hayai_consensus_core::chain_spec::Upgrade}::eq]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:22-19:31
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:22-20:31
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade.eq
   (self : chain_spec.Upgrade) (other : chain_spec.Upgrade) : Result Bool := do
@@ -295,7 +295,7 @@ def chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade.eq
   ok (self1 = other1)
 
 /-- Trait implementation: [hayai_consensus_core::chain_spec::{impl core::cmp::PartialEq<hayai_consensus_core::chain_spec::Upgrade> for hayai_consensus_core::chain_spec::Upgrade}]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:22-19:31 -/
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:22-20:31 -/
 @[reducible]
 impl_def chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade : core.cmp.PartialEq
   chain_spec.Upgrade chain_spec.Upgrade := {
@@ -305,7 +305,7 @@ impl_def chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade : core.cmp.PartialEq
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::hash::Hash for hayai_consensus_core::chain_spec::Upgrade}::hash]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:37-19:41
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:37-20:41
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreHashHash.hash
   {__H : Type} (corehashHasherInst : core.hash.Hasher __H)
@@ -316,7 +316,7 @@ def chain_spec.Upgrade.Insts.CoreHashHash.hash
   Isize.Insts.CoreHashHash.hash corehashHasherInst self1 state
 
 /-- [hayai_consensus_core::chain_spec::{impl core::fmt::Debug for hayai_consensus_core::chain_spec::Upgrade}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:43-19:48
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:43-20:48
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreFmtDebug.fmt
   (self : chain_spec.Upgrade) (f : core.fmt.Formatter) :
@@ -343,7 +343,7 @@ def chain_spec.Upgrade.Insts.CoreFmtDebug.fmt
   | chain_spec.Upgrade.Nu7 => core.fmt.Formatter.write_str f (toStr "Nu7")
 
 /-- Trait implementation: [hayai_consensus_core::chain_spec::{impl core::fmt::Debug for hayai_consensus_core::chain_spec::Upgrade}]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:43-19:48 -/
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:43-20:48 -/
 @[reducible]
 def chain_spec.Upgrade.Insts.CoreFmtDebug : core.fmt.Debug chain_spec.Upgrade
   := {
@@ -351,7 +351,7 @@ def chain_spec.Upgrade.Insts.CoreFmtDebug : core.fmt.Debug chain_spec.Upgrade
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::Ord for hayai_consensus_core::chain_spec::Upgrade}::cmp]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:62-19:65
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:62-20:65
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreCmpOrd.cmp
   (self : chain_spec.Upgrade) (other : chain_spec.Upgrade) :
@@ -362,7 +362,7 @@ def chain_spec.Upgrade.Insts.CoreCmpOrd.cmp
   ok (core.cmp.impls.OrdIsize.cmp self1 other1)
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::PartialOrd<hayai_consensus_core::chain_spec::Upgrade> for hayai_consensus_core::chain_spec::Upgrade}::partial_cmp]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:50-19:60
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:50-20:60
     Visibility: public -/
 def chain_spec.Upgrade.Insts.CoreCmpPartialOrdUpgrade.partial_cmp
   (self : chain_spec.Upgrade) (other : chain_spec.Upgrade) :
@@ -372,7 +372,7 @@ def chain_spec.Upgrade.Insts.CoreCmpPartialOrdUpgrade.partial_cmp
   ok (some o)
 
 /-- Trait implementation: [hayai_consensus_core::chain_spec::{impl core::cmp::PartialOrd<hayai_consensus_core::chain_spec::Upgrade> for hayai_consensus_core::chain_spec::Upgrade}]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 19:50-19:60 -/
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 20:50-20:60 -/
 @[reducible]
 impl_def chain_spec.Upgrade.Insts.CoreCmpPartialOrdUpgrade :
   core.cmp.PartialOrd chain_spec.Upgrade chain_spec.Upgrade := {
@@ -385,7 +385,7 @@ impl_def chain_spec.Upgrade.Insts.CoreCmpPartialOrdUpgrade :
 }
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::ALL]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 37:4-50:6
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 38:4-51:6
     Visibility: public -/
 @[global_simps, irreducible]
 def chain_spec.Upgrade.ALL : Array chain_spec.Upgrade 12#usize :=
@@ -398,7 +398,7 @@ def chain_spec.Upgrade.ALL : Array chain_spec.Upgrade 12#usize :=
     ]
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::index]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 53:4-68:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 54:4-69:5
     Visibility: public -/
 def chain_spec.Upgrade.index
   (self : chain_spec.Upgrade) : Result Std.Usize := do
@@ -417,7 +417,7 @@ def chain_spec.Upgrade.index
   | chain_spec.Upgrade.Nu7 => ok 11#usize
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::branch_id]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 74:4-89:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 75:4-90:5
     Visibility: public -/
 def chain_spec.Upgrade.branch_id
   (self : chain_spec.Upgrade) : Result Std.U32 := do
@@ -436,7 +436,7 @@ def chain_spec.Upgrade.branch_id
   | chain_spec.Upgrade.Nu7 => ok 1998129881#u32
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::of_branch]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 93:8-99:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 94:8-100:5
     Visibility: public -/
 @[rust_loop_body]
 def chain_spec.Upgrade.of_branch_loop.body
@@ -457,7 +457,7 @@ def chain_spec.Upgrade.of_branch_loop.body
     else ok (cont iter1)
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::of_branch]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 93:8-99:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 94:8-100:5
     Visibility: public -/
 @[rust_loop]
 def chain_spec.Upgrade.of_branch_loop
@@ -469,7 +469,7 @@ def chain_spec.Upgrade.of_branch_loop
     iter
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::Upgrade}::of_branch]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 92:4-99:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 93:4-100:5
     Visibility: public -/
 @[reducible]
 def chain_spec.Upgrade.of_branch
@@ -541,7 +541,7 @@ def funding.StreamSet.Insts.CoreCloneClone : core.clone.Clone funding.StreamSet
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::clone::Clone for hayai_consensus_core::chain_spec::CoreSpec}::clone]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 107:9-107:14
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:9-108:14
     Visibility: public -/
 def chain_spec.CoreSpec.Insts.CoreCloneClone.clone
   (self : chain_spec.CoreSpec) : Result chain_spec.CoreSpec := do
@@ -692,7 +692,7 @@ impl_def funding.StreamSet.Insts.CoreCmpPartialEqStreamSet : core.cmp.PartialEq
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::PartialEq<hayai_consensus_core::chain_spec::CoreSpec> for hayai_consensus_core::chain_spec::CoreSpec}::eq]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 107:16-107:25
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:16-108:25
     Visibility: public -/
 def chain_spec.CoreSpec.Insts.CoreCmpPartialEqCoreSpec.eq
   (self : chain_spec.CoreSpec) (other : chain_spec.CoreSpec) :
@@ -788,7 +788,7 @@ def chain_spec.CoreSpec.Insts.CoreCmpPartialEqCoreSpec.eq
   else ok false
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::Eq for hayai_consensus_core::chain_spec::CoreSpec}::assert_fields_are_eq]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 107:27-107:29
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:27-108:29
     Visibility: public -/
 def chain_spec.CoreSpec.Insts.CoreCmpEq.assert_fields_are_eq
   (self : chain_spec.CoreSpec) : Result Unit := do
@@ -880,7 +880,7 @@ def funding.StreamSet.Insts.CoreHashHash : core.hash.Hash funding.StreamSet
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::hash::Hash for hayai_consensus_core::chain_spec::CoreSpec}::hash]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 107:31-107:35
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:31-108:35
     Visibility: public -/
 def chain_spec.CoreSpec.Insts.CoreHashHash.hash
   {__H : Type} (corehashHasherInst : core.hash.Hasher __H)
@@ -1030,7 +1030,7 @@ def funding.StreamSet.Insts.CoreFmtDebug : core.fmt.Debug funding.StreamSet
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::fmt::Debug for hayai_consensus_core::chain_spec::CoreSpec}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 107:37-107:42
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 108:37-108:42
     Visibility: public -/
 def chain_spec.CoreSpec.Insts.CoreFmtDebug.fmt
   (self : chain_spec.CoreSpec) (f : core.fmt.Formatter) :
@@ -1094,7 +1094,7 @@ def chain_spec.CoreSpec.Insts.CoreFmtDebug.fmt
   core.fmt.Formatter.debug_struct_fields_finish f (toStr "CoreSpec") s values
 
 /-- [hayai_consensus_core::chain_spec::{impl core::clone::Clone for hayai_consensus_core::chain_spec::SpecError}::clone]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:9-161:14
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:9-162:14
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreCloneClone.clone
   (self : chain_spec.SpecError) : Result chain_spec.SpecError := do
@@ -1249,7 +1249,7 @@ impl_def funding.Receiver.Insts.CoreCmpPartialEqReceiver : core.cmp.PartialEq
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::PartialEq<hayai_consensus_core::chain_spec::SpecError> for hayai_consensus_core::chain_spec::SpecError}::eq]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:22-161:31
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:22-162:31
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
   (self : chain_spec.SpecError) (other : chain_spec.SpecError) :
@@ -1281,6 +1281,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.HalvingInterval __self_0 =>
       match other with
@@ -1298,6 +1299,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.SlowStart __self_0 =>
       match other with
@@ -1315,6 +1317,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.NoFirstHalving => ok true
     | chain_spec.SpecError.StreamEnd __self_0 =>
@@ -1333,6 +1336,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.StreamRange __self_0 __self_1 =>
       match other with
@@ -1353,6 +1357,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.StreamReceiver __self_0 =>
       match other with
@@ -1370,6 +1375,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.StreamNumerators __self_0 =>
       match other with
@@ -1387,6 +1393,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.DeferredScript => ok true
     | chain_spec.SpecError.StreamScripts __self_0 __self_1 __self_2 __self_3
@@ -1425,6 +1432,7 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
         else ok false
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.DisbursementAmount => ok true
     | chain_spec.SpecError.OrchardSoftFork __self_0 =>
@@ -1443,6 +1451,28 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork __arg1_0 =>
         lift (core.cmp.impls.PartialEqU32.eq __self_0 __arg1_0)
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
+      | chain_spec.SpecError.Rule _ => ok true
+    | chain_spec.SpecError.PowLimitBits __self_0 __self_1 =>
+      match other with
+      | chain_spec.SpecError.Sprout => ok true
+      | chain_spec.SpecError.Order _ _ => ok true
+      | chain_spec.SpecError.HalvingInterval _ => ok true
+      | chain_spec.SpecError.SlowStart _ => ok true
+      | chain_spec.SpecError.NoFirstHalving => ok true
+      | chain_spec.SpecError.StreamEnd _ => ok true
+      | chain_spec.SpecError.StreamRange _ _ => ok true
+      | chain_spec.SpecError.StreamReceiver _ => ok true
+      | chain_spec.SpecError.StreamNumerators _ => ok true
+      | chain_spec.SpecError.DeferredScript => ok true
+      | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
+      | chain_spec.SpecError.DisbursementAmount => ok true
+      | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits __arg1_0 __arg1_1 =>
+        let b ← lift (core.cmp.impls.PartialEqU32.eq __self_0 __arg1_0)
+        if b
+        then lift (core.cmp.impls.PartialEqU32.eq __self_1 __arg1_1)
+        else ok false
       | chain_spec.SpecError.Rule _ => ok true
     | chain_spec.SpecError.Rule __self_0 =>
       match other with
@@ -1459,13 +1489,14 @@ def chain_spec.SpecError.Insts.CoreCmpPartialEqSpecError.eq
       | chain_spec.SpecError.StreamScripts _ _ _ _ _ => ok true
       | chain_spec.SpecError.DisbursementAmount => ok true
       | chain_spec.SpecError.OrchardSoftFork _ => ok true
+      | chain_spec.SpecError.PowLimitBits _ _ => ok true
       | chain_spec.SpecError.Rule __arg1_0 =>
         ConsensusError.Insts.CoreCmpPartialEqConsensusError.eq __self_0
           __arg1_0
   else ok false
 
 /-- [hayai_consensus_core::chain_spec::{impl core::cmp::Eq for hayai_consensus_core::chain_spec::SpecError}::assert_fields_are_eq]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:33-161:35
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:33-162:35
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreCmpEq.assert_fields_are_eq
   (self : chain_spec.SpecError) : Result Unit := do
@@ -1532,7 +1563,7 @@ def ConsensusError.Insts.CoreFmtDebug : core.fmt.Debug ConsensusError := {
 }
 
 /-- [hayai_consensus_core::chain_spec::{impl core::fmt::Debug for hayai_consensus_core::chain_spec::SpecError}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:37-161:42
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:37-162:42
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreFmtDebug.fmt
   (self : chain_spec.SpecError) (f : core.fmt.Formatter) :
@@ -1595,6 +1626,11 @@ def chain_spec.SpecError.Insts.CoreFmtDebug.fmt
     let __self_01 := Dyn.mk _ (core.fmt.DebugShared core.fmt.DebugU32) __self_0
     core.fmt.Formatter.debug_tuple_field1_finish f (toStr "OrchardSoftFork")
       __self_01
+  | chain_spec.SpecError.PowLimitBits __self_0 __self_1 =>
+    let __self_01 := Dyn.mk _ core.fmt.DebugU32 __self_0
+    let __self_11 := Dyn.mk _ (core.fmt.DebugShared core.fmt.DebugU32) __self_1
+    core.fmt.Formatter.debug_struct_field2_finish f (toStr "PowLimitBits")
+      (toStr "expected") __self_01 (toStr "found") __self_11
   | chain_spec.SpecError.Rule __self_0 =>
     let __self_01 :=
       Dyn.mk _ (core.fmt.DebugShared ConsensusError.Insts.CoreFmtDebug)
@@ -1779,7 +1815,7 @@ def ConsensusError.Insts.CoreFmtDisplay.fmt
       "the spec did not pass the checks of CoreSpec::checked")
 
 /-- [hayai_consensus_core::chain_spec::{impl core::fmt::Display for hayai_consensus_core::chain_spec::SpecError}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:44-161:60
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:44-162:60
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreFmtDisplay.fmt
   (self : chain_spec.SpecError) (__formatter : core.fmt.Formatter) :
@@ -2013,18 +2049,39 @@ def chain_spec.SpecError.Insts.CoreFmtDisplay.fmt
           46#u8, 49#u8, 0#u8
           ]) (Array.make 1#usize [ a ])
     core.fmt.Formatter.write_fmt __formatter a1
+  | chain_spec.SpecError.PowLimitBits expected found =>
+    let a ←
+      core.fmt.rt.Argument.new_lower_hex (Shared0T.Insts.CoreFmtLowerHex
+        U32.Insts.CoreFmtLowerHex) found
+    let a1 ←
+      core.fmt.rt.Argument.new_lower_hex (Shared0T.Insts.CoreFmtLowerHex
+        U32.Insts.CoreFmtLowerHex) expected
+    let a2 ←
+      core.fmt.Arguments.new
+        (Array.make 77#usize [
+          35#u8, 116#u8, 104#u8, 101#u8, 32#u8, 99#u8, 111#u8, 109#u8, 112#u8,
+          97#u8, 99#u8, 116#u8, 32#u8, 112#u8, 114#u8, 111#u8, 111#u8, 102#u8,
+          45#u8, 111#u8, 102#u8, 45#u8, 119#u8, 111#u8, 114#u8, 107#u8, 32#u8,
+          108#u8, 105#u8, 109#u8, 105#u8, 116#u8, 32#u8, 105#u8, 115#u8, 32#u8,
+          195#u8, 32#u8, 0#u8, 128#u8, 105#u8, 10#u8, 0#u8, 25#u8, 44#u8,
+          32#u8, 84#u8, 111#u8, 67#u8, 111#u8, 109#u8, 112#u8, 97#u8, 99#u8,
+          116#u8, 40#u8, 80#u8, 111#u8, 87#u8, 76#u8, 105#u8, 109#u8, 105#u8,
+          116#u8, 41#u8, 32#u8, 105#u8, 115#u8, 32#u8, 195#u8, 32#u8, 0#u8,
+          128#u8, 105#u8, 10#u8, 0#u8, 0#u8
+          ]) (Array.make 2#usize [ a, a1 ])
+    core.fmt.Formatter.write_fmt __formatter a2
   | chain_spec.SpecError.Rule _0 =>
     ConsensusError.Insts.CoreFmtDisplay.fmt _0 __formatter
 
 /-- [hayai_consensus_core::chain_spec::{impl core::convert::From<hayai_consensus_core::ConsensusError> for hayai_consensus_core::chain_spec::SpecError}::from]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 161:44-161:60
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 162:44-162:60
     Visibility: public -/
 def chain_spec.SpecError.Insts.CoreConvertFromConsensusError.from
   (source : ConsensusError) : Result chain_spec.SpecError := do
   ok (chain_spec.SpecError.Rule source)
 
 /-- Trait implementation: [hayai_consensus_core::chain_spec::{impl core::convert::From<hayai_consensus_core::ConsensusError> for hayai_consensus_core::chain_spec::SpecError}]
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 205:9-205:16 -/
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 211:9-211:16 -/
 @[reducible]
 def chain_spec.SpecError.Insts.CoreConvertFromConsensusError :
   core.convert.From chain_spec.SpecError ConsensusError := {
@@ -2032,7 +2089,7 @@ def chain_spec.SpecError.Insts.CoreConvertFromConsensusError :
 }
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::activation_height]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 210:4-212:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 216:4-218:5
     Visibility: public -/
 def chain_spec.CoreSpec.activation_height
   (self : chain_spec.CoreSpec) (upgrade : chain_spec.Upgrade) :
@@ -2042,7 +2099,7 @@ def chain_spec.CoreSpec.activation_height
   Array.index_usize self.activation_heights i
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::upgrade_at]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 223:8-232:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 229:8-238:9
     Visibility: public -/
 @[rust_loop_body]
 def chain_spec.CoreSpec.upgrade_at_loop.body
@@ -2064,7 +2121,7 @@ def chain_spec.CoreSpec.upgrade_at_loop.body
   else ok (done none)
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::upgrade_at]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 223:8-232:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 229:8-238:9
     Visibility: public -/
 @[rust_loop]
 def chain_spec.CoreSpec.upgrade_at_loop
@@ -2076,7 +2133,7 @@ def chain_spec.CoreSpec.upgrade_at_loop
     i
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::upgrade_at]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 220:4-237:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 226:4-243:5
     Visibility: public -/
 def chain_spec.CoreSpec.upgrade_at
   (self : chain_spec.CoreSpec) (height : Std.U32) :
@@ -2089,7 +2146,7 @@ def chain_spec.CoreSpec.upgrade_at
   | some upgrade => ok (core.result.Result.Ok upgrade)
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::orchard_disabled]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 243:4-253:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 249:4-259:5
     Visibility: public -/
 def chain_spec.CoreSpec.orchard_disabled
   (self : chain_spec.CoreSpec) (height : Std.U32) : Result Bool := do
@@ -2109,7 +2166,7 @@ def chain_spec.CoreSpec.orchard_disabled
   else ok false
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::next_upgrade]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 259:8-271:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 265:8-277:9
     Visibility: public -/
 @[rust_loop_body]
 def chain_spec.CoreSpec.next_upgrade_loop.body
@@ -2138,7 +2195,7 @@ def chain_spec.CoreSpec.next_upgrade_loop.body
           else ok (cont (iter1, activation))
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::next_upgrade]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 259:8-271:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 265:8-277:9
     Visibility: public -/
 @[rust_loop]
 def chain_spec.CoreSpec.next_upgrade_loop
@@ -2152,7 +2209,7 @@ def chain_spec.CoreSpec.next_upgrade_loop
     (iter, next)
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::next_upgrade]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 257:4-276:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 263:4-282:5
     Visibility: public -/
 def chain_spec.CoreSpec.next_upgrade
   (self : chain_spec.CoreSpec) (height : Std.U32) :
@@ -2187,7 +2244,7 @@ def POST_BLOSSOM_TARGET_SPACING : Std.U32 := 75#u32
 def PRE_BLOSSOM_TARGET_SPACING : Std.U32 := 150#u32
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::post_blossom_halving_interval]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 279:4-285:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 285:4-291:5
     Visibility: public -/
 def chain_spec.CoreSpec.post_blossom_halving_interval
   (self : chain_spec.CoreSpec) :
@@ -3122,8 +3179,263 @@ def funding.check_sets
   | none => ok (core.result.Result.Ok ())
   | some failure1 => ok (core.result.Result.Err failure1)
 
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop body 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 84:12-86:13
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.Uint256.to_le_bytes_loop0_loop0.body
+  (i : Std.Usize) (limb : Array Std.U8 8#usize)
+  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
+    32#usize)) (Array Std.U8 32#usize))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done bytes)
+  | some j =>
+    let i1 ← Array.index_usize limb j
+    let i2 ← 8#usize * i
+    let i3 ← i2 + j
+    let a ← Array.update bytes i3 i1
+    ok (cont (iter1, a))
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 84:12-86:13
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.Uint256.to_le_bytes_loop0_loop0
+  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
+  (i : Std.Usize) (limb : Array Std.U8 8#usize) :
+  Result (Array Std.U8 32#usize)
+  := do
+  loop
+    (fun (iter1, bytes1) =>
+      difficulty_rules.Uint256.to_le_bytes_loop0_loop0.body i limb iter1
+      bytes1)
+    (iter, bytes)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop body 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 82:8-87:9
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.Uint256.to_le_bytes_loop0.body
+  (iter : core.ops.range.Range Std.Usize) (self : difficulty_rules.Uint256)
+  (bytes : Array Std.U8 32#usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) ×
+    difficulty_rules.Uint256 × (Array Std.U8 32#usize)) (Array Std.U8
+    32#usize))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done bytes)
+  | some i =>
+    let i1 ← Array.index_usize self i
+    let limb ← lift (core.num.U64.to_le_bytes i1)
+    let bytes1 ←
+      difficulty_rules.Uint256.to_le_bytes_loop0_loop0
+        { start := 0#usize, «end» := 8#usize } bytes i limb
+    ok (cont (iter1, self, bytes1))
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 82:8-87:9
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.Uint256.to_le_bytes_loop0
+  (iter : core.ops.range.Range Std.Usize) (self : difficulty_rules.Uint256)
+  (bytes : Array Std.U8 32#usize) :
+  Result (Array Std.U8 32#usize)
+  := do
+  loop
+    (fun (iter1, self1, bytes1) =>
+      difficulty_rules.Uint256.to_le_bytes_loop0.body iter1 self1 bytes1)
+    (iter, self, bytes)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 80:4-89:5
+    Visibility: public -/
+def difficulty_rules.Uint256.to_le_bytes
+  (self : difficulty_rules.Uint256) : Result (Array Std.U8 32#usize) := do
+  let bytes := Array.repeat 32#usize 0#u8
+  difficulty_rules.Uint256.to_le_bytes_loop0
+    { start := 0#usize, «end» := 4#usize } self bytes
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop body 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.Uint256.to_compact_loop.body
+  (bytes : Array Std.U8 32#usize) (iter : core.ops.range.Range Std.Usize)
+  (top : Option Std.Usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Option Std.Usize))
+    (Option Std.Usize))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done top)
+  | some i =>
+    let i1 ← Array.index_usize bytes i
+    if i1 != 0#u8
+    then ok (cont (iter1, o))
+    else ok (cont (iter1, top))
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.Uint256.to_compact_loop
+  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
+  (top : Option Std.Usize) :
+  Result (Option Std.Usize)
+  := do
+  loop
+    (fun (iter1, top1) => difficulty_rules.Uint256.to_compact_loop.body bytes
+      iter1 top1)
+    (iter, top)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 294:4-320:5
+    Visibility: public -/
+def difficulty_rules.Uint256.to_compact
+  (self : difficulty_rules.Uint256) :
+  Result (core.result.Result Std.U32 ConsensusError)
+  := do
+  let bytes ← difficulty_rules.Uint256.to_le_bytes self
+  let top ←
+    difficulty_rules.Uint256.to_compact_loop
+      { start := 0#usize, «end» := 32#usize } bytes none
+  match top with
+  | none => ok (core.result.Result.Ok 0#u32)
+  | some top1 =>
+    let i ← top1 + 1#usize
+    let r ← core.convert.num.ptr_try_from_impls.TryFromU32Usize.try_from i
+    match r with
+    | core.result.Result.Ok size =>
+      let i1 ← Array.index_usize bytes top1
+      let i2 ← lift (core.convert.num.FromU32U8.from i1)
+      let mantissa ← i2 <<< 16#i32
+      let mantissa1 ←
+        if top1 >= 1#usize
+        then
+          do
+          let i3 ← top1 - 1#usize
+          let i4 ← Array.index_usize bytes i3
+          let i5 ← lift (core.convert.num.FromU32U8.from i4)
+          let i6 ← i5 <<< 8#i32
+          ok (mantissa ||| i6)
+        else ok mantissa
+      let mantissa2 ←
+        if top1 >= 2#usize
+        then
+          do
+          let i3 ← top1 - 2#usize
+          let i4 ← Array.index_usize bytes i3
+          let i5 ← lift (core.convert.num.FromU32U8.from i4)
+          ok (mantissa1 ||| i5)
+        else ok mantissa1
+      let i3 ← lift (mantissa2 &&& 8388608#u32)
+      let (size1, mantissa3) ←
+        if i3 != 0#u32
+        then
+          do
+          let mantissa4 ← mantissa2 >>> 8#i32
+          let size2 ← size + 1#u32
+          ok (size2, mantissa4)
+        else ok (size, mantissa2)
+      let i4 ← size1 <<< 24#i32
+      let i5 ← lift (i4 ||| mantissa3)
+      ok (core.result.Result.Ok i5)
+    | core.result.Result.Err _ =>
+      ok (core.result.Result.Err ConsensusError.Overflow)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop body 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 71:12-73:13
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.Uint256.from_le_bytes_loop0_loop0.body
+  (bytes : Array Std.U8 32#usize) (i : Std.Usize)
+  (iter : core.ops.range.Range Std.Usize) (limb : Array Std.U8 8#usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
+    8#usize)) (Array Std.U8 8#usize))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done limb)
+  | some j =>
+    let i1 ← 8#usize * i
+    let i2 ← i1 + j
+    let i3 ← Array.index_usize bytes i2
+    let a ← Array.update limb j i3
+    ok (cont (iter1, a))
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 71:12-73:13
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.Uint256.from_le_bytes_loop0_loop0
+  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
+  (i : Std.Usize) (limb : Array Std.U8 8#usize) :
+  Result (Array Std.U8 8#usize)
+  := do
+  loop
+    (fun (iter1, limb1) =>
+      difficulty_rules.Uint256.from_le_bytes_loop0_loop0.body bytes i iter1
+      limb1)
+    (iter, limb)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop body 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 69:8-75:9
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.Uint256.from_le_bytes_loop0.body
+  (bytes : Array Std.U8 32#usize) (iter : core.ops.range.Range Std.Usize)
+  (limbs : Array Std.U64 4#usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U64
+    4#usize)) (Array Std.U64 4#usize))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done limbs)
+  | some i =>
+    let limb := Array.repeat 8#usize 0#u8
+    let limb1 ←
+      difficulty_rules.Uint256.from_le_bytes_loop0_loop0
+        { start := 0#usize, «end» := 8#usize } bytes i limb
+    let i1 ← lift (core.num.U64.from_le_bytes limb1)
+    let a ← Array.update limbs i i1
+    ok (cont (iter1, a))
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 69:8-75:9
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.Uint256.from_le_bytes_loop0
+  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
+  (limbs : Array Std.U64 4#usize) :
+  Result (Array Std.U64 4#usize)
+  := do
+  loop
+    (fun (iter1, limbs1) => difficulty_rules.Uint256.from_le_bytes_loop0.body
+      bytes iter1 limbs1)
+    (iter, limbs)
+
+/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 67:4-77:5
+    Visibility: public -/
+def difficulty_rules.Uint256.from_le_bytes
+  (bytes : Array Std.U8 32#usize) : Result difficulty_rules.Uint256 := do
+  let limbs := Array.repeat 4#usize 0#u64
+  let limbs1 ←
+    difficulty_rules.Uint256.from_le_bytes_loop0
+      { start := 0#usize, «end» := 4#usize } bytes limbs
+  ok limbs1
+
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::checked]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 308:8-318:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 322:8-332:9
     Visibility: public -/
 @[rust_loop_body]
 def chain_spec.CoreSpec.checked_loop.body
@@ -3146,7 +3458,7 @@ def chain_spec.CoreSpec.checked_loop.body
       else ok (cont (iter1, height))
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::checked]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 308:8-318:9
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 322:8-332:9
     Visibility: public -/
 @[rust_loop]
 def chain_spec.CoreSpec.checked_loop
@@ -3160,7 +3472,7 @@ def chain_spec.CoreSpec.checked_loop
     (iter, floor)
 
 /-- [hayai_consensus_core::chain_spec::{hayai_consensus_core::chain_spec::CoreSpec}::checked]:
-    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 302:4-370:5
+    Source: 'crates/hayai-consensus-core/src/chain_spec.rs', lines 309:4-384:5
     Visibility: public -/
 def chain_spec.CoreSpec.checked
   (self : chain_spec.CoreSpec) :
@@ -3175,350 +3487,391 @@ def chain_spec.CoreSpec.checked
   if b
   then ok (core.result.Result.Err chain_spec.SpecError.Sprout)
   else
-    let out_of_order ←
-      chain_spec.CoreSpec.checked_loop
-        { start := 0#usize, «end» := chain_spec.UPGRADES }
-        self.activation_heights 0#u32
-    match out_of_order with
-    | none =>
-      let r ← chain_spec.CoreSpec.post_blossom_halving_interval self
-      match r with
-      | core.result.Result.Ok post =>
-        if post >= funding.PERIODS_PER_HALVING_INTERVAL
-        then
-          let r1 ←
-            subsidy_schedule.halving_height self 1#u32 core.num.U32.MAX
-          let cf ← core.result.Result.Insts.CoreOpsTry.branch r1
-          match cf with
-          | core.ops.control_flow.ControlFlow.Continue val =>
-            let first_inside_slow_start ←
-              match val with
-              | none => ok false
-              | some first => ok (first < self.slow_start_interval)
-            if self.slow_start_interval = 1#u32
+    let u ← difficulty_rules.Uint256.from_le_bytes self.pow_limit
+    let r ← difficulty_rules.Uint256.to_compact u
+    let cf ← core.result.Result.Insts.CoreOpsTry.branch r
+    match cf with
+    | core.ops.control_flow.ControlFlow.Continue val =>
+      if val != self.pow_limit_bits
+      then
+        ok (core.result.Result.Err (chain_spec.SpecError.PowLimitBits val
+          self.pow_limit_bits))
+      else
+        let out_of_order ←
+          chain_spec.CoreSpec.checked_loop
+            { start := 0#usize, «end» := chain_spec.UPGRADES }
+            self.activation_heights 0#u32
+        match out_of_order with
+        | none =>
+          let r1 ← chain_spec.CoreSpec.post_blossom_halving_interval self
+          match r1 with
+          | core.result.Result.Ok post =>
+            if post >= funding.PERIODS_PER_HALVING_INTERVAL
             then
-              ok (core.result.Result.Err (chain_spec.SpecError.SlowStart
-                self.slow_start_interval))
-            else
-              if first_inside_slow_start
-              then
-                ok (core.result.Result.Err (chain_spec.SpecError.SlowStart
-                  self.slow_start_interval))
-              else
-                let i1 := alloc.vec.Vec.len self.funding_streams
-                if i1 > 0#usize
+              let r2 ←
+                subsidy_schedule.halving_height self 1#u32 core.num.U32.MAX
+              let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r2
+              match cf1 with
+              | core.ops.control_flow.ControlFlow.Continue val1 =>
+                let first_inside_slow_start ←
+                  match val1 with
+                  | none => ok false
+                  | some first => ok (first < self.slow_start_interval)
+                if self.slow_start_interval = 1#u32
                 then
-                  match val with
-                  | none =>
-                    ok (core.result.Result.Err
-                      chain_spec.SpecError.NoFirstHalving)
-                  | some _ =>
-                    let nu7 ←
-                      chain_spec.CoreSpec.activation_height
-                        { self with first_halving := val }
-                        chain_spec.Upgrade.Nu7
-                    let s := alloc.vec.Vec.deref self.funding_streams
-                    let r2 ← funding.check_sets nu7 s
-                    let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r2
-                    match cf1 with
-                    | core.ops.control_flow.ControlFlow.Continue _ =>
-                      let s1 := alloc.vec.Vec.deref self.lockbox_disbursements
-                      let r3 ← lockbox.check_disbursements s1
-                      let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r3
-                      match cf2 with
-                      | core.ops.control_flow.ControlFlow.Continue _ =>
-                        match self.orchard_disabled_start_height with
-                        | none =>
-                          let r4 ←
-                            funding.check_script_counts
-                              { self with first_halving := val } true
+                  ok (core.result.Result.Err (chain_spec.SpecError.SlowStart
+                    self.slow_start_interval))
+                else
+                  if first_inside_slow_start
+                  then
+                    ok (core.result.Result.Err (chain_spec.SpecError.SlowStart
+                      self.slow_start_interval))
+                  else
+                    let i1 := alloc.vec.Vec.len self.funding_streams
+                    if i1 > 0#usize
+                    then
+                      match val1 with
+                      | none =>
+                        ok (core.result.Result.Err
+                          chain_spec.SpecError.NoFirstHalving)
+                      | some _ =>
+                        let nu7 ←
+                          chain_spec.CoreSpec.activation_height
+                            { self with first_halving := val1 }
+                            chain_spec.Upgrade.Nu7
+                        let s := alloc.vec.Vec.deref self.funding_streams
+                        let r3 ← funding.check_sets nu7 s
+                        let cf2 ←
+                          core.result.Result.Insts.CoreOpsTry.branch r3
+                        match cf2 with
+                        | core.ops.control_flow.ControlFlow.Continue _ =>
+                          let s1 :=
+                            alloc.vec.Vec.deref self.lockbox_disbursements
+                          let r4 ← lockbox.check_disbursements s1
                           let cf3 ←
                             core.result.Result.Insts.CoreOpsTry.branch r4
                           match cf3 with
                           | core.ops.control_flow.ControlFlow.Continue _ =>
-                            ok (core.result.Result.Ok
-                              { self with first_halving := val })
-                          | core.ops.control_flow.ControlFlow.Break residual =>
-                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                              chain_spec.CoreSpec (core.convert.FromSame
-                              chain_spec.SpecError) residual
-                        | some start =>
-                          let o1 ←
-                            chain_spec.CoreSpec.activation_height
-                              { self with first_halving := val }
-                              chain_spec.Upgrade.Nu6_2
-                          let last ←
-                            match o1 with
-                            | none => ok (some core.num.U32.MAX)
-                            | some nu6_2 => ok (U32.checked_sub nu6_2 1#u32)
-                          match last with
-                          | none =>
-                            let r4 ←
-                              funding.check_script_counts
-                                { self with first_halving := val } true
-                            let cf3 ←
-                              core.result.Result.Insts.CoreOpsTry.branch r4
-                            match cf3 with
-                            | core.ops.control_flow.ControlFlow.Continue _ =>
-                              ok (core.result.Result.Ok
-                                { self with first_halving := val })
-                            | core.ops.control_flow.ControlFlow.Break residual
-                              =>
-                              core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                chain_spec.CoreSpec (core.convert.FromSame
-                                chain_spec.SpecError) residual
-                          | some last1 =>
-                            if last1 >= start
-                            then
-                              let r4 ←
-                                chain_spec.CoreSpec.upgrade_at
-                                  { self with first_halving := val } start
-                              let cf3 ←
-                                core.result.Result.Insts.CoreOpsTry.branch r4
-                              match cf3 with
-                              | core.ops.control_flow.ControlFlow.Continue val1
-                                =>
-                                let b1 ←
-                                  core.cmp.PartialEq.ne.trait_default
-                                    chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
-                                    val1 chain_spec.Upgrade.Nu6_1
-                                if b1
+                            match self.orchard_disabled_start_height with
+                            | none =>
+                              let r5 ←
+                                funding.check_script_counts
+                                  { self with first_halving := val1 } true
+                              let cf4 ←
+                                core.result.Result.Insts.CoreOpsTry.branch r5
+                              match cf4 with
+                              | core.ops.control_flow.ControlFlow.Continue _ =>
+                                ok (core.result.Result.Ok
+                                  { self with first_halving := val1 })
+                              | core.ops.control_flow.ControlFlow.Break
+                                residual =>
+                                core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                  chain_spec.CoreSpec (core.convert.FromSame
+                                  chain_spec.SpecError) residual
+                            | some start =>
+                              let o1 ←
+                                chain_spec.CoreSpec.activation_height
+                                  { self with first_halving := val1 }
+                                  chain_spec.Upgrade.Nu6_2
+                              let last ←
+                                match o1 with
+                                | none => ok (some core.num.U32.MAX)
+                                | some nu6_2 =>
+                                  ok (U32.checked_sub nu6_2 1#u32)
+                              match last with
+                              | none =>
+                                let r5 ←
+                                  funding.check_script_counts
+                                    { self with first_halving := val1 } true
+                                let cf4 ←
+                                  core.result.Result.Insts.CoreOpsTry.branch r5
+                                match cf4 with
+                                | core.ops.control_flow.ControlFlow.Continue _
+                                  =>
+                                  ok (core.result.Result.Ok
+                                    { self with first_halving := val1 })
+                                | core.ops.control_flow.ControlFlow.Break
+                                  residual =>
+                                  core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                    chain_spec.CoreSpec (core.convert.FromSame
+                                    chain_spec.SpecError) residual
+                              | some last1 =>
+                                if last1 >= start
                                 then
-                                  ok (core.result.Result.Err
-                                    (chain_spec.SpecError.OrchardSoftFork
-                                    start))
-                                else
                                   let r5 ←
                                     chain_spec.CoreSpec.upgrade_at
-                                      { self with first_halving := val } last1
+                                      { self with first_halving := val1 } start
                                   let cf4 ←
                                     core.result.Result.Insts.CoreOpsTry.branch
                                       r5
                                   match cf4 with
                                   | core.ops.control_flow.ControlFlow.Continue
                                     val2 =>
-                                    let outside ←
+                                    let b1 ←
                                       core.cmp.PartialEq.ne.trait_default
                                         chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
                                         val2 chain_spec.Upgrade.Nu6_1
-                                    if outside
+                                    if b1
                                     then
                                       ok (core.result.Result.Err
                                         (chain_spec.SpecError.OrchardSoftFork
                                         start))
                                     else
                                       let r6 ←
-                                        funding.check_script_counts
-                                          { self with first_halving := val }
-                                          true
+                                        chain_spec.CoreSpec.upgrade_at
+                                          { self with first_halving := val1 }
+                                          last1
                                       let cf5 ←
                                         core.result.Result.Insts.CoreOpsTry.branch
                                           r6
                                       match cf5 with
                                       |
                                         core.ops.control_flow.ControlFlow.Continue
-                                        _ =>
-                                        ok (core.result.Result.Ok
-                                          { self with first_halving := val })
+                                        val3 =>
+                                        let outside ←
+                                          core.cmp.PartialEq.ne.trait_default
+                                            chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
+                                            val3 chain_spec.Upgrade.Nu6_1
+                                        if outside
+                                        then
+                                          ok (core.result.Result.Err
+                                            (chain_spec.SpecError.OrchardSoftFork
+                                            start))
+                                        else
+                                          let r7 ←
+                                            funding.check_script_counts
+                                              { self with first_halving := val1
+                                              } true
+                                          let cf6 ←
+                                            core.result.Result.Insts.CoreOpsTry.branch
+                                              r7
+                                          match cf6 with
+                                          |
+                                            core.ops.control_flow.ControlFlow.Continue
+                                            _ =>
+                                            ok (core.result.Result.Ok
+                                              { self with first_halving := val1
+                                              })
+                                          |
+                                            core.ops.control_flow.ControlFlow.Break
+                                            residual =>
+                                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                              chain_spec.CoreSpec
+                                              (core.convert.FromSame
+                                              chain_spec.SpecError) residual
                                       | core.ops.control_flow.ControlFlow.Break
                                         residual =>
                                         core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                                           chain_spec.CoreSpec
-                                          (core.convert.FromSame
-                                          chain_spec.SpecError) residual
+                                          chain_spec.SpecError.Insts.CoreConvertFromConsensusError
+                                          residual
                                   | core.ops.control_flow.ControlFlow.Break
                                     residual =>
                                     core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                                       chain_spec.CoreSpec
                                       chain_spec.SpecError.Insts.CoreConvertFromConsensusError
                                       residual
-                              | core.ops.control_flow.ControlFlow.Break
-                                residual =>
-                                core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                  chain_spec.CoreSpec
-                                  chain_spec.SpecError.Insts.CoreConvertFromConsensusError
-                                  residual
-                            else
-                              let r4 ←
+                                else
+                                  let r5 ←
+                                    funding.check_script_counts
+                                      { self with first_halving := val1 } true
+                                  let cf4 ←
+                                    core.result.Result.Insts.CoreOpsTry.branch
+                                      r5
+                                  match cf4 with
+                                  | core.ops.control_flow.ControlFlow.Continue
+                                    _ =>
+                                    ok (core.result.Result.Ok
+                                      { self with first_halving := val1 })
+                                  | core.ops.control_flow.ControlFlow.Break
+                                    residual =>
+                                    core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                      chain_spec.CoreSpec
+                                      (core.convert.FromSame
+                                      chain_spec.SpecError) residual
+                          | core.ops.control_flow.ControlFlow.Break residual =>
+                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                              chain_spec.CoreSpec (core.convert.FromSame
+                              chain_spec.SpecError) residual
+                        | core.ops.control_flow.ControlFlow.Break residual =>
+                          core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                            chain_spec.CoreSpec (core.convert.FromSame
+                            chain_spec.SpecError) residual
+                    else
+                      let nu7 ←
+                        chain_spec.CoreSpec.activation_height
+                          { self with first_halving := val1 }
+                          chain_spec.Upgrade.Nu7
+                      let s := alloc.vec.Vec.deref self.funding_streams
+                      let r3 ← funding.check_sets nu7 s
+                      let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r3
+                      match cf2 with
+                      | core.ops.control_flow.ControlFlow.Continue _ =>
+                        let s1 :=
+                          alloc.vec.Vec.deref self.lockbox_disbursements
+                        let r4 ← lockbox.check_disbursements s1
+                        let cf3 ←
+                          core.result.Result.Insts.CoreOpsTry.branch r4
+                        match cf3 with
+                        | core.ops.control_flow.ControlFlow.Continue _ =>
+                          match self.orchard_disabled_start_height with
+                          | none =>
+                            let r5 ←
+                              funding.check_script_counts
+                                { self with first_halving := val1 } true
+                            let cf4 ←
+                              core.result.Result.Insts.CoreOpsTry.branch r5
+                            match cf4 with
+                            | core.ops.control_flow.ControlFlow.Continue _ =>
+                              ok (core.result.Result.Ok
+                                { self with first_halving := val1 })
+                            | core.ops.control_flow.ControlFlow.Break residual
+                              =>
+                              core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                chain_spec.CoreSpec (core.convert.FromSame
+                                chain_spec.SpecError) residual
+                          | some start =>
+                            let o1 ←
+                              chain_spec.CoreSpec.activation_height
+                                { self with first_halving := val1 }
+                                chain_spec.Upgrade.Nu6_2
+                            let last ←
+                              match o1 with
+                              | none => ok (some core.num.U32.MAX)
+                              | some nu6_2 => ok (U32.checked_sub nu6_2 1#u32)
+                            match last with
+                            | none =>
+                              let r5 ←
                                 funding.check_script_counts
-                                  { self with first_halving := val } true
-                              let cf3 ←
-                                core.result.Result.Insts.CoreOpsTry.branch r4
-                              match cf3 with
+                                  { self with first_halving := val1 } true
+                              let cf4 ←
+                                core.result.Result.Insts.CoreOpsTry.branch r5
+                              match cf4 with
                               | core.ops.control_flow.ControlFlow.Continue _ =>
                                 ok (core.result.Result.Ok
-                                  { self with first_halving := val })
+                                  { self with first_halving := val1 })
                               | core.ops.control_flow.ControlFlow.Break
                                 residual =>
                                 core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                                   chain_spec.CoreSpec (core.convert.FromSame
                                   chain_spec.SpecError) residual
-                      | core.ops.control_flow.ControlFlow.Break residual =>
-                        core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                          chain_spec.CoreSpec (core.convert.FromSame
-                          chain_spec.SpecError) residual
-                    | core.ops.control_flow.ControlFlow.Break residual =>
-                      core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                        chain_spec.CoreSpec (core.convert.FromSame
-                        chain_spec.SpecError) residual
-                else
-                  let nu7 ←
-                    chain_spec.CoreSpec.activation_height
-                      { self with first_halving := val } chain_spec.Upgrade.Nu7
-                  let s := alloc.vec.Vec.deref self.funding_streams
-                  let r2 ← funding.check_sets nu7 s
-                  let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r2
-                  match cf1 with
-                  | core.ops.control_flow.ControlFlow.Continue _ =>
-                    let s1 := alloc.vec.Vec.deref self.lockbox_disbursements
-                    let r3 ← lockbox.check_disbursements s1
-                    let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r3
-                    match cf2 with
-                    | core.ops.control_flow.ControlFlow.Continue _ =>
-                      match self.orchard_disabled_start_height with
-                      | none =>
-                        let r4 ←
-                          funding.check_script_counts
-                            { self with first_halving := val } true
-                        let cf3 ←
-                          core.result.Result.Insts.CoreOpsTry.branch r4
-                        match cf3 with
-                        | core.ops.control_flow.ControlFlow.Continue _ =>
-                          ok (core.result.Result.Ok
-                            { self with first_halving := val })
-                        | core.ops.control_flow.ControlFlow.Break residual =>
-                          core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                            chain_spec.CoreSpec (core.convert.FromSame
-                            chain_spec.SpecError) residual
-                      | some start =>
-                        let o1 ←
-                          chain_spec.CoreSpec.activation_height
-                            { self with first_halving := val }
-                            chain_spec.Upgrade.Nu6_2
-                        let last ←
-                          match o1 with
-                          | none => ok (some core.num.U32.MAX)
-                          | some nu6_2 => ok (U32.checked_sub nu6_2 1#u32)
-                        match last with
-                        | none =>
-                          let r4 ←
-                            funding.check_script_counts
-                              { self with first_halving := val } true
-                          let cf3 ←
-                            core.result.Result.Insts.CoreOpsTry.branch r4
-                          match cf3 with
-                          | core.ops.control_flow.ControlFlow.Continue _ =>
-                            ok (core.result.Result.Ok
-                              { self with first_halving := val })
-                          | core.ops.control_flow.ControlFlow.Break residual =>
-                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                              chain_spec.CoreSpec (core.convert.FromSame
-                              chain_spec.SpecError) residual
-                        | some last1 =>
-                          if last1 >= start
-                          then
-                            let r4 ←
-                              chain_spec.CoreSpec.upgrade_at
-                                { self with first_halving := val } start
-                            let cf3 ←
-                              core.result.Result.Insts.CoreOpsTry.branch r4
-                            match cf3 with
-                            | core.ops.control_flow.ControlFlow.Continue val1
-                              =>
-                              let b1 ←
-                                core.cmp.PartialEq.ne.trait_default
-                                  chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
-                                  val1 chain_spec.Upgrade.Nu6_1
-                              if b1
+                            | some last1 =>
+                              if last1 >= start
                               then
-                                ok (core.result.Result.Err
-                                  (chain_spec.SpecError.OrchardSoftFork start))
-                              else
                                 let r5 ←
                                   chain_spec.CoreSpec.upgrade_at
-                                    { self with first_halving := val } last1
+                                    { self with first_halving := val1 } start
                                 let cf4 ←
                                   core.result.Result.Insts.CoreOpsTry.branch r5
                                 match cf4 with
                                 | core.ops.control_flow.ControlFlow.Continue
                                   val2 =>
-                                  let outside ←
+                                  let b1 ←
                                     core.cmp.PartialEq.ne.trait_default
                                       chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
                                       val2 chain_spec.Upgrade.Nu6_1
-                                  if outside
+                                  if b1
                                   then
                                     ok (core.result.Result.Err
                                       (chain_spec.SpecError.OrchardSoftFork
                                       start))
                                   else
                                     let r6 ←
-                                      funding.check_script_counts
-                                        { self with first_halving := val } true
+                                      chain_spec.CoreSpec.upgrade_at
+                                        { self with first_halving := val1 }
+                                        last1
                                     let cf5 ←
                                       core.result.Result.Insts.CoreOpsTry.branch
                                         r6
                                     match cf5 with
                                     |
                                       core.ops.control_flow.ControlFlow.Continue
-                                      _ =>
-                                      ok (core.result.Result.Ok
-                                        { self with first_halving := val })
+                                      val3 =>
+                                      let outside ←
+                                        core.cmp.PartialEq.ne.trait_default
+                                          chain_spec.Upgrade.Insts.CoreCmpPartialEqUpgrade
+                                          val3 chain_spec.Upgrade.Nu6_1
+                                      if outside
+                                      then
+                                        ok (core.result.Result.Err
+                                          (chain_spec.SpecError.OrchardSoftFork
+                                          start))
+                                      else
+                                        let r7 ←
+                                          funding.check_script_counts
+                                            { self with first_halving := val1 }
+                                            true
+                                        let cf6 ←
+                                          core.result.Result.Insts.CoreOpsTry.branch
+                                            r7
+                                        match cf6 with
+                                        |
+                                          core.ops.control_flow.ControlFlow.Continue
+                                          _ =>
+                                          ok (core.result.Result.Ok
+                                            { self with first_halving := val1 })
+                                        |
+                                          core.ops.control_flow.ControlFlow.Break
+                                          residual =>
+                                          core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                            chain_spec.CoreSpec
+                                            (core.convert.FromSame
+                                            chain_spec.SpecError) residual
                                     | core.ops.control_flow.ControlFlow.Break
                                       residual =>
                                       core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                                         chain_spec.CoreSpec
-                                        (core.convert.FromSame
-                                        chain_spec.SpecError) residual
+                                        chain_spec.SpecError.Insts.CoreConvertFromConsensusError
+                                        residual
                                 | core.ops.control_flow.ControlFlow.Break
                                   residual =>
                                   core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                                     chain_spec.CoreSpec
                                     chain_spec.SpecError.Insts.CoreConvertFromConsensusError
                                     residual
-                            | core.ops.control_flow.ControlFlow.Break residual
-                              =>
-                              core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                chain_spec.CoreSpec
-                                chain_spec.SpecError.Insts.CoreConvertFromConsensusError
-                                residual
-                          else
-                            let r4 ←
-                              funding.check_script_counts
-                                { self with first_halving := val } true
-                            let cf3 ←
-                              core.result.Result.Insts.CoreOpsTry.branch r4
-                            match cf3 with
-                            | core.ops.control_flow.ControlFlow.Continue _ =>
-                              ok (core.result.Result.Ok
-                                { self with first_halving := val })
-                            | core.ops.control_flow.ControlFlow.Break residual
-                              =>
-                              core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                chain_spec.CoreSpec (core.convert.FromSame
-                                chain_spec.SpecError) residual
-                    | core.ops.control_flow.ControlFlow.Break residual =>
-                      core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                        chain_spec.CoreSpec (core.convert.FromSame
-                        chain_spec.SpecError) residual
-                  | core.ops.control_flow.ControlFlow.Break residual =>
-                    core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                      chain_spec.CoreSpec (core.convert.FromSame
-                      chain_spec.SpecError) residual
-          | core.ops.control_flow.ControlFlow.Break residual =>
-            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-              chain_spec.CoreSpec
-              chain_spec.SpecError.Insts.CoreConvertFromConsensusError residual
-        else
-          ok (core.result.Result.Err (chain_spec.SpecError.HalvingInterval
-            self.pre_blossom_halving_interval))
-      | core.result.Result.Err _ =>
-        ok (core.result.Result.Err (chain_spec.SpecError.HalvingInterval
-          self.pre_blossom_halving_interval))
-    | some p =>
-      let (i1, height) := p
-      let u ← Array.index_usize chain_spec.Upgrade.ALL i1
-      ok (core.result.Result.Err (chain_spec.SpecError.Order u height))
+                              else
+                                let r5 ←
+                                  funding.check_script_counts
+                                    { self with first_halving := val1 } true
+                                let cf4 ←
+                                  core.result.Result.Insts.CoreOpsTry.branch r5
+                                match cf4 with
+                                | core.ops.control_flow.ControlFlow.Continue _
+                                  =>
+                                  ok (core.result.Result.Ok
+                                    { self with first_halving := val1 })
+                                | core.ops.control_flow.ControlFlow.Break
+                                  residual =>
+                                  core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                                    chain_spec.CoreSpec (core.convert.FromSame
+                                    chain_spec.SpecError) residual
+                        | core.ops.control_flow.ControlFlow.Break residual =>
+                          core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                            chain_spec.CoreSpec (core.convert.FromSame
+                            chain_spec.SpecError) residual
+                      | core.ops.control_flow.ControlFlow.Break residual =>
+                        core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                          chain_spec.CoreSpec (core.convert.FromSame
+                          chain_spec.SpecError) residual
+              | core.ops.control_flow.ControlFlow.Break residual =>
+                core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                  chain_spec.CoreSpec
+                  chain_spec.SpecError.Insts.CoreConvertFromConsensusError
+                  residual
+            else
+              ok (core.result.Result.Err (chain_spec.SpecError.HalvingInterval
+                self.pre_blossom_halving_interval))
+          | core.result.Result.Err _ =>
+            ok (core.result.Result.Err (chain_spec.SpecError.HalvingInterval
+              self.pre_blossom_halving_interval))
+        | some p =>
+          let (i1, height) := p
+          let u1 ← Array.index_usize chain_spec.Upgrade.ALL i1
+          ok (core.result.Result.Err (chain_spec.SpecError.Order u1 height))
+    | core.ops.control_flow.ControlFlow.Break residual =>
+      core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+        chain_spec.CoreSpec
+        chain_spec.SpecError.Insts.CoreConvertFromConsensusError residual
 
 /-- [hayai_consensus_core::coinbase_value::{impl core::clone::Clone for hayai_consensus_core::coinbase_value::OutputKind}::clone]:
     Source: 'crates/hayai-consensus-core/src/coinbase_value.rs', lines 24:9-24:14
@@ -7261,172 +7614,6 @@ def difficulty_rules.Uint256.from_u64
   (value : Std.U64) : Result difficulty_rules.Uint256 := do
   ok (Array.make 4#usize [ value, 0#u64, 0#u64, 0#u64 ])
 
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop body 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 71:12-73:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_le_bytes_loop0_loop0.body
-  (bytes : Array Std.U8 32#usize) (i : Std.Usize)
-  (iter : core.ops.range.Range Std.Usize) (limb : Array Std.U8 8#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    8#usize)) (Array Std.U8 8#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done limb)
-  | some j =>
-    let i1 ← 8#usize * i
-    let i2 ← i1 + j
-    let i3 ← Array.index_usize bytes i2
-    let a ← Array.update limb j i3
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 71:12-73:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_le_bytes_loop0_loop0
-  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
-  (i : Std.Usize) (limb : Array Std.U8 8#usize) :
-  Result (Array Std.U8 8#usize)
-  := do
-  loop
-    (fun (iter1, limb1) =>
-      difficulty_rules.Uint256.from_le_bytes_loop0_loop0.body bytes i iter1
-      limb1)
-    (iter, limb)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 69:8-75:9
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_le_bytes_loop0.body
-  (bytes : Array Std.U8 32#usize) (iter : core.ops.range.Range Std.Usize)
-  (limbs : Array Std.U64 4#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U64
-    4#usize)) (Array Std.U64 4#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done limbs)
-  | some i =>
-    let limb := Array.repeat 8#usize 0#u8
-    let limb1 ←
-      difficulty_rules.Uint256.from_le_bytes_loop0_loop0
-        { start := 0#usize, «end» := 8#usize } bytes i limb
-    let i1 ← lift (core.num.U64.from_le_bytes limb1)
-    let a ← Array.update limbs i i1
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 69:8-75:9
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_le_bytes_loop0
-  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
-  (limbs : Array Std.U64 4#usize) :
-  Result (Array Std.U64 4#usize)
-  := do
-  loop
-    (fun (iter1, limbs1) => difficulty_rules.Uint256.from_le_bytes_loop0.body
-      bytes iter1 limbs1)
-    (iter, limbs)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_le_bytes]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 67:4-77:5
-    Visibility: public -/
-def difficulty_rules.Uint256.from_le_bytes
-  (bytes : Array Std.U8 32#usize) : Result difficulty_rules.Uint256 := do
-  let limbs := Array.repeat 4#usize 0#u64
-  let limbs1 ←
-    difficulty_rules.Uint256.from_le_bytes_loop0
-      { start := 0#usize, «end» := 4#usize } bytes limbs
-  ok limbs1
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop body 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 84:12-86:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.to_le_bytes_loop0_loop0.body
-  (i : Std.Usize) (limb : Array Std.U8 8#usize)
-  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done bytes)
-  | some j =>
-    let i1 ← Array.index_usize limb j
-    let i2 ← 8#usize * i
-    let i3 ← i2 + j
-    let a ← Array.update bytes i3 i1
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 84:12-86:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.to_le_bytes_loop0_loop0
-  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
-  (i : Std.Usize) (limb : Array Std.U8 8#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, bytes1) =>
-      difficulty_rules.Uint256.to_le_bytes_loop0_loop0.body i limb iter1
-      bytes1)
-    (iter, bytes)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 82:8-87:9
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.to_le_bytes_loop0.body
-  (iter : core.ops.range.Range Std.Usize) (self : difficulty_rules.Uint256)
-  (bytes : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) ×
-    difficulty_rules.Uint256 × (Array Std.U8 32#usize)) (Array Std.U8
-    32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done bytes)
-  | some i =>
-    let i1 ← Array.index_usize self i
-    let limb ← lift (core.num.U64.to_le_bytes i1)
-    let bytes1 ←
-      difficulty_rules.Uint256.to_le_bytes_loop0_loop0
-        { start := 0#usize, «end» := 8#usize } bytes i limb
-    ok (cont (iter1, self, bytes1))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 82:8-87:9
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.to_le_bytes_loop0
-  (iter : core.ops.range.Range Std.Usize) (self : difficulty_rules.Uint256)
-  (bytes : Array Std.U8 32#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, self1, bytes1) =>
-      difficulty_rules.Uint256.to_le_bytes_loop0.body iter1 self1 bytes1)
-    (iter, self, bytes)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_le_bytes]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 80:4-89:5
-    Visibility: public -/
-def difficulty_rules.Uint256.to_le_bytes
-  (self : difficulty_rules.Uint256) : Result (Array Std.U8 32#usize) := do
-  let bytes := Array.repeat 32#usize 0#u8
-  difficulty_rules.Uint256.to_le_bytes_loop0
-    { start := 0#usize, «end» := 4#usize } self bytes
-
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::bit_length]: loop body 0:
     Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 94:8-104:5
     Visibility: public -/
@@ -8087,95 +8274,6 @@ def difficulty_rules.Uint256.from_compact
             let u ← difficulty_rules.Uint256.from_le_bytes target1
             ok (some u)
           | core.result.Result.Err _ => ok none
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.to_compact_loop.body
-  (bytes : Array Std.U8 32#usize) (iter : core.ops.range.Range Std.Usize)
-  (top : Option Std.Usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Option Std.Usize))
-    (Option Std.Usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done top)
-  | some i =>
-    let i1 ← Array.index_usize bytes i
-    if i1 != 0#u8
-    then ok (cont (iter1, o))
-    else ok (cont (iter1, top))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.to_compact_loop
-  (iter : core.ops.range.Range Std.Usize) (bytes : Array Std.U8 32#usize)
-  (top : Option Std.Usize) :
-  Result (Option Std.Usize)
-  := do
-  loop
-    (fun (iter1, top1) => difficulty_rules.Uint256.to_compact_loop.body bytes
-      iter1 top1)
-    (iter, top)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 294:4-320:5
-    Visibility: public -/
-def difficulty_rules.Uint256.to_compact
-  (self : difficulty_rules.Uint256) :
-  Result (core.result.Result Std.U32 ConsensusError)
-  := do
-  let bytes ← difficulty_rules.Uint256.to_le_bytes self
-  let top ←
-    difficulty_rules.Uint256.to_compact_loop
-      { start := 0#usize, «end» := 32#usize } bytes none
-  match top with
-  | none => ok (core.result.Result.Ok 0#u32)
-  | some top1 =>
-    let i ← top1 + 1#usize
-    let r ← core.convert.num.ptr_try_from_impls.TryFromU32Usize.try_from i
-    match r with
-    | core.result.Result.Ok size =>
-      let i1 ← Array.index_usize bytes top1
-      let i2 ← lift (core.convert.num.FromU32U8.from i1)
-      let mantissa ← i2 <<< 16#i32
-      let mantissa1 ←
-        if top1 >= 1#usize
-        then
-          do
-          let i3 ← top1 - 1#usize
-          let i4 ← Array.index_usize bytes i3
-          let i5 ← lift (core.convert.num.FromU32U8.from i4)
-          let i6 ← i5 <<< 8#i32
-          ok (mantissa ||| i6)
-        else ok mantissa
-      let mantissa2 ←
-        if top1 >= 2#usize
-        then
-          do
-          let i3 ← top1 - 2#usize
-          let i4 ← Array.index_usize bytes i3
-          let i5 ← lift (core.convert.num.FromU32U8.from i4)
-          ok (mantissa1 ||| i5)
-        else ok mantissa1
-      let i3 ← lift (mantissa2 &&& 8388608#u32)
-      let (size1, mantissa3) ←
-        if i3 != 0#u32
-        then
-          do
-          let mantissa4 ← mantissa2 >>> 8#i32
-          let size2 ← size + 1#u32
-          ok (size2, mantissa4)
-        else ok (size, mantissa2)
-      let i4 ← size1 <<< 24#i32
-      let i5 ← lift (i4 ||| mantissa3)
-      ok (core.result.Result.Ok i5)
-    | core.result.Result.Err _ =>
-      ok (core.result.Result.Err ConsensusError.Overflow)
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::cmp::Ord for hayai_consensus_core::difficulty_rules::Uint256}]
     Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 323:0-334:1 -/
