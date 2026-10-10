@@ -68,4 +68,18 @@ theorem tdiv_bounds (x d : ℤ) : -(x.natAbs : ℤ) ≤ x.tdiv d ∧ x.tdiv d �
   have := x.hBounds
   cases System.Platform.numBits_eq <;> simp_all [UScalarTy.numBits] <;> omega
 
+/-- `u64::try_from(usize)` (`FunsExternal.lean`) never fails: a `usize` has 64 bits or fewer. -/
+@[step] theorem u64_try_from_usize_spec (x : Usize) :
+    U64.Insts.CoreConvertTryFromUsizeTryFromIntError.try_from x ⦃ r =>
+      ∃ y : U64, r = core.result.Result.Ok y ∧ y.val = x.val ⦄ := by
+  unfold U64.Insts.CoreConvertTryFromUsizeTryFromIntError.try_from core.num.tryFromUScalar
+  have h : x.val ≤ UScalar.max .U64 := by
+    have := x.hBounds
+    simp only [UScalar.max, UScalarTy.numBits] at *
+    cases System.Platform.numBits_eq <;> simp_all <;> omega
+  simp only [h, ↓reduceIte, WP.spec_ok, core.result.Result.Ok.injEq, exists_eq_left']
+  simp [UScalar.cast_val_eq]
+  have := x.hBounds
+  cases System.Platform.numBits_eq <;> simp_all [UScalarTy.numBits] <;> omega
+
 end Hayai.Proofs.Scalars

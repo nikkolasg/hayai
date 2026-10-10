@@ -512,4 +512,190 @@ theorem to_le_bytes_spec (a : Array U64 4#usize) :
   case hb => intro n hn; simp [Array.repeat_val, hn]; interval_cases n <;> rfl
   exact bytes_post n n_post
 
+open Hayai.Proofs.Bytes in
+section
+/-- The sum of the first `n` base-256 digits of `x` is `x mod 256^n`. -/
+theorem digits_sum (x : ℕ) : ∀ n, ∑ k ∈ Finset.range n, x / 256 ^ k % 256 * 256 ^ k = x % 256 ^ n
+  | 0 => by simp [Nat.mod_one]
+  | n + 1 => by
+    rw [Finset.sum_range_succ, digits_sum x n, pow_succ, Nat.mod_mul]
+    ring
+
+theorem u128_to_le_bytes_digit (x : U128) (k : ℕ) (hk : k < 16) :
+    (core.num.U128.to_le_bytes x).val[k]!.val = x.val / 256 ^ k % 256 := by
+  have h := leVal_digit x.bv.toLEBytes k
+  rw [leVal_toLEBytes (by simp)] at h
+  have hl : k < x.bv.toLEBytes.length := by simp [BitVec.toLEBytes_length]; omega
+  simp only [core.num.U128.to_le_bytes, Array.from_val, List.getElem!_eq_getElem?_getD,
+    List.getElem?_map, List.getElem?_eq_getElem hl, Option.map_some, Option.getD_some] at h ⊢
+  exact h.symm
+
+theorem bytesVal8 (l : List U8) (h : l.length = 8) :
+    bytesVal l = ∑ k ∈ Finset.range 8, l[k]!.val * 256 ^ k := by
+  rw [bytesVal_eq_sum, h]
+
+/-- `split`: the low and the high 64 bits of a `u128`. -/
+theorem split_spec (x : U128) :
+    difficulty_rules.split x ⦃ p => p.1.val = x.val % 2 ^ 64 ∧ p.2.val = x.val / 2 ^ 64 ⦄ := by
+  unfold difficulty_rules.split
+  simp only [lift, Std.bind_ok]
+  have hd := fun k (hk : k < 16) => u128_to_le_bytes_digit x k hk
+  have hxb := x.hBounds
+  simp only [UScalarTy.numBits] at hxb
+  step*
+  have hv : ∀ k (hk : k < 16), ((core.num.U128.to_le_bytes x).val[k]'(by simp; omega)).val =
+      x.val / 256 ^ k % 256 := fun k hk => by
+    rw [← getElem!_pos (core.num.U128.to_le_bytes x).val k (by simp; omega)]; exact hd k hk
+  simp only [i_post, i1_post, i2_post, i3_post, i4_post, i5_post, i6_post, i7_post, i8_post,
+    i9_post, i10_post, i11_post, i12_post, i13_post, i14_post, i15_post]
+  rw [u64_from_le_bytes_val, u64_from_le_bytes_val]
+  simp only [Array.make, Array.from_val, bytesVal_cons, bytesVal_nil]
+  rw [hv 0 (by omega), hv 1 (by omega), hv 2 (by omega), hv 3 (by omega), hv 4 (by omega),
+    hv 5 (by omega), hv 6 (by omega), hv 7 (by omega), hv 8 (by omega), hv 9 (by omega),
+    hv 10 (by omega), hv 11 (by omega), hv 12 (by omega), hv 13 (by omega), hv 14 (by omega),
+    hv 15 (by omega)]
+  have hq : x.val / 256 ^ 8 % 256 ^ 8 = x.val / 256 ^ 8 := Nat.mod_eq_of_lt (by
+    rw [Nat.div_lt_iff_lt_mul (by positivity), ← pow_add]; norm_num; omega)
+  constructor
+  · calc _ = ∑ k ∈ Finset.range 8, x.val / 256 ^ k % 256 * 256 ^ k := by
+          simp only [Finset.sum_range_succ, Finset.sum_range_zero]; ring
+      _ = x.val % 256 ^ 8 := digits_sum _ 8
+      _ = x.val % 2 ^ 64 := by norm_num
+  · calc _ = ∑ k ∈ Finset.range 8, x.val / 256 ^ 8 / 256 ^ k % 256 * 256 ^ k := by
+          simp only [Finset.sum_range_succ, Finset.sum_range_zero, Nat.div_div_eq_div_mul,
+            ← pow_add]
+          ring
+      _ = x.val / 256 ^ 8 % 256 ^ 8 := digits_sum _ 8
+      _ = x.val / 256 ^ 8 := hq
+      _ = x.val / 2 ^ 64 := by norm_num
+
+end
+
+/-- The value of the limbs from `i` up. -/
+def hiV (a : Array U64 4#usize) (i : ℕ) : ℕ := toNat a / 2 ^ (64 * i)
+
+theorem hiV_step (a : Array U64 4#usize) (i : ℕ) (hi : i < 4) :
+    hiV a i = hiV a (i + 1) * 2 ^ 64 + a.val[i]!.val := by
+  unfold hiV
+  rw [← limb_of_toNat a i hi, show 64 * (i + 1) = 64 * i + 64 by ring, pow_add,
+    ← Nat.div_div_eq_div_mul]
+  exact (Nat.div_add_mod' _ _).symm
+
+theorem hiV_four (a : Array U64 4#usize) : hiV a 4 = 0 := by
+  unfold hiV; rw [Nat.div_eq_of_lt]; have := toNat_lt a; norm_num at this ⊢; omega
+
+theorem hiV_zero (a : Array U64 4#usize) : hiV a 0 = toNat a := by simp [hiV]
+
+/-- `hiV` reads only the limbs from `i` up. -/
+theorem hiV_set (a : Array U64 4#usize) (k : Usize) (v : U64) (i : ℕ) (hk : k.val < i) (hi : i ≤ 4) :
+    hiV (a.set k v) i = hiV a i := by
+  rcases (show i = 4 ∨ i < 4 by omega) with h | h
+  · subst h; rw [hiV_four, hiV_four]
+  · -- Induction from 4 down.
+    have key : ∀ m, m ≤ 4 - i → hiV (a.set k v) (4 - m) = hiV a (4 - m) := by
+      intro m
+      induction m with
+      | zero => intro _; rw [hiV_four, hiV_four]
+      | succ m ih =>
+        intro hm
+        have e : 4 - (m + 1) + 1 = 4 - m := by omega
+        rw [hiV_step _ _ (by omega), hiV_step a _ (by omega), e, ih (by omega)]
+        congr 1
+        rw [Array.set_val_eq]
+        have hne : k.val ≠ 4 - (m + 1) := by omega
+        simp only [List.getElem!_eq_getElem?_getD, List.getElem?_set_ne hne]
+    have := key (4 - i) (le_refl _)
+    rwa [show 4 - (4 - i) = i by omega] at this
+
+theorem div_rem_u64_loop_spec (a : Array U64 4#usize) (d : U64) (hd : d.val ≠ 0)
+    (q : Array U64 4#usize) (rem : U64) (i : Usize) (hi : i.val ≤ 4) (hrem : rem.val < d.val)
+    (hinv : hiV a i.val = d.val * hiV q i.val + rem.val) :
+    Uint256.div_rem_u64_loop a d q rem i ⦃ (q1 : Array U64 4#usize) (r1 : U64) =>
+      toNat a = d.val * toNat q1 + r1.val ∧ r1.val < d.val ⦄ := by
+  unfold Uint256.div_rem_u64_loop
+  apply loop.spec_decr_nat
+    (measure := fun (s : Array U64 4#usize × Array U64 4#usize × U64 × Usize) => s.2.2.2.val)
+    (inv := fun (s : Array U64 4#usize × Array U64 4#usize × U64 × Usize) =>
+      s.1 = a ∧ s.2.2.2.val ≤ 4 ∧ s.2.2.1.val < d.val ∧
+      hiV a s.2.2.2.val = d.val * hiV s.2.1 s.2.2.2.val + s.2.2.1.val)
+  · rintro ⟨a', q', r', k⟩ ⟨rfl, hk, hr', hinv'⟩
+    simp only at hk hr' hinv'
+    unfold Uint256.div_rem_u64_loop.body
+    simp only
+    split
+    · rename_i hk0
+      have hk1 : 1 ≤ k.val := by scalar_tac
+      have hdb := d.hBounds; have hrb := r'.hBounds
+      simp only [UScalarTy.numBits] at hdb hrb
+      step as ⟨ k1, hk1v ⟩
+      simp only [lift, Std.bind_ok]
+      step as ⟨ i3, hi3 ⟩
+      step as ⟨ x, hx ⟩
+      have hxb := x.hBounds
+      simp only [UScalarTy.numBits] at hxb
+      have h128 : U128.size = 2 ^ 128 := by simp [U128.size, U128.numBits]
+      have hi3v : i3.val = r'.val * 2 ^ 64 := by
+        rw [hi3, core.convert.num.FromU128U64.from_val_eq, Nat.shiftLeft_eq, h128]
+        apply Nat.mod_eq_of_lt; omega
+      have hcur : (i3 ||| core.convert.num.FromU128U64.from x).val = r'.val * 2 ^ 64 + x.val := by
+        rw [UScalar.val_or, hi3v, core.convert.num.FromU128U64.from_val_eq, ← Nat.shiftLeft_eq,
+          ← Nat.shiftLeft_add_eq_or_of_lt (by omega), Nat.shiftLeft_eq]
+      have hdv : (core.convert.num.FromU128U64.from d).val = d.val :=
+        core.convert.num.FromU128U64.from_val_eq d
+      have hcur_lt : r'.val * 2 ^ 64 + x.val < d.val * 2 ^ 64 := by nlinarith
+      step as ⟨ i7, hi7 ⟩
+      step with split_spec as ⟨ quot, hi7' , hquot, _ ⟩
+      step as ⟨ i9, hi9 ⟩
+      step with split_spec as ⟨ rest, hi9', hrest, _ ⟩
+      step as ⟨ q2, hq2 ⟩
+      try simp only [WP.spec_ok]
+      have hqv : quot.val = (r'.val * 2 ^ 64 + x.val) / d.val := by
+        rw [hquot, hi7, hcur, hdv]; apply Nat.mod_eq_of_lt
+        rw [Nat.div_lt_iff_lt_mul (by omega)]; linarith
+      have hrv : rest.val = (r'.val * 2 ^ 64 + x.val) % d.val := by
+        rw [hrest, hi9, hcur, hdv]; apply Nat.mod_eq_of_lt
+        have := Nat.mod_lt (r'.val * 2 ^ 64 + x.val) (show 0 < d.val by omega); omega
+      have hxk : x.val = a'.val[k1.val]!.val := by
+        rw [hx, getElem!_pos a'.val k1.val (by simp; omega)]
+      have hk1k : k1.val + 1 = k.val := by omega
+      refine ⟨by omega, ?_, ?_, by omega⟩
+      · rw [hrv]; exact Nat.mod_lt _ (by omega)
+      · rw [hiV_step a' _ (by omega), hiV_step q2 _ (by omega), hk1k, hq2,
+          hiV_set _ _ _ _ (by omega) hk, hinv', Array.set_val_eq]
+        have hlen : k1.val < q'.val.length := by simp; omega
+        simp only [List.getElem!_eq_getElem?_getD, List.getElem?_set_self hlen, Option.getD_some]
+        rw [← List.getElem!_eq_getElem?_getD, ← hxk, hqv, hrv]
+        have hdm := Nat.div_add_mod (r'.val * 2 ^ 64 + x.val) d.val
+        generalize hiV q' k.val = H
+        generalize (r'.val * 2 ^ 64 + x.val) / d.val = Q at hdm ⊢
+        generalize (r'.val * 2 ^ 64 + x.val) % d.val = R at hdm ⊢
+        rw [mul_add, add_assoc, hdm]; ring
+    · rename_i hk0
+      have h0 : k.val = 0 := by scalar_tac
+      simp only [WP.spec_ok, WP.uncurry']
+      rw [h0, hiV_zero, hiV_zero] at hinv'
+      exact ⟨hinv', hr'⟩
+  · exact ⟨rfl, hi, hrem, hinv⟩
+
+/-- `div_rem_u64`: the quotient and the remainder of the integer by a `u64`, and
+`DivisionByZero` for 0. -/
+@[step]
+theorem div_rem_u64_spec (a : Array U64 4#usize) (d : U64) :
+    Uint256.div_rem_u64 a d ⦃ r => match r with
+      | core.result.Result.Ok (q, rem) => d.val ≠ 0 ∧ toNat q = toNat a / d.val ∧
+          rem.val = toNat a % d.val
+      | core.result.Result.Err e => d.val = 0 ∧ e = ConsensusError.DivisionByZero ⦄ := by
+  unfold Uint256.div_rem_u64
+  split
+  · rename_i h0
+    simp only [WP.spec_ok]
+    exact ⟨by rw [h0]; rfl, trivial⟩
+  · rename_i h0
+    have hd : d.val ≠ 0 := by intro h; apply h0; apply UScalar.eq_of_val_eq; simp [h]
+    step with div_rem_u64_loop_spec as ⟨ q, rem, hq, hrem ⟩
+    case hinv => simp [hiV_four]
+    refine ⟨hd, ?_, ?_⟩
+    · rw [hq, Nat.mul_add_div (by omega), Nat.div_eq_of_lt hrem]; simp
+    · rw [hq, Nat.mul_add_mod, Nat.mod_eq_of_lt hrem]
+
 end Hayai.Proofs.Uint256
