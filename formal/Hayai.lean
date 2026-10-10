@@ -1,6 +1,10 @@
 import Hayai.Core
 import Hayai.Spec.Difficulty
 import Hayai.Spec.Header
+import Hayai.Spec.Upgrades
 import Hayai.Proofs.Scalars
 import Hayai.Proofs.Uint256
+import Hayai.Proofs.Upgrades
+import Hayai.Proofs.RuleSets
 import Hayai.Proofs.Header
+import Hayai.Proofs.Difficulty

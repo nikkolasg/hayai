@@ -9,13 +9,13 @@ checks against the documents.
 
 ## Summary
 
-**3 of 763 rules proven**; 161 more have their code in the translated core; 599 are outside the core for now.
+**5 of 763 rules proven**; 160 more have their code in the translated core; 598 are outside the core for now.
 
 | Section | Rules | ✅ Proven | 🟡 In core | ⬜ Outside |
 |---|---:|---:|---:|---:|
 | ZIP 143 | 3 |  |  | 3 |
 | ZIP 155 | 13 |  |  | 13 |
-| ZIP 200 | 15 |  | 1 | 14 |
+| ZIP 200 | 15 | 1 | 1 | 13 |
 | ZIP 201 | 7 |  | 1 | 6 |
 | ZIP 202 | 3 |  |  | 3 |
 | ZIP 203 | 5 |  |  | 5 |
@@ -80,7 +80,7 @@ checks against the documents.
 | Protocol specification §7.4 | 1 |  |  | 1 |
 | Protocol specification §7.5 | 3 |  |  | 3 |
 | Protocol specification §7.6 | 17 | 3 | 3 | 11 |
-| Protocol specification §7.7 | 14 |  | 7 | 7 |
+| Protocol specification §7.7 | 14 | 1 | 6 | 7 |
 | Protocol specification §7.8 | 8 |  | 7 | 1 |
 | Protocol specification §7.9 | 8 |  | 6 | 2 |
 | Protocol specification §7.10 | 11 |  | 6 | 5 |
@@ -89,7 +89,7 @@ checks against the documents.
 | Protocol specification §7.12 | 6 |  | 2 | 4 |
 | Checkpoints | 4 |  |  | 4 |
 | Block rules without a ZIP | 11 |  | 1 | 10 |
-| **Total** | **763** | **3** | **161** | **599** |
+| **Total** | **763** | **5** | **160** | **598** |
 
 ## Rules
 
@@ -114,7 +114,7 @@ checks against the documents.
 | ZIP 200 | Each network upgrade has a unique nonzero 32-bit `CONSENSUS_BRANCH_ID`. ([L102](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L102)) | ⬜ outside the core |  |
 | ZIP 200 | The branch id 0 can mark the Sprout rules (option). ([L103](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L103)) | ⬜ outside the core |  |
 | ZIP 200 | The `ACTIVATION_HEIGHT` of an upgrade is not zero. ([L104](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L104)) | 🟡 in core, not yet proven |  |
-| ZIP 200 | An epoch starts at the `ACTIVATION_HEIGHT` of its upgrade and stops before the next one, so the block at `ACT… ([L105](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L105)) | ⬜ outside the core |  |
+| ZIP 200 | An epoch starts at the `ACTIVATION_HEIGHT` of its upgrade and stops before the next one, so the block at `ACT… ([L105](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L105)) | ✅ proven | `Hayai.Proofs.Upgrades.upgrade_at_spec` |
 | ZIP 200 | The `ACTIVATION_HEIGHT` is above the `DEPRECATION_HEIGHT` of the last release without the upgrade. ([L106](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L106)) | ⬜ outside the core |  |
 | ZIP 200 | The `ACTIVATION_HEIGHT` is about 3 months after the first release with the upgrade (recommendation). ([L107](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L107)) | ⬜ outside the core |  |
 | ZIP 200 | A changed `ACTIVATION_HEIGHT` gets a new `CONSENSUS_BRANCH_ID`. ([L108](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L108)) | ⬜ outside the core |  |
@@ -795,7 +795,7 @@ checks against the documents.
 | Protocol specification §7.7 | `median(S)` is the element of `sorted(S)` at the 1-based index ceiling((len + 1) / 2). ([L1108](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1108)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | `MedianTime(h)` is the median of the `nTime` values of the 11 blocks before `h`, or of all of them when fewer… ([L1109](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1109)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | `MeanTarget(h)` is the mean of `ToTarget(nBits)` of the `PoWAveragingWindow` blocks before `h`. ([L1110](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1110)) | 🟡 in core, not yet proven |  |
-| Protocol specification §7.7 | `ActualTimespanDamped` truncates with `PoWDampingFactor` 4, and `ActualTimespanBounded` keeps it between 84 %… ([L1111](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1111)) | 🟡 in core, not yet proven |  |
+| Protocol specification §7.7 | `ActualTimespanDamped` truncates with `PoWDampingFactor` 4, and `ActualTimespanBounded` keeps it between 84 %… ([L1111](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1111)) | ✅ proven | `Hayai.Proofs.Difficulty.bounded_timespan_spec` `Hayai.Proofs.RuleSets.rules_at_constants` |
 | Protocol specification §7.7 | `Threshold(h)` is min(PoWLimit, floor(MeanTarget / AveragingWindowTimespan) · ActualTimespanBounded), `Thresh… ([L1112](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1112)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | `MeanTarget(h)` is PoWLimit when `h` is at most `PoWAveragingWindow`. ([L1113](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1113)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | On Testnet from height 299,188, a block more than 6 target spacings after its parent has the minimum difficul… ([L1114](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1114)) | 🟡 in core, not yet proven |  |
