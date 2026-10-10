@@ -8658,7 +8658,7 @@ def difficulty_rules.needed
   | core.result.Result.Err _ => ok span
 
 /-- [hayai_consensus_core::difficulty_rules::averaging_window_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 553:0-558:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 578:0-583:1 -/
 def difficulty_rules.averaging_window_timespan
   (params : rule_sets.DifficultyParams) :
   Result (core.result.Result Std.U32 ConsensusError)
@@ -8670,7 +8670,7 @@ def difficulty_rules.averaging_window_timespan
   | some timespan => ok (core.result.Result.Ok timespan)
 
 /-- [hayai_consensus_core::difficulty_rules::bounded_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 597:0-634:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 622:0-659:1 -/
 def difficulty_rules.bounded_timespan
   (params : rule_sets.DifficultyParams) (actual : Std.I64) :
   Result (core.result.Result Std.U64 ConsensusError)
@@ -8734,7 +8734,7 @@ def difficulty_rules.bounded_timespan
       Std.U64 (core.convert.FromSame ConsensusError) residual
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 571:4-591:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 596:4-616:1 -/
 @[rust_loop_body]
 def difficulty_rules.mean_target_loop.body
   (bits : Slice Std.U32) (count : Std.U64)
@@ -8811,7 +8811,7 @@ def difficulty_rules.mean_target_loop.body
         ok (done r1)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 571:4-591:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 596:4-616:1 -/
 @[rust_loop]
 def difficulty_rules.mean_target_loop
   (iter : core.ops.range.Range Std.Usize) (bits : Slice Std.U32)
@@ -8827,7 +8827,7 @@ def difficulty_rules.mean_target_loop
     (iter, quotients, remainders)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 565:0-591:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 590:0-616:1 -/
 def difficulty_rules.mean_target
   (bits : Slice Std.U32) :
   Result (core.result.Result difficulty_rules.Uint256
@@ -8847,348 +8847,127 @@ def difficulty_rules.mean_target
         ConsensusError.Overflow
     ok (core.result.Result.Err de)
 
-/-- [hayai_consensus_core::difficulty_rules::expected_bits::{impl core::ops::function::Fn<(usize, usize), hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::expected_bits::{closure}<'_0, '_1>}::call]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 482:16-487:5 -/
-def
-  difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-  (c : difficulty_rules.expected_bits.closure)
-  (tupled_args : (Std.Usize × Std.Usize)) :
+/-- [hayai_consensus_core::difficulty_rules::context_too_short]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 488:0-499:1 -/
+def difficulty_rules.context_too_short
+  (chain : difficulty_rules.ParentChain) (needed_times : Std.Usize)
+  (needed_bits : Std.Usize) :
   Result difficulty_rules.ContextTooShort
   := do
-  let (s, s1) := c
-  let (needed_times, needed_bits) := tupled_args
-  let i := Slice.len s
-  let i1 := Slice.len s1
+  let i := Slice.len chain.times
+  let i1 := Slice.len chain.bits
   ok { times := i, needed_times, bits := i1, needed_bits }
 
-/-- [hayai_consensus_core::difficulty_rules::expected_bits]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 471:0-550:1
-    Visibility: public -/
-def difficulty_rules.expected_bits
-  (spec : chain_spec.CoreSpec) (rules : rule_sets.RuleSet) (time : Std.U32)
+/-- [hayai_consensus_core::difficulty_rules::threshold_bits]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 532:0-575:1 -/
+def difficulty_rules.threshold_bits
+  (spec : chain_spec.CoreSpec) (params : rule_sets.DifficultyParams)
   (chain : difficulty_rules.ParentChain) :
   Result (core.result.Result Std.U32 difficulty_rules.DifficultyError)
   := do
-  if chain.height = 0#u32
-  then ok (core.result.Result.Err difficulty_rules.DifficultyError.Genesis)
+  if chain.height <= params.averaging_window
+  then ok (core.result.Result.Ok spec.pow_limit_bits)
   else
-    let min_difficulty ←
-      match spec.min_difficulty_start_height with
-      | none => ok false
-      | some start => ok (chain.height >= start)
-    if min_difficulty
-    then
-      let i := Slice.len chain.times
-      if i = 0#usize
+    let r ←
+      Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from
+        params.averaging_window
+    match r with
+    | core.result.Result.Ok window =>
+      let i ← window + MEDIAN_TIME_SPAN
+      let needed_times ← difficulty_rules.needed chain.height i
+      let i1 := Slice.len chain.times
+      if i1 < needed_times
       then
         let cts ←
-          difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-            (chain.times, chain.bits) (1#usize, 0#usize)
+          difficulty_rules.context_too_short chain needed_times window
         let de ←
           core.convert.IntoFrom.into
             difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
             cts
         ok (core.result.Result.Err de)
       else
-        let parent_time ← Slice.index_usize chain.times 0#usize
-        let i1 ← I64.Insts.CoreConvertFromU32.from time
-        let i2 ← I64.Insts.CoreConvertFromU32.from parent_time
-        let gap ← i1 - i2
-        let o ←
-          lift (U32.checked_mul rules.difficulty.min_difficulty_gap_spacings
-            rules.difficulty.target_spacing)
-        match o with
-        | none =>
+        let i2 := Slice.len chain.bits
+        if i2 < window
+        then
+          let cts ←
+            difficulty_rules.context_too_short chain needed_times window
           let de ←
             core.convert.IntoFrom.into
-              difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-              ConsensusError.Overflow
+              difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
+              cts
           ok (core.result.Result.Err de)
-        | some allowed =>
-          let i3 ← I64.Insts.CoreConvertFromU32.from allowed
-          if gap > i3
-          then ok (core.result.Result.Ok spec.pow_limit_bits)
-          else
-            if chain.height <= rules.difficulty.averaging_window
-            then ok (core.result.Result.Ok spec.pow_limit_bits)
-            else
-              let r ←
-                Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from
-                  rules.difficulty.averaging_window
-              match r with
-              | core.result.Result.Ok window =>
-                let i4 ← window + MEDIAN_TIME_SPAN
-                let needed_times ← difficulty_rules.needed chain.height i4
-                let i5 := Slice.len chain.times
-                if i5 < needed_times
-                then
-                  let cts ←
-                    difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                      (chain.times, chain.bits) (needed_times, window)
-                  let de ←
-                    core.convert.IntoFrom.into
-                      difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                      cts
-                  ok (core.result.Result.Err de)
-                else
-                  let i6 := Slice.len chain.bits
-                  if i6 < window
-                  then
-                    let cts ←
-                      difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                        (chain.times, chain.bits) (needed_times, window)
-                    let de ←
-                      core.convert.IntoFrom.into
-                        difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                        cts
-                    ok (core.result.Result.Err de)
-                  else
-                    let times ←
-                      core.slice.index.Slice.index
-                        (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32)
-                        chain.times { «end» := needed_times }
-                    let s ←
-                      core.slice.index.Slice.index
-                        (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32)
-                        chain.bits { «end» := window }
-                    let r1 ← difficulty_rules.mean_target s
-                    let cf ← core.result.Result.Insts.CoreOpsTry.branch r1
-                    match cf with
-                    | core.ops.control_flow.ControlFlow.Continue val =>
-                      let o1 ← difficulty_rules.median_time_past times
-                      let s1 ←
-                        core.slice.index.Slice.index
-                          (core.slice.index.SliceIndexRangeFromUsizeSlice
-                          Std.U32) times { start := window }
-                      let o2 ← difficulty_rules.median_time s1
-                      match o1 with
-                      | none =>
-                        let cts ←
-                          difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                            (chain.times, chain.bits) (needed_times, window)
-                        let de ←
-                          core.convert.IntoFrom.into
-                            difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                            cts
-                        ok (core.result.Result.Err de)
-                      | some newer =>
-                        match o2 with
-                        | none =>
-                          let cts ←
-                            difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                              (chain.times, chain.bits) (needed_times, window)
-                          let de ←
-                            core.convert.IntoFrom.into
-                              difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                              cts
-                          ok (core.result.Result.Err de)
-                        | some older =>
-                          let i7 ← I64.Insts.CoreConvertFromU32.from newer
-                          let i8 ← I64.Insts.CoreConvertFromU32.from older
-                          let i9 ← i7 - i8
-                          let r2 ←
-                            difficulty_rules.bounded_timespan rules.difficulty
-                              i9
-                          let cf1 ←
-                            core.result.Result.Insts.CoreOpsTry.branch r2
-                          match cf1 with
-                          | core.ops.control_flow.ControlFlow.Continue val1 =>
-                            let limit ←
-                              difficulty_rules.Uint256.from_le_bytes
-                                spec.pow_limit
-                            let r3 ←
-                              difficulty_rules.averaging_window_timespan
-                                rules.difficulty
-                            let cf2 ←
-                              core.result.Result.Insts.CoreOpsTry.branch r3
-                            match cf2 with
-                            | core.ops.control_flow.ControlFlow.Continue val2
-                              =>
-                              let i10 ←
-                                lift (core.convert.num.FromU64U32.from val2)
-                              let r4 ←
-                                difficulty_rules.Uint256.div_rem_u64 val i10
-                              let cf3 ←
-                                core.result.Result.Insts.CoreOpsTry.branch r4
-                              match cf3 with
-                              | core.ops.control_flow.ControlFlow.Continue val3
-                                =>
-                                let (scaled, _) := val3
-                                let o3 ←
-                                  difficulty_rules.Uint256.checked_mul_u64
-                                    scaled val1
-                                let target ←
-                                  match o3 with
-                                  | none => ok limit
-                                  | some target1 =>
-                                    core.cmp.Ord.min.trait_default
-                                      difficulty_rules.Uint256.Insts.CoreCmpOrd
-                                      target1 limit
-                                let r5 ←
-                                  difficulty_rules.Uint256.to_compact target
-                                let cf4 ←
-                                  core.result.Result.Insts.CoreOpsTry.branch r5
-                                match cf4 with
-                                | core.ops.control_flow.ControlFlow.Continue
-                                  val4 =>
-                                  ok (core.result.Result.Ok val4)
-                                | core.ops.control_flow.ControlFlow.Break
-                                  residual =>
-                                  core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                    Std.U32
-                                    difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                                    residual
-                              | core.ops.control_flow.ControlFlow.Break
-                                residual =>
-                                core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                  Std.U32
-                                  difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                                  residual
-                            | core.ops.control_flow.ControlFlow.Break residual
-                              =>
-                              core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                                Std.U32
-                                difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                                residual
-                          | core.ops.control_flow.ControlFlow.Break residual =>
-                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                              Std.U32
-                              difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                              residual
-                    | core.ops.control_flow.ControlFlow.Break residual =>
-                      core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                        Std.U32 (core.convert.FromSame
-                        difficulty_rules.DifficultyError) residual
-              | core.result.Result.Err _ =>
-                let de ←
-                  core.convert.IntoFrom.into
-                    difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                    ConsensusError.Overflow
-                ok (core.result.Result.Err de)
-    else
-      if chain.height <= rules.difficulty.averaging_window
-      then ok (core.result.Result.Ok spec.pow_limit_bits)
-      else
-        let r ←
-          Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from
-            rules.difficulty.averaging_window
-        match r with
-        | core.result.Result.Ok window =>
-          let i ← window + MEDIAN_TIME_SPAN
-          let needed_times ← difficulty_rules.needed chain.height i
-          let i1 := Slice.len chain.times
-          if i1 < needed_times
-          then
-            let cts ←
-              difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                (chain.times, chain.bits) (needed_times, window)
-            let de ←
-              core.convert.IntoFrom.into
-                difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                cts
-            ok (core.result.Result.Err de)
-          else
-            let i2 := Slice.len chain.bits
-            if i2 < window
-            then
+        else
+          let times ←
+            core.slice.index.Slice.index
+              (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32)
+              chain.times { «end» := needed_times }
+          let s ←
+            core.slice.index.Slice.index
+              (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32) 
+              chain.bits { «end» := window }
+          let r1 ← difficulty_rules.mean_target s
+          let cf ← core.result.Result.Insts.CoreOpsTry.branch r1
+          match cf with
+          | core.ops.control_flow.ControlFlow.Continue val =>
+            let o ← difficulty_rules.median_time_past times
+            let s1 ←
+              core.slice.index.Slice.index
+                (core.slice.index.SliceIndexRangeFromUsizeSlice Std.U32) times
+                { start := window }
+            let o1 ← difficulty_rules.median_time s1
+            match o with
+            | none =>
               let cts ←
-                difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                  (chain.times, chain.bits) (needed_times, window)
+                difficulty_rules.context_too_short chain needed_times window
               let de ←
                 core.convert.IntoFrom.into
                   difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
                   cts
               ok (core.result.Result.Err de)
-            else
-              let times ←
-                core.slice.index.Slice.index
-                  (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32)
-                  chain.times { «end» := needed_times }
-              let s ←
-                core.slice.index.Slice.index
-                  (core.slice.index.SliceIndexRangeToUsizeSlice Std.U32)
-                  chain.bits { «end» := window }
-              let r1 ← difficulty_rules.mean_target s
-              let cf ← core.result.Result.Insts.CoreOpsTry.branch r1
-              match cf with
-              | core.ops.control_flow.ControlFlow.Continue val =>
-                let o ← difficulty_rules.median_time_past times
-                let s1 ←
-                  core.slice.index.Slice.index
-                    (core.slice.index.SliceIndexRangeFromUsizeSlice Std.U32)
-                    times { start := window }
-                let o1 ← difficulty_rules.median_time s1
-                match o with
-                | none =>
-                  let cts ←
-                    difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                      (chain.times, chain.bits) (needed_times, window)
-                  let de ←
-                    core.convert.IntoFrom.into
-                      difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                      cts
-                  ok (core.result.Result.Err de)
-                | some newer =>
-                  match o1 with
-                  | none =>
-                    let cts ←
-                      difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
-                        (chain.times, chain.bits) (needed_times, window)
-                    let de ←
-                      core.convert.IntoFrom.into
-                        difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
-                        cts
-                    ok (core.result.Result.Err de)
-                  | some older =>
-                    let i3 ← I64.Insts.CoreConvertFromU32.from newer
-                    let i4 ← I64.Insts.CoreConvertFromU32.from older
-                    let i5 ← i3 - i4
-                    let r2 ←
-                      difficulty_rules.bounded_timespan rules.difficulty i5
-                    let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r2
-                    match cf1 with
-                    | core.ops.control_flow.ControlFlow.Continue val1 =>
-                      let limit ←
-                        difficulty_rules.Uint256.from_le_bytes spec.pow_limit
-                      let r3 ←
-                        difficulty_rules.averaging_window_timespan
-                          rules.difficulty
-                      let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r3
-                      match cf2 with
-                      | core.ops.control_flow.ControlFlow.Continue val2 =>
-                        let i6 ← lift (core.convert.num.FromU64U32.from val2)
-                        let r4 ← difficulty_rules.Uint256.div_rem_u64 val i6
-                        let cf3 ←
-                          core.result.Result.Insts.CoreOpsTry.branch r4
-                        match cf3 with
-                        | core.ops.control_flow.ControlFlow.Continue val3 =>
-                          let (scaled, _) := val3
-                          let o2 ←
-                            difficulty_rules.Uint256.checked_mul_u64 scaled
-                              val1
-                          let target ←
-                            match o2 with
-                            | none => ok limit
-                            | some target1 =>
-                              core.cmp.Ord.min.trait_default
-                                difficulty_rules.Uint256.Insts.CoreCmpOrd
-                                target1 limit
-                          let r5 ← difficulty_rules.Uint256.to_compact target
-                          let cf4 ←
-                            core.result.Result.Insts.CoreOpsTry.branch r5
-                          match cf4 with
-                          | core.ops.control_flow.ControlFlow.Continue val4 =>
-                            ok (core.result.Result.Ok val4)
-                          | core.ops.control_flow.ControlFlow.Break residual =>
-                            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                              Std.U32
-                              difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                              residual
-                        | core.ops.control_flow.ControlFlow.Break residual =>
-                          core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                            Std.U32
-                            difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-                            residual
+            | some newer =>
+              match o1 with
+              | none =>
+                let cts ←
+                  difficulty_rules.context_too_short chain needed_times window
+                let de ←
+                  core.convert.IntoFrom.into
+                    difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
+                    cts
+                ok (core.result.Result.Err de)
+              | some older =>
+                let i3 ← I64.Insts.CoreConvertFromU32.from newer
+                let i4 ← I64.Insts.CoreConvertFromU32.from older
+                let i5 ← i3 - i4
+                let r2 ← difficulty_rules.bounded_timespan params i5
+                let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r2
+                match cf1 with
+                | core.ops.control_flow.ControlFlow.Continue val1 =>
+                  let limit ←
+                    difficulty_rules.Uint256.from_le_bytes spec.pow_limit
+                  let r3 ← difficulty_rules.averaging_window_timespan params
+                  let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r3
+                  match cf2 with
+                  | core.ops.control_flow.ControlFlow.Continue val2 =>
+                    let i6 ← lift (core.convert.num.FromU64U32.from val2)
+                    let r4 ← difficulty_rules.Uint256.div_rem_u64 val i6
+                    let cf3 ← core.result.Result.Insts.CoreOpsTry.branch r4
+                    match cf3 with
+                    | core.ops.control_flow.ControlFlow.Continue val3 =>
+                      let (scaled, _) := val3
+                      let o2 ←
+                        difficulty_rules.Uint256.checked_mul_u64 scaled val1
+                      let target ←
+                        match o2 with
+                        | none => ok limit
+                        | some target1 =>
+                          core.cmp.Ord.min.trait_default
+                            difficulty_rules.Uint256.Insts.CoreCmpOrd target1
+                            limit
+                      let r5 ← difficulty_rules.Uint256.to_compact target
+                      let cf4 ← core.result.Result.Insts.CoreOpsTry.branch r5
+                      match cf4 with
+                      | core.ops.control_flow.ControlFlow.Continue val4 =>
+                        ok (core.result.Result.Ok val4)
                       | core.ops.control_flow.ControlFlow.Break residual =>
                         core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
                           Std.U32
@@ -9199,16 +8978,92 @@ def difficulty_rules.expected_bits
                         Std.U32
                         difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
                         residual
-              | core.ops.control_flow.ControlFlow.Break residual =>
-                core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
-                  Std.U32 (core.convert.FromSame
-                  difficulty_rules.DifficultyError) residual
-        | core.result.Result.Err _ =>
-          let de ←
-            core.convert.IntoFrom.into
-              difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
-              ConsensusError.Overflow
-          ok (core.result.Result.Err de)
+                  | core.ops.control_flow.ControlFlow.Break residual =>
+                    core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                      Std.U32
+                      difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
+                      residual
+                | core.ops.control_flow.ControlFlow.Break residual =>
+                  core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+                    Std.U32
+                    difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
+                    residual
+          | core.ops.control_flow.ControlFlow.Break residual =>
+            core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+              Std.U32 (core.convert.FromSame difficulty_rules.DifficultyError)
+              residual
+    | core.result.Result.Err _ =>
+      let de ←
+        core.convert.IntoFrom.into
+          difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
+          ConsensusError.Overflow
+      ok (core.result.Result.Err de)
+
+/-- [hayai_consensus_core::difficulty_rules::min_difficulty_block]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 504:0-529:1 -/
+def difficulty_rules.min_difficulty_block
+  (spec : chain_spec.CoreSpec) (params : rule_sets.DifficultyParams)
+  (time : Std.U32) (chain : difficulty_rules.ParentChain) :
+  Result (core.result.Result Bool difficulty_rules.DifficultyError)
+  := do
+  let applies ←
+    match spec.min_difficulty_start_height with
+    | none => ok false
+    | some start => ok (chain.height >= start)
+  if applies
+  then
+    let i := Slice.len chain.times
+    if i = 0#usize
+    then
+      let cts ← difficulty_rules.context_too_short chain 1#usize 0#usize
+      let de ←
+        core.convert.IntoFrom.into
+          difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort
+          cts
+      ok (core.result.Result.Err de)
+    else
+      let parent_time ← Slice.index_usize chain.times 0#usize
+      let i1 ← I64.Insts.CoreConvertFromU32.from time
+      let i2 ← I64.Insts.CoreConvertFromU32.from parent_time
+      let gap ← i1 - i2
+      let o ←
+        lift (U32.checked_mul params.min_difficulty_gap_spacings
+          params.target_spacing)
+      match o with
+      | none =>
+        let de ←
+          core.convert.IntoFrom.into
+            difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError
+            ConsensusError.Overflow
+        ok (core.result.Result.Err de)
+      | some allowed =>
+        let i3 ← I64.Insts.CoreConvertFromU32.from allowed
+        ok (core.result.Result.Ok (gap > i3))
+  else ok (core.result.Result.Ok false)
+
+/-- [hayai_consensus_core::difficulty_rules::expected_bits]:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 471:0-485:1
+    Visibility: public -/
+def difficulty_rules.expected_bits
+  (spec : chain_spec.CoreSpec) (rules : rule_sets.RuleSet) (time : Std.U32)
+  (chain : difficulty_rules.ParentChain) :
+  Result (core.result.Result Std.U32 difficulty_rules.DifficultyError)
+  := do
+  if chain.height = 0#u32
+  then ok (core.result.Result.Err difficulty_rules.DifficultyError.Genesis)
+  else
+    let r ←
+      difficulty_rules.min_difficulty_block spec rules.difficulty time chain
+    let cf ← core.result.Result.Insts.CoreOpsTry.branch r
+    match cf with
+    | core.ops.control_flow.ControlFlow.Continue val =>
+      if val
+      then ok (core.result.Result.Ok spec.pow_limit_bits)
+      else difficulty_rules.threshold_bits spec rules.difficulty chain
+    | core.ops.control_flow.ControlFlow.Break residual =>
+      core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual
+        Std.U32 (core.convert.FromSame difficulty_rules.DifficultyError)
+        residual
 
 /-- [hayai_consensus_core::founders::{impl core::clone::Clone for hayai_consensus_core::founders::FoundersReward}::clone]:
     Source: 'crates/hayai-consensus-core/src/founders.rs', lines 17:9-17:14

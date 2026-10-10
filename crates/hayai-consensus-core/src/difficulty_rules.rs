@@ -474,42 +474,67 @@ pub fn expected_bits(
     time: u32,
     chain: ParentChain<'_>,
 ) -> Result<u32, DifficultyError> {
-    let height = chain.height;
-    if height == 0 {
+    if chain.height == 0 {
         return Err(DifficultyError::Genesis);
     }
     let params = &rules.difficulty;
-    let short = |needed_times: usize, needed_bits: usize| ContextTooShort {
+    if min_difficulty_block(spec, params, time, chain)? {
+        return Ok(spec.pow_limit_bits);
+    }
+    threshold_bits(spec, params, chain)
+}
+
+/// The context of `chain` and the times and `nBits` that a rule reads.
+fn context_too_short(
+    chain: ParentChain<'_>,
+    needed_times: usize,
+    needed_bits: usize,
+) -> ContextTooShort {
+    ContextTooShort {
         times: chain.times.len(),
         needed_times,
         bits: chain.bits.len(),
         needed_bits,
-    };
+    }
+}
 
-    // ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more
-    // than 6 target spacings (18 from NU7) after its parent has `nBits` =
-    // ToCompact(PoWLimit) (zcashd `nPowAllowMinDifficultyBlocksAfterHeight`).
-    let min_difficulty = match spec.min_difficulty_start_height {
-        Some(start) => height >= start,
+/// ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more than 6
+/// target spacings (18 from NU7) after its parent has `nBits` = ToCompact(PoWLimit) (zcashd
+/// `nPowAllowMinDifficultyBlocksAfterHeight`).
+fn min_difficulty_block(
+    spec: &CoreSpec,
+    params: &DifficultyParams,
+    time: u32,
+    chain: ParentChain<'_>,
+) -> Result<bool, DifficultyError> {
+    let applies = match spec.min_difficulty_start_height {
+        Some(start) => chain.height >= start,
         None => false,
     };
-    if min_difficulty {
-        if chain.times.len() == 0 {
-            return Err(short(1, 0).into());
-        }
-        let parent_time = chain.times[0];
-        let gap = i64::from(time) - i64::from(parent_time);
-        let Some(allowed) = params
-            .min_difficulty_gap_spacings
-            .checked_mul(params.target_spacing)
-        else {
-            return Err(ConsensusError::Overflow.into());
-        };
-        if gap > i64::from(allowed) {
-            return Ok(spec.pow_limit_bits);
-        }
+    if !applies {
+        return Ok(false);
     }
+    if chain.times.len() == 0 {
+        return Err(context_too_short(chain, 1, 0).into());
+    }
+    let parent_time = chain.times[0];
+    let gap = i64::from(time) - i64::from(parent_time);
+    let Some(allowed) = params
+        .min_difficulty_gap_spacings
+        .checked_mul(params.target_spacing)
+    else {
+        return Err(ConsensusError::Overflow.into());
+    };
+    Ok(gap > i64::from(allowed))
+}
 
+/// Spec §7.7.3: `ThresholdBits` of the block at `chain.height`, a height above 0.
+fn threshold_bits(
+    spec: &CoreSpec,
+    params: &DifficultyParams,
+    chain: ParentChain<'_>,
+) -> Result<u32, DifficultyError> {
+    let height = chain.height;
     // Spec §7.7.3: `MeanTarget` is `PoWLimit` up to `PoWAveragingWindow`. hayai gives
     // `PoWLimit` as the threshold there, as zcashd and Zakura do (`adjusted_difficulty.rs:
     // 227-235`): the specification leaves `ActualTimespan` without a value at these heights.
@@ -522,7 +547,7 @@ pub fn expected_bits(
 
     let needed_times = needed(height, window + MEDIAN_TIME_SPAN);
     if chain.times.len() < needed_times || chain.bits.len() < window {
-        return Err(short(needed_times, window).into());
+        return Err(context_too_short(chain, needed_times, window).into());
     }
     let times = &chain.times[..needed_times];
     // Spec §7.7.3: `MeanTarget` is the mean target of the `PoWAveragingWindow` blocks
@@ -532,7 +557,7 @@ pub fn expected_bits(
     // height is above the window, so both spans hold a time.
     let (Some(newer), Some(older)) = (median_time_past(times), median_time(&times[window..]))
     else {
-        return Err(short(needed_times, window).into());
+        return Err(context_too_short(chain, needed_times, window).into());
     };
     let timespan = bounded_timespan(params, i64::from(newer) - i64::from(older))?;
 

@@ -8,6 +8,7 @@ import Hayai.Proofs.Scalars
 import Hayai.Proofs.Uint256
 import Hayai.Proofs.RuleSets
 import Hayai.Proofs.Compact
+import Hayai.Proofs.Median
 
 open Aeneas Aeneas.Std Result
 open HayaiCore HayaiCore.difficulty_rules
@@ -287,5 +288,165 @@ theorem mean_target_spec (bits : Slice U32) (hne : 0 < bits.val.length) :
     rw [hm, meanTarget, mean, targetSum, List.take_length, List.map_map, List.length_map, hcount]
     simp; rfl
   · exact hres
+
+/-- `needed`: the times that a rule reads, at most one per block before `height`. -/
+@[step]
+theorem needed_spec (height : U32) (span : Usize) :
+    needed height span ⦃ r => r.val = min span.val height.val ⦄ := by
+  unfold needed
+  step with usize_try_from_u32_spec as ⟨ r, h, hr, hh ⟩
+  rw [hr]
+  simp [core.cmp.impls.OrdUsize.min, hh]
+  split <;> scalar_tac
+
+/-- `AveragingWindowTimespan`: the window at the target spacing. -/
+@[step]
+theorem averaging_window_timespan_spec (p : rule_sets.DifficultyParams)
+    (hw : p.averaging_window.val * p.target_spacing.val ≤ U32.max) :
+    averaging_window_timespan p ⦃ r => ∃ v : U32, r = core.result.Result.Ok v ∧
+      v.val = p.averaging_window.val * p.target_spacing.val ⦄ := by
+  unfold averaging_window_timespan
+  step as ⟨ o, ho ⟩
+  rcases o with _ | v
+  · simp at ho; omega
+  · obtain ⟨_, hv, _⟩ := ho
+    simp [hv]
+
+/-- §7.7.3, `ThresholdBits`, for a height above `PoWAveragingWindow`: on the constants of §5.3,
+a context that holds the times and `nBits` the rule reads, and `nBits` that all encode a
+target, `threshold_bits` returns `ThresholdBits` of the times and `nBits` before the height.
+-/
+theorem threshold_bits_spec (spec : chain_spec.CoreSpec) (p : rule_sets.DifficultyParams)
+    (chain : ParentChain) (hp : specConstants p)
+    (hW : 1 ≤ p.averaging_window.val) (hS : 1 ≤ p.target_spacing.val)
+    (hws : p.averaging_window.val * p.target_spacing.val ≤ U32.max)
+    (hW11 : p.averaging_window.val + 11 ≤ Usize.max)
+    (hh : p.averaging_window.val < chain.height.val)
+    (ht : min (p.averaging_window.val + 11) chain.height.val ≤ chain.times.val.length)
+    (hb : p.averaging_window.val ≤ chain.bits.val.length)
+    (hv : ∀ i < p.averaging_window.val, validTarget chain.bits.val[i]!.val) :
+    threshold_bits spec p chain ⦃ r => ∃ v : U32, r = core.result.Result.Ok v ∧
+      v.val = thresholdBits (Bytes.bytesVal spec.pow_limit.val) p.averaging_window.val
+        p.target_spacing.val
+        ((chain.times.val.take (min (p.averaging_window.val + 11) chain.height.val)).map
+          (fun x => x.val))
+        ((chain.bits.val.take p.averaging_window.val).map (fun x => x.val)) ⦄ := by
+  unfold threshold_bits
+  rw [if_neg (by scalar_tac)]
+  step with Hayai.Proofs.Scalars.usize_try_from_u32_spec as ⟨ r, window, hr, hwin ⟩
+  rw [hr]
+  simp only
+  have hMTS : MEDIAN_TIME_SPAN.val = 11 := by simp [MEDIAN_TIME_SPAN]
+  step as ⟨ i, hi ⟩
+  step as ⟨ nt, hnt ⟩
+  have hntv : nt.val = min (p.averaging_window.val + 11) chain.height.val := by
+    rw [hnt, hi, hwin, hMTS]
+  rw [if_neg (by scalar_tac), if_neg (by scalar_tac)]
+  step as ⟨ times, htimes, htimes2 ⟩
+  step as ⟨ bs, hbs, hbs2 ⟩
+  have hbsv : bs.val = chain.bits.val.take p.averaging_window.val := by
+    rw [hbs, hwin, List.slice, Nat.sub_zero, List.drop_zero]
+  have hbs_len : bs.val.length = p.averaging_window.val := by rw [hbsv]; simp; omega
+  have hbs_get : ∀ j < p.averaging_window.val, bs.val[j]! = chain.bits.val[j]! := by
+    intro j hj; rw [hbsv]; simp [List.getElem!_eq_getElem?_getD, List.getElem?_take, hj]
+  step with mean_target_spec as ⟨ r1, hr1 ⟩
+  rcases r1 with mean | e
+  swap
+  · exfalso
+    obtain ⟨j, hj, hnv, _⟩ := hr1
+    rw [hbs_len] at hj
+    rw [hbs_get j hj] at hnv
+    exact hnv (hv j hj)
+  obtain ⟨_, hmean⟩ := hr1
+  simp only [core.result.Result.Insts.CoreOpsTry.branch, Std.bind_ok]
+  have htv : times.val = chain.times.val.take nt.val := by
+    rw [htimes, List.slice, Nat.sub_zero, List.drop_zero]
+  have htlen : times.val.length = nt.val := by rw [htv]; simp; omega
+  step with Hayai.Proofs.Median.median_time_past_spec as ⟨ o, ho ⟩
+  step as ⟨ s1, hs1, hs1b ⟩
+  step with Hayai.Proofs.Median.median_time_spec as ⟨ o1, ho1 ⟩
+  -- The two medians of `ActualTimespan`.
+  have hnats : Hayai.Proofs.Median.nats times =
+      (chain.times.val.take (min (p.averaging_window.val + 11) chain.height.val)).map
+        (fun x => x.val) := by
+    simp only [Hayai.Proofs.Median.nats, htv, hntv]
+  have hnl : (Hayai.Proofs.Median.nats times).length = nt.val := by simp [htlen]
+  have hne1 : Hayai.Proofs.Median.nats times ≠ [] := by
+    intro h; rw [h] at hnl; simp at hnl; omega
+  rw [if_neg hne1] at ho
+  rcases o with _ | newer
+  · simp at ho
+  simp only [Option.map_some, Option.some.injEq] at ho
+  have hs1v : s1.val = times.val.drop window.val := by
+    exact hs1
+  have hnats1 : Hayai.Proofs.Median.nats s1 = (Hayai.Proofs.Median.nats times).drop
+      p.averaging_window.val := by
+    simp only [Hayai.Proofs.Median.nats, hs1v, hwin, List.map_drop]
+  have hne2 : Hayai.Proofs.Median.nats s1 ≠ [] := by
+    intro h; have := congrArg List.length h; rw [hnats1] at this; simp at this; omega
+  rw [if_neg hne2] at ho1
+  rcases o1 with _ | older
+  · simp at ho1
+  simp only [Option.map_some, Option.some.injEq] at ho1
+  simp only
+  have hnb := newer.hBounds; have hob := older.hBounds
+  simp only [UScalarTy.numBits] at hnb hob
+  step as ⟨ i3, hi3 ⟩
+  step as ⟨ i4, hi4 ⟩
+  step as ⟨ i5, hi5 ⟩
+  step with bounded_timespan_spec as ⟨ r2, val1, hr2, hval1 ⟩
+  case ha => rw [hi5, hi3, hi4]; constructor <;> omega
+  rw [hr2]
+  simp only [core.result.Result.Insts.CoreOpsTry.branch, Std.bind_ok]
+  step with Hayai.Proofs.Uint256.from_le_bytes_spec as ⟨ limit, hlimit ⟩
+  step with averaging_window_timespan_spec as ⟨ r3, val2, hr3, hval2 ⟩
+  rw [hr3]
+  simp only [core.result.Result.Insts.CoreOpsTry.branch, Std.bind_ok, lift]
+  step with div_rem_u64_spec as ⟨ r4, hr4 ⟩
+  have hv2 : (core.convert.num.FromU64U32.from val2).val = val2.val :=
+    core.convert.num.FromU64U32.from_val_eq val2
+  have hawt : 1 ≤ p.averaging_window.val * p.target_spacing.val := Nat.one_le_iff_ne_zero.mpr
+    (Nat.mul_ne_zero (by omega) (by omega))
+  rcases r4 with ⟨scaled, rr⟩ | e
+  swap
+  · exfalso; obtain ⟨h0, _⟩ := hr4; rw [hv2, hval2] at h0; omega
+  obtain ⟨_, hsc, _⟩ := hr4
+  rw [hv2, hval2] at hsc
+  simp only [core.result.Result.Insts.CoreOpsTry.branch, Std.bind_ok]
+  have hpl : Bytes.bytesVal spec.pow_limit.val < 2 ^ 256 := by
+    have := Bytes.leVal_lt (spec.pow_limit.val.map U8.bv); simpa using this
+  step with checked_mul_u64_spec as ⟨ o2, ho2a, ho2b ⟩
+  apply WP.spec_bind (Pₘ := fun (t : Uint256) =>
+    toNat t = min (Bytes.bytesVal spec.pow_limit.val) (toNat scaled * val1.val))
+  · rcases o2 with _ | t1
+    · simp only [WP.spec_ok]
+      have := ho2a.mp rfl
+      rw [hlimit]; omega
+    · have ht1 := ho2b t1 rfl
+      apply WP.spec_mono (min_spec t1 limit)
+      intro c hc; rw [hc, ht1, hlimit, min_comm]
+  intro target htarget
+  step with Hayai.Proofs.Compact.to_compact_spec as ⟨ r5, v, hr5, hv ⟩
+  rw [hr5]
+  simp only [core.result.Result.Insts.CoreOpsTry.branch, Std.bind_ok, WP.spec_ok]
+  refine ⟨v, rfl, ?_⟩
+  rw [hv, htarget, hsc, hmean, hbsv]
+  -- The arguments of `ThresholdBits`.
+  have hb1 : actualTimespan p.averaging_window.val
+      ((chain.times.val.take (min (p.averaging_window.val + 11) chain.height.val)).map
+        (fun x => x.val)) = (i5.val : ℤ) := by
+    rw [← hnats, actualTimespan, hi5, hi3, hi4, ho, ho1, hnats1]
+    congr 2
+    rw [medianTime]
+    congr 1
+    apply List.take_of_length_le
+    simp [htlen, hntv, powMedianBlockSpan]; omega
+  have hbt : (actualTimespanBounded (averagingWindowTimespan p.averaging_window.val
+      p.target_spacing.val) (actualTimespan p.averaging_window.val
+        ((chain.times.val.take (min (p.averaging_window.val + 11) chain.height.val)).map
+          (fun x => x.val)))).toNat = val1.val := by
+    rw [hb1, ← hval1]; simp
+  simp only [thresholdBits, threshold, averagingWindowTimespan] at hbt ⊢
+  rw [hbt]
 
 end Hayai.Proofs.Difficulty

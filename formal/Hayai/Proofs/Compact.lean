@@ -289,7 +289,7 @@ theorem from_compact_spec (bits : U32) :
     rw [show ((32#usize : Usize) : ℕ) = 32 from rfl]
     rw [Finset.sum_congr rfl (fun n hn => by rw [ht1 n (Finset.mem_range.mp hn)])]
     simp [Finset.sum_range_succ, Array.repeat_val]
-    done
+
   · -- An exponent above 3: the mantissa at byte `exponent − 3`.
     rename_i hle
     have hle' : 3 < e.val := by scalar_tac

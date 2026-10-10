@@ -9,7 +9,7 @@ checks against the documents.
 
 ## Summary
 
-**9 of 763 rules proven**; 158 more have their code in the translated core; 596 are outside the core for now.
+**18 of 763 rules proven**; 149 more have their code in the translated core; 596 are outside the core for now.
 
 | Section | Rules | ✅ Proven | 🟡 In core | ⬜ Outside |
 |---|---:|---:|---:|---:|
@@ -23,7 +23,7 @@ checks against the documents.
 | ZIP 205 | 7 |  | 2 | 5 |
 | ZIP 206 | 6 |  | 1 | 5 |
 | ZIP 207 | 16 |  | 12 | 4 |
-| ZIP 208 | 16 |  | 12 | 4 |
+| ZIP 208 | 16 | 4 | 8 | 4 |
 | ZIP 209 | 7 |  | 1 | 6 |
 | ZIP 211 | 2 |  |  | 2 |
 | ZIP 212 | 5 |  |  | 5 |
@@ -31,7 +31,7 @@ checks against the documents.
 | ZIP 214 | 26 |  | 11 | 15 |
 | ZIP 215 | 4 |  |  | 4 |
 | ZIP 216 | 4 |  |  | 4 |
-| ZIP 218 | 28 |  | 13 | 15 |
+| ZIP 218 | 28 | 4 | 9 | 15 |
 | ZIP 221 | 24 |  | 3 | 21 |
 | ZIP 225 | 5 |  |  | 5 |
 | ZIP 229 | 21 |  | 2 | 19 |
@@ -80,7 +80,7 @@ checks against the documents.
 | Protocol specification §7.4 | 1 |  |  | 1 |
 | Protocol specification §7.5 | 3 |  |  | 3 |
 | Protocol specification §7.6 | 17 | 3 | 3 | 11 |
-| Protocol specification §7.7 | 14 | 5 | 4 | 5 |
+| Protocol specification §7.7 | 14 | 6 | 3 | 5 |
 | Protocol specification §7.8 | 8 |  | 7 | 1 |
 | Protocol specification §7.9 | 8 |  | 6 | 2 |
 | Protocol specification §7.10 | 11 |  | 6 | 5 |
@@ -89,7 +89,7 @@ checks against the documents.
 | Protocol specification §7.12 | 6 |  | 2 | 4 |
 | Checkpoints | 4 |  |  | 4 |
 | Block rules without a ZIP | 11 |  | 1 | 10 |
-| **Total** | **763** | **9** | **158** | **596** |
+| **Total** | **763** | **18** | **149** | **596** |
 
 ## Rules
 
@@ -250,15 +250,15 @@ checks against the documents.
 | ZIP 207 | The prescribed way to pay a Sapling or Orchard address follows ZIP 213 with the rules after Heartwood. ([L273](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L273)) | ⬜ outside the core |  |
 | ZIP 207 | A payment to `DEFERRED_POOL` adds `fs.Value(height)` to the deferred pool. ([L274](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L274)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | `PreBlossomHalvingInterval` is 840,000 and `PreBlossomPoWTargetSpacing` is 150 s. ([L280](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L280)) | 🟡 in core, not yet proven |  |
-| ZIP 208 | `PostBlossomPoWTargetSpacing` is 75 s. ([L281](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L281)) | 🟡 in core, not yet proven |  |
-| ZIP 208 | `PoWTargetSpacing(height)` is 150 s before Blossom and 75 s from Blossom. ([L282](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L282)) | 🟡 in core, not yet proven |  |
+| ZIP 208 | `PostBlossomPoWTargetSpacing` is 75 s. ([L281](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L281)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` |
+| ZIP 208 | `PoWTargetSpacing(height)` is 150 s before Blossom and 75 s from Blossom. ([L282](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L282)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` |
 | ZIP 208 | `PostBlossomHalvingInterval` is floor(840,000 · 2) = 1,680,000. ([L283](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L283)) | 🟡 in core, not yet proven |  |
-| ZIP 208 | `AveragingWindowTimespan`, `MinActualTimespan`, `MaxActualTimespan`, `ActualTimespanDamped`, `ActualTimespanB… ([L284](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L284)) | 🟡 in core, not yet proven |  |
+| ZIP 208 | `AveragingWindowTimespan`, `MinActualTimespan`, `MaxActualTimespan`, `ActualTimespanDamped`, `ActualTimespanB… ([L284](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L284)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` `Hayai.Proofs.Difficulty.bounded_timespan_spec` `Hayai.Proofs.Difficulty.threshold_bits_spec` |
 | ZIP 208 | `Halving(height)` has the Blossom case. ([L285](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L285)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | `BlockSubsidy(height)` has the Blossom case. ([L286](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L286)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | `FounderAddressAdjustedHeight` replaces the height in `FounderAddressIndex`. ([L287](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L287)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | `FoundersRewardLastBlockHeight` is the last height with `Halving < 1`, and no block after it or at the height… ([L288](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L288)) | 🟡 in core, not yet proven |  |
-| ZIP 208 | `PoWAveragingWindow` and `PoWMedianBlockSpan` do not change at Blossom. ([L289](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L289)) | 🟡 in core, not yet proven |  |
+| ZIP 208 | `PoWAveragingWindow` and `PoWMedianBlockSpan` do not change at Blossom. ([L289](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L289)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` `Hayai.Proofs.Median.median_time_past_spec` |
 | ZIP 208 | On Testnet from the height 299,188, a block more than `6 · PoWTargetSpacing(height)` after its parent has `nB… ([L290](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L290)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | From NU7 on Testnet, the gap of the minimum-difficulty rule is 18 target spacings (ZIP 218). ([L291](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L291)) | 🟡 in core, not yet proven |  |
 | ZIP 208 | The halt interval of the End-of-Service follows Blossom (recommendation). ([L292](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L292)) | ⬜ outside the core |  |
@@ -319,11 +319,11 @@ checks against the documents.
 | ZIP 216 | A non-canonical encoding of `R` in `bindingSigSapling` is invalid. ([L382](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L382)) | ⬜ outside the core |  |
 | ZIP 216 | A non-canonical encoding of `pk*_d`, or the zero point, in the plaintext of `C^out` is invalid (coinbase outp… ([L383](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L383)) | ⬜ outside the core |  |
 | ZIP 216 | The encodings of `cv`, `rk` and `epk` are canonical. ([L384](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L384)) | ⬜ outside the core |  |
-| ZIP 218 | `PostNU7PoWTargetSpacing` is 25 s. ([L390](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L390)) | 🟡 in core, not yet proven |  |
+| ZIP 218 | `PostNU7PoWTargetSpacing` is 25 s. ([L390](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L390)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` |
 | ZIP 218 | `NU7ActivationHeight` comes from the deployment ZIP. ([L391](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L391)) | ⬜ outside the core |  |
 | ZIP 218 | `NU7PoWTargetSpacingRatio` is 75 / 25 = 3. ([L392](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L392)) | 🟡 in core, not yet proven |  |
-| ZIP 218 | `PoWTargetSpacing(height)` is 150 s, then 75 s from Blossom, then 25 s from NU7. ([L393](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L393)) | 🟡 in core, not yet proven |  |
-| ZIP 218 | `PostNU7PoWAveragingWindow` is 102, and `PoWAveragingWindow(height)` is 17 before NU7 and 102 from NU7. ([L394](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L394)) | 🟡 in core, not yet proven |  |
+| ZIP 218 | `PoWTargetSpacing(height)` is 150 s, then 75 s from Blossom, then 25 s from NU7. ([L393](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L393)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` |
+| ZIP 218 | `PostNU7PoWAveragingWindow` is 102, and `PoWAveragingWindow(height)` is 17 before NU7 and 102 from NU7. ([L394](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L394)) | ✅ proven | `Hayai.Proofs.RuleSets.rules_at_epoch` |
 | ZIP 218 | Every use of `PoWAveragingWindow` in §7.7.3 (`MeanTarget`, `ActualTimespan`, the case `height <= W`) takes th… ([L395](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L395)) | 🟡 in core, not yet proven |  |
 | ZIP 218 | `PostNU7HalvingInterval` is 5,040,000. ([L396](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L396)) | 🟡 in core, not yet proven |  |
 | ZIP 218 | `Halving(height)` has the NU7 case. ([L397](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L397)) | 🟡 in core, not yet proven |  |
@@ -335,7 +335,7 @@ checks against the documents.
 | ZIP 218 | From NU7, the JoinSplits of a block are at most 0. ([L403](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L403)) | 🟡 in core, not yet proven |  |
 | ZIP 218 | From NU7, the Orchard actions plus the Ironwood actions plus the Sapling spends and outputs plus 2 for each J… ([L404](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L404)) | ⬜ outside the core |  |
 | ZIP 218 | The limits do not apply to the transparent parts, and the block size limit of 2 MB stays. ([L405](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L405)) | ⬜ outside the core |  |
-| ZIP 218 | `PoWMedianBlockSpan` does not change at NU7. ([L406](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L406)) | 🟡 in core, not yet proven |  |
+| ZIP 218 | `PoWMedianBlockSpan` does not change at NU7. ([L406](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L406)) | ✅ proven | `Hayai.Proofs.Median.median_time_past_spec` |
 | ZIP 218 | On Testnet from NU7, a block more than 18 · 25 s = 450 s after its parent has `nBits` = ToCompact(PoWLimit);… ([L407](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L407)) | 🟡 in core, not yet proven |  |
 | ZIP 218 | The default expiry delta becomes 120 blocks after NU7 (recommendation). ([L408](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L408)) | ⬜ outside the core |  |
 | ZIP 218 | A set `-txexpirydelta` applies before and after NU7 (recommendation). ([L409](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L409)) | ⬜ outside the core |  |
@@ -794,7 +794,7 @@ checks against the documents.
 | Protocol specification §7.7 | The SHA-256d hash of the whole header, read as a little-endian integer, is at most `ToTarget(nBits)`. ([L1107](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1107)) | ⬜ outside the core |  |
 | Protocol specification §7.7 | `median(S)` is the element of `sorted(S)` at the 1-based index ceiling((len + 1) / 2). ([L1108](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1108)) | ✅ proven | `Hayai.Proofs.Median.median_time_spec` |
 | Protocol specification §7.7 | `MedianTime(h)` is the median of the `nTime` values of the 11 blocks before `h`, or of all of them when fewer… ([L1109](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1109)) | ✅ proven | `Hayai.Proofs.Median.median_time_past_spec` |
-| Protocol specification §7.7 | `MeanTarget(h)` is the mean of `ToTarget(nBits)` of the `PoWAveragingWindow` blocks before `h`. ([L1110](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1110)) | 🟡 in core, not yet proven |  |
+| Protocol specification §7.7 | `MeanTarget(h)` is the mean of `ToTarget(nBits)` of the `PoWAveragingWindow` blocks before `h`. ([L1110](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1110)) | ✅ proven | `Hayai.Proofs.Difficulty.mean_target_spec` `Hayai.Proofs.Difficulty.threshold_bits_spec` |
 | Protocol specification §7.7 | `ActualTimespanDamped` truncates with `PoWDampingFactor` 4, and `ActualTimespanBounded` keeps it between 84 %… ([L1111](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1111)) | ✅ proven | `Hayai.Proofs.Difficulty.bounded_timespan_spec` `Hayai.Proofs.RuleSets.rules_at_constants` |
 | Protocol specification §7.7 | `Threshold(h)` is min(PoWLimit, floor(MeanTarget / AveragingWindowTimespan) · ActualTimespanBounded), `Thresh… ([L1112](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1112)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | `MeanTarget(h)` is PoWLimit when `h` is at most `PoWAveragingWindow`. ([L1113](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1113)) | 🟡 in core, not yet proven |  |

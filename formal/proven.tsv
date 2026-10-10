@@ -8,3 +8,12 @@ Protocol specification §7.7	`median(S)` is the element of `sorted(S)` at the 1-
 Protocol specification §7.7	`MedianTime(h)` is the median of the `nTime` values of the 11 blocks before `h`, or of all of them when fewer exist.	Hayai.Proofs.Median.median_time_past_spec
 Protocol specification §7.7	`ToTarget(x)` is 0 when the sign bit is set, else the mantissa times 256^(exponent − 3).	Hayai.Proofs.Compact.from_compact_spec	the core path; `expand_target` of hayai-wire, which the hash check uses, is not covered (hayai-gvf)
 Protocol specification §7.7	`ToCompact(x)` gives the compact form of a target.	Hayai.Proofs.Compact.to_compact_spec	the core path; `compact_from_target` of hayai-wire is not covered (hayai-gvf)
+ZIP 208	`PostBlossomPoWTargetSpacing` is 75 s.	Hayai.Proofs.RuleSets.rules_at_epoch
+ZIP 208	`PoWTargetSpacing(height)` is 150 s before Blossom and 75 s from Blossom.	Hayai.Proofs.RuleSets.rules_at_epoch
+ZIP 208	`AveragingWindowTimespan`, `MinActualTimespan`, `MaxActualTimespan`, `ActualTimespanDamped`, `ActualTimespanBounded` and `Threshold` take the height as a parameter.	Hayai.Proofs.RuleSets.rules_at_epoch Hayai.Proofs.Difficulty.bounded_timespan_spec Hayai.Proofs.Difficulty.threshold_bits_spec
+ZIP 208	`PoWAveragingWindow` and `PoWMedianBlockSpan` do not change at Blossom.	Hayai.Proofs.RuleSets.rules_at_epoch Hayai.Proofs.Median.median_time_past_spec
+ZIP 218	`PostNU7PoWTargetSpacing` is 25 s.	Hayai.Proofs.RuleSets.rules_at_epoch
+ZIP 218	`PoWTargetSpacing(height)` is 150 s, then 75 s from Blossom, then 25 s from NU7.	Hayai.Proofs.RuleSets.rules_at_epoch
+ZIP 218	`PostNU7PoWAveragingWindow` is 102, and `PoWAveragingWindow(height)` is 17 before NU7 and 102 from NU7.	Hayai.Proofs.RuleSets.rules_at_epoch
+ZIP 218	`PoWMedianBlockSpan` does not change at NU7.	Hayai.Proofs.Median.median_time_past_spec
+Protocol specification §7.7	`MeanTarget(h)` is the mean of `ToTarget(nBits)` of the `PoWAveragingWindow` blocks before `h`.	Hayai.Proofs.Difficulty.mean_target_spec Hayai.Proofs.Difficulty.threshold_bits_spec

@@ -698,4 +698,113 @@ theorem div_rem_u64_spec (a : Array U64 4#usize) (d : U64) :
     · rw [hq, Nat.mul_add_div (by omega), Nat.div_eq_of_lt hrem]; simp
     · rw [hq, Nat.mul_add_mod, Nat.mod_eq_of_lt hrem]
 
+theorem checked_mul_u64_loop_spec (iter : core.ops.range.Range Usize)
+    (a limbs : Array U64 4#usize) (f carry : U64)
+    (hend : iter.end.val = 4) (hstart : iter.start.val ≤ 4)
+    (hinv : low limbs iter.start.val + 2 ^ (64 * iter.start.val) * carry.val =
+      low a iter.start.val * f.val) :
+    Uint256.checked_mul_u64_loop iter a f limbs carry ⦃ (limbs1 : Array U64 4#usize) (carry1 : U64) =>
+      toNat limbs1 + 2 ^ 256 * carry1.val = toNat a * f.val ⦄ := by
+  unfold Uint256.checked_mul_u64_loop
+  apply loop.spec_decr_nat
+    (measure := fun (s : core.ops.range.Range Usize × Array U64 4#usize × Array U64 4#usize × U64) =>
+      4 - s.1.start.val)
+    (inv := fun (s : core.ops.range.Range Usize × Array U64 4#usize × Array U64 4#usize × U64) =>
+      s.1.end.val = 4 ∧ s.1.start.val ≤ 4 ∧ s.2.1 = a ∧
+      low s.2.2.1 s.1.start.val + 2 ^ (64 * s.1.start.val) * s.2.2.2.val =
+        low a s.1.start.val * f.val)
+  · rintro ⟨it, a', limbs', c'⟩ ⟨hend', hs', rfl, hinv'⟩
+    simp only at hend' hs' hinv'
+    unfold Uint256.checked_mul_u64_loop.body
+    step as ⟨ o, it1, ho, hit1 ⟩
+    by_cases hlt : it.start.val < it.end.val
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only
+      have hk : it.start.val < 4 := by omega
+      have he1 : it1.end.val = 4 := by rw [hit1]; exact hend'
+      step as ⟨ x, hx ⟩
+      have hxb := x.hBounds; have hfb := f.hBounds; have hcb := c'.hBounds
+      simp only [UScalarTy.numBits] at hxb hfb hcb
+      simp only [lift, Std.bind_ok]
+      have hfx := core.convert.num.FromU128U64.from_val_eq x
+      have hff := core.convert.num.FromU128U64.from_val_eq f
+      have hfc := core.convert.num.FromU128U64.from_val_eq c'
+      have hprod : x.val * f.val + c'.val < 2 ^ 128 := by
+        have : x.val * f.val ≤ (2 ^ 64 - 1) * (2 ^ 64 - 1) :=
+          Nat.mul_le_mul (by omega) (by omega)
+        omega
+      step as ⟨ p1, hp1 ⟩
+      step as ⟨ p2, hp2 ⟩
+      step with split_spec as ⟨ lo, hi, hlo, hhi ⟩
+      step as ⟨ l2, hl2 ⟩
+      try simp only [WP.spec_ok]
+      refine ⟨he1, by omega, ?_, by omega⟩
+      have hxv : x.val = a'.val[it.start.val]!.val := by
+        rw [hx, getElem!_pos a'.val it.start.val (by simp; omega)]
+      have hpv : p2.val = x.val * f.val + c'.val := by rw [hp2, hp1, hfx, hff, hfc]
+      rw [hl2, hstart1, low_set_succ _ _ _ hk]
+      simp only [low]
+      have hp : 2 ^ (64 * (it.start.val + 1)) = 2 ^ (64 * it.start.val) * 2 ^ 64 := by
+        rw [Nat.mul_add, pow_add]
+      rw [hp]
+      have hc : lo.val + 2 ^ 64 * hi.val = x.val * f.val + c'.val := by
+        rw [hlo, hhi, hpv]; omega
+      have e : ∀ P : ℕ, P * lo.val + P * 2 ^ 64 * hi.val = P * (lo.val + 2 ^ 64 * hi.val) :=
+        fun P => by ring
+      rw [add_assoc, e, hc, ← hxv]
+      calc low limbs' it.start.val + 2 ^ (64 * it.start.val) * (x.val * f.val + c'.val)
+          = (low limbs' it.start.val + 2 ^ (64 * it.start.val) * c'.val) +
+            2 ^ (64 * it.start.val) * x.val * f.val := by ring
+        _ = _ := by rw [hinv']; ring
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      have h4 : it.start.val = 4 := by omega
+      simp only [WP.spec_ok]
+      rw [h4] at hinv'
+      rw [← low_four limbs', ← low_four a']
+      simpa using hinv'
+  · exact ⟨hend, hstart, rfl, hinv⟩
+
+/-- `checked_mul_u64`: `None` exactly when the product is `2^256` or more, else the product. -/
+@[step]
+theorem checked_mul_u64_spec (a : Array U64 4#usize) (f : U64) :
+    Uint256.checked_mul_u64 a f ⦃ r =>
+      (r = none ↔ 2 ^ 256 ≤ toNat a * f.val) ∧
+      ∀ c, r = some c → toNat c = toNat a * f.val ⦄ := by
+  unfold Uint256.checked_mul_u64
+  step with checked_mul_u64_loop_spec as ⟨ limbs1, carry, hsum ⟩
+  · simp [low]
+  · have hlt := toNat_lt limbs1
+    split
+    · rename_i hne
+      simp only [WP.spec_ok, true_iff, reduceCtorEq, false_implies, implies_true, and_true]
+      have : carry.val ≠ 0 := by
+        intro h0; apply absurd hne; simp [bne_iff_ne, ne_eq, UScalar.eq_equiv, h0]
+      have : 2 ^ 256 ≤ 2 ^ 256 * carry.val := Nat.le_mul_of_pos_right _ (by omega)
+      omega
+    · rename_i hne
+      have : carry.val = 0 := by
+        by_contra h0; apply hne; simp [bne_iff_ne, ne_eq, UScalar.eq_equiv, h0]
+      simp only [WP.spec_ok, reduceCtorEq, false_iff, not_le, Option.some.injEq, forall_eq']
+      rw [this] at hsum
+      omega
+
+/-- `Ord::min` of two integers. -/
+@[step]
+theorem min_spec (a b : Array U64 4#usize) :
+    core.cmp.Ord.min.trait_default Uint256.Insts.CoreCmpOrd a b ⦃ c =>
+      toNat c = min (toNat a) (toNat b) ⦄ := by
+  simp only [core.cmp.Ord.min.trait_default, core.cmp.Ord.min.default, core.cmp.Ord.min_body,
+    Uint256.Insts.CoreCmpOrd, Uint256.Insts.CoreCmpPartialOrdUint256]
+  apply WP.spec_bind (Pₘ := fun l => l = decide (toNat b < toNat a))
+  · simp only [core.cmp.PartialOrd.lt_body, Uint256.Insts.CoreCmpPartialOrdUint256.partial_cmp]
+    apply WP.spec_bind (Pₘ := fun c => c = some (compare (toNat b) (toNat a)))
+    · apply WP.spec_bind (cmp_spec b a); intro o ho; simp [ho]
+    intro c hc; subst hc; simp [compare_lt_iff_lt]
+  intro l hl; subst hl
+  by_cases h : toNat b < toNat a
+  · simp [h, le_of_lt h]
+  · simp [h]; omega
+
 end Hayai.Proofs.Uint256
