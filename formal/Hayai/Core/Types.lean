@@ -338,7 +338,7 @@ inductive difficulty_rules.DifficultyError where
 | InvalidContextBits : Std.U32 → difficulty_rules.DifficultyError
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits::{closure}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 468:16-473:5 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 481:16-486:5 -/
 def difficulty_rules.expected_bits.closure := Slice Std.U32 × Slice Std.U32
 
 /-- [hayai_consensus_core::header_rules::HeaderFields]

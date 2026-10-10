@@ -8851,130 +8851,100 @@ def difficulty_rules.block_work
           (Option difficulty_rules.Uint256) (core.convert.FromSame
           ConsensusError) residual
 
-/-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 423:4-425:5
+/-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 434:8-441:9
     Visibility: public -/
 @[rust_loop_body]
-def difficulty_rules.median_time_loop0.body
-  (times : Slice Std.U32) (iter : core.ops.range.Range Std.Usize)
-  (sorted : alloc.vec.Vec Std.U32) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (alloc.vec.Vec
-    Std.U32)) (alloc.vec.Vec Std.U32))
+def difficulty_rules.median_time_loop0_loop0.body
+  (times : Slice Std.U32) (candidate : Std.U32)
+  (iter : core.ops.range.Range Std.Usize) (below : Std.Usize)
+  (at_most : Std.Usize) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × Std.Usize ×
+    Std.Usize) (Std.Usize × Std.Usize))
   := do
   let (o, iter1) ←
     core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
   match o with
-  | none => ok (done sorted)
+  | none => ok (done (below, at_most))
+  | some j =>
+    let i ← Slice.index_usize times j
+    let below1 ← if i < candidate
+                   then below + 1#usize
+                   else ok below
+    if i <= candidate
+    then let at_most1 ← at_most + 1#usize
+         ok (cont (iter1, below1, at_most1))
+    else ok (cont (iter1, below1, at_most))
+
+/-- [hayai_consensus_core::difficulty_rules::median_time]: loop 1:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 434:8-441:9
+    Visibility: public -/
+@[rust_loop]
+def difficulty_rules.median_time_loop0_loop0
+  (iter : core.ops.range.Range Std.Usize) (times : Slice Std.U32)
+  (candidate : Std.U32) (below : Std.Usize) (at_most : Std.Usize) :
+  Result (Std.Usize × Std.Usize)
+  := do
+  loop
+    (fun (iter1, below1, at_most1) =>
+      difficulty_rules.median_time_loop0_loop0.body times candidate iter1
+      below1 at_most1)
+    (iter, below, at_most)
+
+/-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 0:
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 427:4-445:5
+    Visibility: public -/
+@[rust_loop_body]
+def difficulty_rules.median_time_loop0.body
+  (times : Slice Std.U32) (middle : Std.Usize)
+  (iter : core.ops.range.Range Std.Usize) (found : Option Std.U32) :
+  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Option Std.U32))
+    (Option Std.U32))
+  := do
+  let (o, iter1) ←
+    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
+  match o with
+  | none => ok (done found)
   | some i =>
-    let i1 ← Slice.index_usize times i
-    let sorted1 ← alloc.vec.Vec.push sorted i1
-    ok (cont (iter1, sorted1))
+    match found with
+    | none =>
+      let candidate ← Slice.index_usize times i
+      let i1 := Slice.len times
+      let (below, at_most) ←
+        difficulty_rules.median_time_loop0_loop0
+          { start := 0#usize, «end» := i1 } times candidate 0#usize 0#usize
+      if below <= middle
+      then
+        if middle < at_most
+        then ok (cont (iter1, some candidate))
+        else ok (cont (iter1, none))
+      else ok (cont (iter1, none))
+    | some _ => ok (cont (iter1, found))
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 423:4-425:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 427:4-445:5
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.median_time_loop0
   (iter : core.ops.range.Range Std.Usize) (times : Slice Std.U32)
-  (sorted : alloc.vec.Vec Std.U32) :
-  Result (alloc.vec.Vec Std.U32)
+  (middle : Std.Usize) (found : Option Std.U32) :
+  Result (Option Std.U32)
   := do
   loop
-    (fun (iter1, sorted1) => difficulty_rules.median_time_loop0.body times
-      iter1 sorted1)
-    (iter, sorted)
-
-/-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 2:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 428:8-431:9
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.median_time_loop1_loop0.body
-  (sorted : alloc.vec.Vec Std.U32) (j : Std.Usize) :
-  Result (ControlFlow ((alloc.vec.Vec Std.U32) × Std.Usize) (alloc.vec.Vec
-    Std.U32))
-  := do
-  if j > 0#usize
-  then
-    let i ← j - 1#usize
-    let i1 ←
-      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice Std.U32)
-        sorted i
-    let i2 ←
-      alloc.vec.Vec.index (core.slice.index.SliceIndexUsizeSlice Std.U32)
-        sorted j
-    if i1 > i2
-    then
-      let (s, deref_mut_back) ← lift (alloc.vec.Vec.deref_mut sorted)
-      let s1 ← core.slice.Slice.swap s i j
-      let sorted1 := deref_mut_back s1
-      ok (cont (sorted1, i))
-    else ok (done sorted)
-  else ok (done sorted)
-
-/-- [hayai_consensus_core::difficulty_rules::median_time]: loop 2:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 428:8-431:9
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.median_time_loop1_loop0
-  (sorted : alloc.vec.Vec Std.U32) (j : Std.Usize) :
-  Result (alloc.vec.Vec Std.U32)
-  := do
-  loop
-    (fun (sorted1, j1) => difficulty_rules.median_time_loop1_loop0.body sorted1
-      j1)
-    (sorted, j)
-
-/-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 426:4-432:5
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.median_time_loop1.body
-  (iter : core.ops.range.Range Std.Usize) (sorted : alloc.vec.Vec Std.U32) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (alloc.vec.Vec
-    Std.U32)) (alloc.vec.Vec Std.U32))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done sorted)
-  | some i =>
-    let sorted1 ← difficulty_rules.median_time_loop1_loop0 sorted i
-    ok (cont (iter1, sorted1))
-
-/-- [hayai_consensus_core::difficulty_rules::median_time]: loop 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 426:4-432:5
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.median_time_loop1
-  (iter : core.ops.range.Range Std.Usize) (sorted : alloc.vec.Vec Std.U32) :
-  Result (alloc.vec.Vec Std.U32)
-  := do
-  loop
-    (fun (iter1, sorted1) => difficulty_rules.median_time_loop1.body iter1
-      sorted1)
-    (iter, sorted)
+    (fun (iter1, found1) => difficulty_rules.median_time_loop0.body times
+      middle iter1 found1)
+    (iter, found)
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 421:0-434:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 424:0-447:1
     Visibility: public -/
 def difficulty_rules.median_time
   (times : Slice Std.U32) : Result (Option Std.U32) := do
   let i := Slice.len times
-  let sorted := alloc.vec.Vec.with_capacity Std.U32 i
+  let middle ← i / 2#usize
   let i1 := Slice.len times
-  let sorted1 ←
-    difficulty_rules.median_time_loop0 { start := 0#usize, «end» := i1 }
-      times sorted
-  let i2 := alloc.vec.Vec.len sorted1
-  let sorted2 ←
-    difficulty_rules.median_time_loop1 { start := 1#usize, «end» := i2 }
-      sorted1
-  let s := alloc.vec.Vec.deref sorted2
-  let i3 := alloc.vec.Vec.len sorted2
-  let i4 ← i3 / 2#usize
-  let o ←
-    core.slice.Slice.get (core.slice.index.SliceIndexUsizeSlice Std.U32) s i4
-  core.option.OptionShared0T.copied core.marker.CopyU32 o
+  difficulty_rules.median_time_loop0 { start := 0#usize, «end» := i1 } times
+    middle none
 
 /-- [hayai_consensus_core::MEDIAN_TIME_SPAN]
     Source: 'crates/hayai-consensus-core/src/lib.rs', lines 75:0-75:39
@@ -8982,7 +8952,7 @@ def difficulty_rules.median_time
 @[global_simps, irreducible] def MEDIAN_TIME_SPAN : Std.Usize := 11#usize
 
 /-- [hayai_consensus_core::difficulty_rules::median_time_past]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 438:0-440:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 451:0-453:1
     Visibility: public -/
 def difficulty_rules.median_time_past
   (times : Slice Std.U32) : Result (Option Std.U32) := do
@@ -8994,7 +8964,7 @@ def difficulty_rules.median_time_past
   difficulty_rules.median_time s
 
 /-- [hayai_consensus_core::difficulty_rules::needed]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 444:0-449:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 457:0-462:1 -/
 def difficulty_rules.needed
   (height : Std.U32) (span : Std.Usize) : Result Std.Usize := do
   let r ← Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from height
@@ -9004,7 +8974,7 @@ def difficulty_rules.needed
   | core.result.Result.Err _ => ok span
 
 /-- [hayai_consensus_core::difficulty_rules::averaging_window_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 539:0-544:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 552:0-557:1 -/
 def difficulty_rules.averaging_window_timespan
   (params : rule_sets.DifficultyParams) :
   Result (core.result.Result Std.U32 ConsensusError)
@@ -9016,7 +8986,7 @@ def difficulty_rules.averaging_window_timespan
   | some timespan => ok (core.result.Result.Ok timespan)
 
 /-- [hayai_consensus_core::difficulty_rules::bounded_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 583:0-620:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 596:0-633:1 -/
 def difficulty_rules.bounded_timespan
   (params : rule_sets.DifficultyParams) (actual : Std.I64) :
   Result (core.result.Result Std.U64 ConsensusError)
@@ -9080,7 +9050,7 @@ def difficulty_rules.bounded_timespan
       Std.U64 (core.convert.FromSame ConsensusError) residual
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 557:4-577:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 570:4-590:1 -/
 @[rust_loop_body]
 def difficulty_rules.mean_target_loop.body
   (bits : Slice Std.U32) (count : Std.U64)
@@ -9157,7 +9127,7 @@ def difficulty_rules.mean_target_loop.body
         ok (done r1)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 557:4-577:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 570:4-590:1 -/
 @[rust_loop]
 def difficulty_rules.mean_target_loop
   (iter : core.ops.range.Range Std.Usize) (bits : Slice Std.U32)
@@ -9173,7 +9143,7 @@ def difficulty_rules.mean_target_loop
     (iter, quotients, remainders)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 551:0-577:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 564:0-590:1 -/
 def difficulty_rules.mean_target
   (bits : Slice Std.U32) :
   Result (core.result.Result difficulty_rules.Uint256
@@ -9194,7 +9164,7 @@ def difficulty_rules.mean_target
     ok (core.result.Result.Err de)
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits::{impl core::ops::function::Fn<(usize, usize), hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::expected_bits::{closure}<'_0, '_1>}::call]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 468:16-473:5 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 481:16-486:5 -/
 def
   difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
   (c : difficulty_rules.expected_bits.closure)
@@ -9208,7 +9178,7 @@ def
   ok { times := i, needed_times, bits := i1, needed_bits }
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 457:0-536:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 470:0-549:1
     Visibility: public -/
 def difficulty_rules.expected_bits
   (spec : chain_spec.CoreSpec) (rules : rule_sets.RuleSet) (time : Std.U32)

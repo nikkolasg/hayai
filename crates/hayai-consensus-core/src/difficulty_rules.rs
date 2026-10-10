@@ -417,20 +417,33 @@ pub fn block_work(bits: u32) -> Result<Option<Uint256>, ConsensusError> {
 /// `floor(len / 2)` of the sorted list. `None` for an empty list.
 ///
 /// Spec §7.7.3: `median(S)` is `sorted(S)` at the 1-based index `ceiling((len + 1) / 2)`.
-/// The callers give at most [`MEDIAN_TIME_SPAN`] times; the sort is an insertion sort.
+/// The element at index `k` of the sorted list is the time `t` with fewer than `k + 1`
+/// times below it and more than `k` times at or below it, so the function counts instead
+/// of sorting: no allocation, and at most `len²` comparisons. The callers give at most
+/// [`MEDIAN_TIME_SPAN`] times.
 pub fn median_time(times: &[u32]) -> Option<u32> {
-    let mut sorted: Vec<u32> = Vec::with_capacity(times.len());
+    let middle = times.len() / 2;
+    let mut found: Option<u32> = None;
     for i in 0..times.len() {
-        sorted.push(times[i]);
-    }
-    for i in 1..sorted.len() {
-        let mut j = i;
-        while j > 0 && sorted[j - 1] > sorted[j] {
-            sorted.swap(j - 1, j);
-            j -= 1;
+        if let Some(_) = found {
+            continue;
+        }
+        let candidate = times[i];
+        let mut below = 0usize;
+        let mut at_most = 0usize;
+        for j in 0..times.len() {
+            if times[j] < candidate {
+                below += 1;
+            }
+            if times[j] <= candidate {
+                at_most += 1;
+            }
+        }
+        if below <= middle && middle < at_most {
+            found = Some(candidate);
         }
     }
-    sorted.get(sorted.len() / 2).copied()
+    found
 }
 
 /// The median-time-past of the header after `times` (newest first): the median of the
@@ -651,6 +664,31 @@ mod tests {
         assert_eq!(median_time_past(&times), Some(22));
         assert_eq!(median_time_past(&times[20..]), Some(4));
         assert_eq!(median_time_past(&[]), None);
+    }
+
+    /// The counting median equals the element at `len / 2` of the sorted list, with
+    /// repeated times and every length up to 13.
+    #[test]
+    fn median_equals_the_middle_of_the_sorted_list() {
+        let mut state = 0x9e37_79b9_u32;
+        for len in 0..14 {
+            for _ in 0..200 {
+                let mut times = Vec::new();
+                for _ in 0..len {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    times.push(state % 7);
+                }
+                let mut sorted = times.clone();
+                sorted.sort_unstable();
+                assert_eq!(
+                    median_time(&times),
+                    sorted.get(len / 2).copied(),
+                    "{times:?}"
+                );
+            }
+        }
     }
 
     #[test]

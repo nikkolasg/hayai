@@ -1916,3 +1916,18 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
   over the state tuple and the measure `4 - start` proves a limb loop without unrolling it.
 - Lesson: `partial` is a keyword of Lean; and the `lean_lib` glob `.submodules` leaves out the
   root module, so `import Hayai` needs `.andSubmodules`.
+
+## 2026-10-10 — The median of the core counts instead of sorting (hayai-ncv)
+
+- `median_time` returns the time `t` with `#{x < t} ≤ len / 2 < #{x ≤ t}`: the element at
+  index `len / 2` of the sorted list, with no copy and no sort. The old version copied the
+  times into a `Vec` and sorted it by swaps. For the at most 11 times of a call, the new one
+  makes no allocation and at most 121 comparisons. The proof (`formal/Hayai/Proofs/Median.lean`)
+  needs one fact about sorted lists, where a proof of the swap sort needs an invariant of each
+  swap. A test compares the result with a real sort on repeated values and lengths 0 to 13.
+- Proven: `median_time` is `median` of §7.7.3, `median_time_past` is `MedianTime`; ZIP 200
+  epochs (`upgrade_at`); every rule set that `rules_at` selects has the constants of §5.3;
+  `bounded_timespan` is `ActualTimespanBounded`.
+- Lesson: in this Aeneas version `Result` is a coinductive tree, so `x = ok v` cannot be split
+  by cases; a fact about a constant of the translation is a weakest-precondition theorem
+  (`RULE_SETS ⦃ a => … ⦄`), which also shows that the constant evaluates without error.

@@ -4,3 +4,5 @@ Protocol specification §7.6	A block with a version above 4 has the rules of a v
 Protocol specification §7.6	A full validator does not accept a block whose `nTime` is more than 2 h after the clock of the node.	Hayai.Proofs.Header.check_local_time_spec
 ZIP 200	An epoch starts at the `ACTIVATION_HEIGHT` of its upgrade and stops before the next one, so the block at `ACTIVATION_HEIGHT - 1` has the old rules.	Hayai.Proofs.Upgrades.upgrade_at_spec
 Protocol specification §7.7	`ActualTimespanDamped` truncates with `PoWDampingFactor` 4, and `ActualTimespanBounded` keeps it between 84 % and 132 % of `AveragingWindowTimespan`.	Hayai.Proofs.Difficulty.bounded_timespan_spec Hayai.Proofs.RuleSets.rules_at_constants
+Protocol specification §7.7	`median(S)` is the element of `sorted(S)` at the 1-based index ceiling((len + 1) / 2).	Hayai.Proofs.Median.median_time_spec
+Protocol specification §7.7	`MedianTime(h)` is the median of the `nTime` values of the 11 blocks before `h`, or of all of them when fewer exist.	Hayai.Proofs.Median.median_time_past_spec

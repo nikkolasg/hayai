@@ -84,7 +84,7 @@ rule, like a test.
 ## Trusted base
 
 - The Lean kernel, the Rust compiler, Charon and Aeneas.
-- `FunsExternal.lean`: 13 definitions and 17 axioms, listed above.
+- `FunsExternal.lean`: 12 definitions and 17 axioms, listed above.
 - The cryptography, the script interpreter and the transaction parser are outside the
   core: the core receives their verdicts as data. `docs/formal-verification.md` has the
   full statement of the guarantee and the plan.

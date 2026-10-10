@@ -65,6 +65,9 @@ def mean (s : List ℕ) : ℕ := s.sum / s.length
 index `length(S) / 2`: for an even length, the element that begins the second half. -/
 def median (s : List ℕ) : ℕ := (s.mergeSort (· ≤ ·))[s.length / 2]!
 
+/-- The 1-based index `⌈(n + 1) / 2⌉` of §7.7.3 is the 0-based index `n / 2`. -/
+theorem median_index (n : ℕ) : (n + 1 + 1) / 2 - 1 = n / 2 := by omega
+
 /-- `bound_Lower^Upper(x) := max(Lower, min(Upper, x))`. -/
 def bound (lower upper x : ℤ) : ℤ := max lower (min upper x)
 

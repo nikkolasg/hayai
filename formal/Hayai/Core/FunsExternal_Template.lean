@@ -257,15 +257,6 @@ axiom core.option.Option.Insts.CoreHashHash.hash
   core.hash.Hasher __H) :
   Option T → __H → Result __H
 
-/-- [core::option::{core::option::Option<&'_0 T>}::copied]:
-    Source: '/rustc/library/core/src/option.rs', lines 2135:4-2137:16
-    Name pattern: [core::option::{core::option::Option<&'0 @T>}::copied]
-    Visibility: public -/
-@[rust_fun "core::option::{core::option::Option<&'0 @T>}::copied"]
-axiom core.option.OptionShared0T.copied
-  {T : Type} (markerCopyInst : core.marker.Copy T) :
-  Option T → Result (Option T)
-
 /-- [core::option::{impl core::clone::Clone for core::option::Option<T>}::clone]:
     Source: '/rustc/library/core/src/option.rs', lines 2278:4-2278:27
     Name pattern: [core::option::{core::clone::Clone<core::option::Option<@T>>}::clone]

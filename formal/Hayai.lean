@@ -8,3 +8,4 @@ import Hayai.Proofs.Upgrades
 import Hayai.Proofs.RuleSets
 import Hayai.Proofs.Header
 import Hayai.Proofs.Difficulty
+import Hayai.Proofs.Median
