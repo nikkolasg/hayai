@@ -9,7 +9,7 @@ checks against the documents.
 
 ## Summary
 
-**7 of 763 rules proven**; 158 more have their code in the translated core; 598 are outside the core for now.
+**8 of 763 rules proven**; 158 more have their code in the translated core; 597 are outside the core for now.
 
 | Section | Rules | ✅ Proven | 🟡 In core | ⬜ Outside |
 |---|---:|---:|---:|---:|
@@ -80,7 +80,7 @@ checks against the documents.
 | Protocol specification §7.4 | 1 |  |  | 1 |
 | Protocol specification §7.5 | 3 |  |  | 3 |
 | Protocol specification §7.6 | 17 | 3 | 3 | 11 |
-| Protocol specification §7.7 | 14 | 3 | 4 | 7 |
+| Protocol specification §7.7 | 14 | 4 | 4 | 6 |
 | Protocol specification §7.8 | 8 |  | 7 | 1 |
 | Protocol specification §7.9 | 8 |  | 6 | 2 |
 | Protocol specification §7.10 | 11 |  | 6 | 5 |
@@ -89,7 +89,7 @@ checks against the documents.
 | Protocol specification §7.12 | 6 |  | 2 | 4 |
 | Checkpoints | 4 |  |  | 4 |
 | Block rules without a ZIP | 11 |  | 1 | 10 |
-| **Total** | **763** | **7** | **158** | **598** |
+| **Total** | **763** | **8** | **158** | **597** |
 
 ## Rules
 
@@ -800,7 +800,7 @@ checks against the documents.
 | Protocol specification §7.7 | `MeanTarget(h)` is PoWLimit when `h` is at most `PoWAveragingWindow`. ([L1113](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1113)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | On Testnet from height 299,188, a block more than 6 target spacings after its parent has the minimum difficul… ([L1114](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1114)) | 🟡 in core, not yet proven |  |
 | Protocol specification §7.7 | `ToCompact(x)` gives the compact form of a target. ([L1115](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1115)) | ⬜ outside the core |  |
-| Protocol specification §7.7 | `ToTarget(x)` is 0 when the sign bit is set, else the mantissa times 256^(exponent − 3). ([L1116](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1116)) | ⬜ outside the core |  |
+| Protocol specification §7.7 | `ToTarget(x)` is 0 when the sign bit is set, else the mantissa times 256^(exponent − 3). ([L1116](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1116)) | ✅ proven | `Hayai.Proofs.Compact.from_compact_spec` (the core path; `expand_target` of hayai-wire, which the hash check uses, is not covered (hayai-gvf)) |
 | Protocol specification §7.7 | The work of a block is floor(2^256 / (ToTarget(nBits) + 1)). ([L1117](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1117)) | ⬜ outside the core |  |
 | Protocol specification §7.7 | The best chain is the valid chain with the greatest total work. ([L1118](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1118)) | ⬜ outside the core |  |
 | Protocol specification §7.8 | Below `SlowStartShift` the subsidy is `SlowStartRate · h`, and from `SlowStartShift` to `SlowStartInterval` i… ([L1124](https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md#L1124)) | 🟡 in core, not yet proven |  |

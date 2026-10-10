@@ -255,11 +255,12 @@ impl Uint256 {
         if negative || mantissa == 0 {
             return None;
         }
-        // Overflow condition of arith_uint256::SetCompact.
-        if exponent > 34
-            || (mantissa > 0xff && exponent > 33)
-            || (mantissa > 0xffff && exponent > 32)
-        {
+        // Overflow condition of arith_uint256::SetCompact: the target is 2^256 or more. The
+        // operators do not short-circuit, so the translation has one path.
+        let overflow = (exponent > 34)
+            | ((mantissa > 0xff) & (exponent > 33))
+            | ((mantissa > 0xffff) & (exponent > 32));
+        if overflow {
             return None;
         }
         let mut target = [0u8; 32];

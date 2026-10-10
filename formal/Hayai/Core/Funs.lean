@@ -7837,7 +7837,7 @@ def difficulty_rules.Uint256.ones
   ok limbs1
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::Ord for hayai_consensus_core::difficulty_rules::Uint256}::cmp]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 325:8-332:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 326:8-333:5
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp_loop.body
@@ -7858,7 +7858,7 @@ def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp_loop.body
   else ok (done Ordering.eq)
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::Ord for hayai_consensus_core::difficulty_rules::Uint256}::cmp]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 325:8-332:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 326:8-333:5
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp_loop
@@ -7872,7 +7872,7 @@ def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp_loop
     (self, other, i)
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::Ord for hayai_consensus_core::difficulty_rules::Uint256}::cmp]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 323:4-332:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 324:4-333:5
     Visibility: public -/
 @[reducible]
 def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp
@@ -7882,7 +7882,7 @@ def difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp
   difficulty_rules.Uint256.Insts.CoreCmpOrd.cmp_loop self other 4#usize
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::PartialOrd<hayai_consensus_core::difficulty_rules::Uint256> for hayai_consensus_core::difficulty_rules::Uint256}::partial_cmp]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 336:4-338:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 337:4-339:5
     Visibility: public -/
 def difficulty_rules.Uint256.Insts.CoreCmpPartialOrdUint256.partial_cmp
   (self : difficulty_rules.Uint256) (other : difficulty_rules.Uint256) :
@@ -7892,7 +7892,7 @@ def difficulty_rules.Uint256.Insts.CoreCmpPartialOrdUint256.partial_cmp
   ok (some o)
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::cmp::PartialOrd<hayai_consensus_core::difficulty_rules::Uint256> for hayai_consensus_core::difficulty_rules::Uint256}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 335:0-339:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 336:0-340:1 -/
 @[reducible]
 impl_def difficulty_rules.Uint256.Insts.CoreCmpPartialOrdUint256 :
   core.cmp.PartialOrd difficulty_rules.Uint256 difficulty_rules.Uint256 := {
@@ -7972,7 +7972,7 @@ def difficulty_rules.Uint256.div_rem_max
         difficulty_rules.Uint256.ZERO i1
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 273:12-275:13
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.Uint256.from_compact_loop0.body
@@ -7991,7 +7991,7 @@ def difficulty_rules.Uint256.from_compact_loop0.body
     ok (cont (iter1, a))
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 273:12-275:13
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.Uint256.from_compact_loop0
@@ -8005,7 +8005,7 @@ def difficulty_rules.Uint256.from_compact_loop0
     (iter, target)
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 281:12-286:13
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.Uint256.from_compact_loop1.body
@@ -8028,7 +8028,7 @@ def difficulty_rules.Uint256.from_compact_loop1.body
     else ok (cont (iter1, target))
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 281:12-286:13
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.Uint256.from_compact_loop1
@@ -8041,218 +8041,8 @@ def difficulty_rules.Uint256.from_compact_loop1
       offset bytes iter1 target1)
     (iter, target)
 
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 2:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop2.body
-  (bytes : Array Std.U8 4#usize) (iter : core.ops.range.Range Std.Usize)
-  (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← Array.index_usize bytes i
-    let a ← Array.update target i i1
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 2:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop2
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop2.body
-      bytes iter1 target1)
-    (iter, target)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 3:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop3.body
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize)
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← offset + i
-    if i1 < 32#usize
-    then
-      let i2 ← Array.index_usize bytes i
-      let a ← Array.update target i1 i2
-      ok (cont (iter1, a))
-    else ok (cont (iter1, target))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 3:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop3
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop3.body
-      offset bytes iter1 target1)
-    (iter, target)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 4:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop4.body
-  (bytes : Array Std.U8 4#usize) (iter : core.ops.range.Range Std.Usize)
-  (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← Array.index_usize bytes i
-    let a ← Array.update target i i1
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 4:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop4
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop4.body
-      bytes iter1 target1)
-    (iter, target)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 5:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop5.body
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize)
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← offset + i
-    if i1 < 32#usize
-    then
-      let i2 ← Array.index_usize bytes i
-      let a ← Array.update target i1 i2
-      ok (cont (iter1, a))
-    else ok (cont (iter1, target))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 5:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop5
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop5.body
-      offset bytes iter1 target1)
-    (iter, target)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 6:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop6.body
-  (bytes : Array Std.U8 4#usize) (iter : core.ops.range.Range Std.Usize)
-  (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← Array.index_usize bytes i
-    let a ← Array.update target i i1
-    ok (cont (iter1, a))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 6:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 272:12-274:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop6
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop6.body
-      bytes iter1 target1)
-    (iter, target)
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop body 7:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop_body]
-def difficulty_rules.Uint256.from_compact_loop7.body
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize)
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize) :
-  Result (ControlFlow ((core.ops.range.Range Std.Usize) × (Array Std.U8
-    32#usize)) (Array Std.U8 32#usize))
-  := do
-  let (o, iter1) ←
-    core.iter.range.IteratorRange.next core.iter.range.StepUsize iter
-  match o with
-  | none => ok (done target)
-  | some i =>
-    let i1 ← offset + i
-    if i1 < 32#usize
-    then
-      let i2 ← Array.index_usize bytes i
-      let a ← Array.update target i1 i2
-      ok (cont (iter1, a))
-    else ok (cont (iter1, target))
-
-/-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]: loop 7:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 280:12-285:13
-    Visibility: public -/
-@[rust_loop]
-def difficulty_rules.Uint256.from_compact_loop7
-  (iter : core.ops.range.Range Std.Usize) (target : Array Std.U8 32#usize)
-  (offset : Std.Usize) (bytes : Array Std.U8 4#usize) :
-  Result (Array Std.U8 32#usize)
-  := do
-  loop
-    (fun (iter1, target1) => difficulty_rules.Uint256.from_compact_loop7.body
-      offset bytes iter1 target1)
-    (iter, target)
-
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::from_compact]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 251:4-288:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 251:4-289:5
     Visibility: public -/
 def difficulty_rules.Uint256.from_compact
   (bits : Std.U32) : Result (Option difficulty_rules.Uint256) := do
@@ -8265,147 +8055,41 @@ def difficulty_rules.Uint256.from_compact
     if mantissa = 0#u32
     then ok none
     else
-      if exponent > 34#u32
+      if ((exponent > 34#u32) || ((mantissa > 255#u32) && (exponent > 33#u32)))
+        || ((mantissa > 65535#u32) && (exponent > 32#u32))
       then ok none
       else
-        if mantissa > 255#u32
+        let target := Array.repeat 32#usize 0#u8
+        if exponent <= 3#u32
         then
-          if exponent > 33#u32
+          let i1 ← 3#u32 - exponent
+          let i2 ← 8#u32 * i1
+          let shifted ← mantissa >>> i2
+          if shifted = 0#u32
           then ok none
           else
-            if mantissa > 65535#u32
-            then
-              if exponent > 32#u32
-              then ok none
-              else
-                let target := Array.repeat 32#usize 0#u8
-                if exponent <= 3#u32
-                then
-                  let i1 ← 3#u32 - exponent
-                  let i2 ← 8#u32 * i1
-                  let shifted ← mantissa >>> i2
-                  if shifted = 0#u32
-                  then ok none
-                  else
-                    let bytes ← lift (core.num.U32.to_le_bytes shifted)
-                    let target1 ←
-                      difficulty_rules.Uint256.from_compact_loop0
-                        { start := 0#usize, «end» := 4#usize } target bytes
-                    let u ← difficulty_rules.Uint256.from_le_bytes target1
-                    ok (some u)
-                else
-                  let i1 ← exponent - 3#u32
-                  let r ←
-                    Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from
-                      i1
-                  match r with
-                  | core.result.Result.Ok offset =>
-                    let bytes ← lift (core.num.U32.to_le_bytes mantissa)
-                    let target1 ←
-                      difficulty_rules.Uint256.from_compact_loop1
-                        { start := 0#usize, «end» := 3#usize } target offset
-                        bytes
-                    let u ← difficulty_rules.Uint256.from_le_bytes target1
-                    ok (some u)
-                  | core.result.Result.Err _ => ok none
-            else
-              let target := Array.repeat 32#usize 0#u8
-              if exponent <= 3#u32
-              then
-                let i1 ← 3#u32 - exponent
-                let i2 ← 8#u32 * i1
-                let shifted ← mantissa >>> i2
-                if shifted = 0#u32
-                then ok none
-                else
-                  let bytes ← lift (core.num.U32.to_le_bytes shifted)
-                  let target1 ←
-                    difficulty_rules.Uint256.from_compact_loop2
-                      { start := 0#usize, «end» := 4#usize } target bytes
-                  let u ← difficulty_rules.Uint256.from_le_bytes target1
-                  ok (some u)
-              else
-                let i1 ← exponent - 3#u32
-                let r ←
-                  Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from i1
-                match r with
-                | core.result.Result.Ok offset =>
-                  let bytes ← lift (core.num.U32.to_le_bytes mantissa)
-                  let target1 ←
-                    difficulty_rules.Uint256.from_compact_loop3
-                      { start := 0#usize, «end» := 3#usize } target offset
-                      bytes
-                  let u ← difficulty_rules.Uint256.from_le_bytes target1
-                  ok (some u)
-                | core.result.Result.Err _ => ok none
+            let bytes ← lift (core.num.U32.to_le_bytes shifted)
+            let target1 ←
+              difficulty_rules.Uint256.from_compact_loop0
+                { start := 0#usize, «end» := 4#usize } target bytes
+            let u ← difficulty_rules.Uint256.from_le_bytes target1
+            ok (some u)
         else
-          if mantissa > 65535#u32
-          then
-            if exponent > 32#u32
-            then ok none
-            else
-              let target := Array.repeat 32#usize 0#u8
-              if exponent <= 3#u32
-              then
-                let i1 ← 3#u32 - exponent
-                let i2 ← 8#u32 * i1
-                let shifted ← mantissa >>> i2
-                if shifted = 0#u32
-                then ok none
-                else
-                  let bytes ← lift (core.num.U32.to_le_bytes shifted)
-                  let target1 ←
-                    difficulty_rules.Uint256.from_compact_loop4
-                      { start := 0#usize, «end» := 4#usize } target bytes
-                  let u ← difficulty_rules.Uint256.from_le_bytes target1
-                  ok (some u)
-              else
-                let i1 ← exponent - 3#u32
-                let r ←
-                  Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from i1
-                match r with
-                | core.result.Result.Ok offset =>
-                  let bytes ← lift (core.num.U32.to_le_bytes mantissa)
-                  let target1 ←
-                    difficulty_rules.Uint256.from_compact_loop5
-                      { start := 0#usize, «end» := 3#usize } target offset
-                      bytes
-                  let u ← difficulty_rules.Uint256.from_le_bytes target1
-                  ok (some u)
-                | core.result.Result.Err _ => ok none
-          else
-            let target := Array.repeat 32#usize 0#u8
-            if exponent <= 3#u32
-            then
-              let i1 ← 3#u32 - exponent
-              let i2 ← 8#u32 * i1
-              let shifted ← mantissa >>> i2
-              if shifted = 0#u32
-              then ok none
-              else
-                let bytes ← lift (core.num.U32.to_le_bytes shifted)
-                let target1 ←
-                  difficulty_rules.Uint256.from_compact_loop6
-                    { start := 0#usize, «end» := 4#usize } target bytes
-                let u ← difficulty_rules.Uint256.from_le_bytes target1
-                ok (some u)
-            else
-              let i1 ← exponent - 3#u32
-              let r ←
-                Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from i1
-              match r with
-              | core.result.Result.Ok offset =>
-                let bytes ← lift (core.num.U32.to_le_bytes mantissa)
-                let target1 ←
-                  difficulty_rules.Uint256.from_compact_loop7
-                    { start := 0#usize, «end» := 3#usize } target offset
-                    bytes
-                let u ← difficulty_rules.Uint256.from_le_bytes target1
-                ok (some u)
-              | core.result.Result.Err _ => ok none
+          let i1 ← exponent - 3#u32
+          let r ←
+            Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from i1
+          match r with
+          | core.result.Result.Ok offset =>
+            let bytes ← lift (core.num.U32.to_le_bytes mantissa)
+            let target1 ←
+              difficulty_rules.Uint256.from_compact_loop1
+                { start := 0#usize, «end» := 3#usize } target offset bytes
+            let u ← difficulty_rules.Uint256.from_le_bytes target1
+            ok (some u)
+          | core.result.Result.Err _ => ok none
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 296:8-300:9
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.Uint256.to_compact_loop.body
@@ -8425,7 +8109,7 @@ def difficulty_rules.Uint256.to_compact_loop.body
     else ok (cont (iter1, top))
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 296:8-300:9
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 297:8-301:9
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.Uint256.to_compact_loop
@@ -8439,7 +8123,7 @@ def difficulty_rules.Uint256.to_compact_loop
     (iter, top)
 
 /-- [hayai_consensus_core::difficulty_rules::{hayai_consensus_core::difficulty_rules::Uint256}::to_compact]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 293:4-319:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 294:4-320:5
     Visibility: public -/
 def difficulty_rules.Uint256.to_compact
   (self : difficulty_rules.Uint256) :
@@ -8494,7 +8178,7 @@ def difficulty_rules.Uint256.to_compact
       ok (core.result.Result.Err ConsensusError.Overflow)
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::cmp::Ord for hayai_consensus_core::difficulty_rules::Uint256}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 322:0-333:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 323:0-334:1 -/
 @[reducible]
 impl_def difficulty_rules.Uint256.Insts.CoreCmpOrd : core.cmp.Ord
   difficulty_rules.Uint256 := {
@@ -8508,7 +8192,7 @@ impl_def difficulty_rules.Uint256.Insts.CoreCmpOrd : core.cmp.Ord
 }
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::clone::Clone for hayai_consensus_core::difficulty_rules::ParentChain<'a>}::clone]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 342:9-342:14
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 343:9-343:14
     Visibility: public -/
 def difficulty_rules.ParentChain.Insts.CoreCloneClone.clone
   (self : difficulty_rules.ParentChain) :
@@ -8517,7 +8201,7 @@ def difficulty_rules.ParentChain.Insts.CoreCloneClone.clone
   ok self
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::fmt::Debug for hayai_consensus_core::difficulty_rules::ParentChain<'a>}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 342:22-342:27
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 343:22-343:27
     Visibility: public -/
 def difficulty_rules.ParentChain.Insts.CoreFmtDebug.fmt
   (self : difficulty_rules.ParentChain) (f : core.fmt.Formatter) :
@@ -8534,7 +8218,7 @@ def difficulty_rules.ParentChain.Insts.CoreFmtDebug.fmt
     "height") dyn (toStr "times") dyn1 (toStr "bits") dyn2
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::clone::Clone for hayai_consensus_core::difficulty_rules::ContextTooShort}::clone]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:9-355:14
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:9-356:14
     Visibility: public -/
 def difficulty_rules.ContextTooShort.Insts.CoreCloneClone.clone
   (self : difficulty_rules.ContextTooShort) :
@@ -8543,7 +8227,7 @@ def difficulty_rules.ContextTooShort.Insts.CoreCloneClone.clone
   ok self
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::fmt::Debug for hayai_consensus_core::difficulty_rules::ContextTooShort}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:22-355:27
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:22-356:27
     Visibility: public -/
 def difficulty_rules.ContextTooShort.Insts.CoreFmtDebug.fmt
   (self : difficulty_rules.ContextTooShort) (f : core.fmt.Formatter) :
@@ -8559,7 +8243,7 @@ def difficulty_rules.ContextTooShort.Insts.CoreFmtDebug.fmt
     "needed_bits") dyn3
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::fmt::Debug for hayai_consensus_core::difficulty_rules::ContextTooShort}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:22-355:27 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:22-356:27 -/
 @[reducible]
 def difficulty_rules.ContextTooShort.Insts.CoreFmtDebug : core.fmt.Debug
   difficulty_rules.ContextTooShort := {
@@ -8567,7 +8251,7 @@ def difficulty_rules.ContextTooShort.Insts.CoreFmtDebug : core.fmt.Debug
 }
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::PartialEq<hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::ContextTooShort}::eq]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:29-355:38
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:29-356:38
     Visibility: public -/
 def difficulty_rules.ContextTooShort.Insts.CoreCmpPartialEqContextTooShort.eq
   (self : difficulty_rules.ContextTooShort)
@@ -8585,7 +8269,7 @@ def difficulty_rules.ContextTooShort.Insts.CoreCmpPartialEqContextTooShort.eq
   else ok false
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::cmp::PartialEq<hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::ContextTooShort}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:29-355:38 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:29-356:38 -/
 @[reducible]
 impl_def difficulty_rules.ContextTooShort.Insts.CoreCmpPartialEqContextTooShort
   : core.cmp.PartialEq difficulty_rules.ContextTooShort
@@ -8597,14 +8281,14 @@ impl_def difficulty_rules.ContextTooShort.Insts.CoreCmpPartialEqContextTooShort
 }
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::Eq for hayai_consensus_core::difficulty_rules::ContextTooShort}::assert_fields_are_eq]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:40-355:42
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:40-356:42
     Visibility: public -/
 def difficulty_rules.ContextTooShort.Insts.CoreCmpEq.assert_fields_are_eq
   (self : difficulty_rules.ContextTooShort) : Result Unit := do
   ok ()
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::fmt::Display for hayai_consensus_core::difficulty_rules::ContextTooShort}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 355:44-355:60
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 356:44-356:60
     Visibility: public -/
 def difficulty_rules.ContextTooShort.Insts.CoreFmtDisplay.fmt
   (self : difficulty_rules.ContextTooShort) (__formatter : core.fmt.Formatter)
@@ -8651,7 +8335,7 @@ def difficulty_rules.ContextTooShort.Insts.CoreFmtDisplay.fmt
   core.fmt.Formatter.write_fmt __formatter a4
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::clone::Clone for hayai_consensus_core::difficulty_rules::DifficultyError}::clone]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:9-367:14
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:9-368:14
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreCloneClone.clone
   (self : difficulty_rules.DifficultyError) :
@@ -8660,7 +8344,7 @@ def difficulty_rules.DifficultyError.Insts.CoreCloneClone.clone
   ok self
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::fmt::Debug for hayai_consensus_core::difficulty_rules::DifficultyError}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:22-367:27
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:22-368:27
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreFmtDebug.fmt
   (self : difficulty_rules.DifficultyError) (f : core.fmt.Formatter) :
@@ -8686,7 +8370,7 @@ def difficulty_rules.DifficultyError.Insts.CoreFmtDebug.fmt
       __self_01
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::PartialEq<hayai_consensus_core::difficulty_rules::DifficultyError> for hayai_consensus_core::difficulty_rules::DifficultyError}::eq]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:29-367:38
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:29-368:38
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreCmpPartialEqDifficultyError.eq
   (self : difficulty_rules.DifficultyError)
@@ -8725,14 +8409,14 @@ def difficulty_rules.DifficultyError.Insts.CoreCmpPartialEqDifficultyError.eq
   else ok false
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::cmp::Eq for hayai_consensus_core::difficulty_rules::DifficultyError}::assert_fields_are_eq]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:40-367:42
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:40-368:42
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreCmpEq.assert_fields_are_eq
   (self : difficulty_rules.DifficultyError) : Result Unit := do
   ok ()
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::fmt::Display for hayai_consensus_core::difficulty_rules::DifficultyError}::fmt]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:44-367:60
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:44-368:60
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreFmtDisplay.fmt
   (self : difficulty_rules.DifficultyError) (__formatter : core.fmt.Formatter)
@@ -8765,7 +8449,7 @@ def difficulty_rules.DifficultyError.Insts.CoreFmtDisplay.fmt
     core.fmt.Formatter.write_fmt __formatter a1
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::convert::From<hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::DifficultyError}::from]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:44-367:60
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:44-368:60
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort.from
   (source : difficulty_rules.ContextTooShort) :
@@ -8774,14 +8458,14 @@ def difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort.from
   ok (difficulty_rules.DifficultyError.ContextTooShort source)
 
 /-- [hayai_consensus_core::difficulty_rules::{impl core::convert::From<hayai_consensus_core::ConsensusError> for hayai_consensus_core::difficulty_rules::DifficultyError}::from]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 367:44-367:60
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:44-368:60
     Visibility: public -/
 def difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError.from
   (source : ConsensusError) : Result difficulty_rules.DifficultyError := do
   ok (difficulty_rules.DifficultyError.Rules source)
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::convert::From<hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::DifficultyError}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 372:20-372:27 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 373:20-373:27 -/
 @[reducible]
 def difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort :
   core.convert.From difficulty_rules.DifficultyError
@@ -8791,7 +8475,7 @@ def difficulty_rules.DifficultyError.Insts.CoreConvertFromContextTooShort :
 }
 
 /-- Trait implementation: [hayai_consensus_core::difficulty_rules::{impl core::convert::From<hayai_consensus_core::ConsensusError> for hayai_consensus_core::difficulty_rules::DifficultyError}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 374:10-374:17 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 375:10-375:17 -/
 @[reducible]
 def difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError :
   core.convert.From difficulty_rules.DifficultyError ConsensusError := {
@@ -8800,14 +8484,14 @@ def difficulty_rules.DifficultyError.Insts.CoreConvertFromConsensusError :
 }
 
 /-- [hayai_consensus_core::difficulty_rules::target_from_compact]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 385:0-387:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 386:0-388:1
     Visibility: public -/
 def difficulty_rules.target_from_compact
   (bits : Std.U32) : Result (Option difficulty_rules.Uint256) := do
   difficulty_rules.Uint256.from_compact bits
 
 /-- [hayai_consensus_core::difficulty_rules::block_work]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 394:0-414:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 395:0-415:1
     Visibility: public -/
 def difficulty_rules.block_work
   (bits : Std.U32) :
@@ -8852,7 +8536,7 @@ def difficulty_rules.block_work
           ConsensusError) residual
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 434:8-441:9
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 435:8-442:9
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.median_time_loop0_loop0.body
@@ -8877,7 +8561,7 @@ def difficulty_rules.median_time_loop0_loop0.body
     else ok (cont (iter1, below1, at_most))
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]: loop 1:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 434:8-441:9
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 435:8-442:9
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.median_time_loop0_loop0
@@ -8892,7 +8576,7 @@ def difficulty_rules.median_time_loop0_loop0
     (iter, below, at_most)
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 427:4-445:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 428:4-446:5
     Visibility: public -/
 @[rust_loop_body]
 def difficulty_rules.median_time_loop0.body
@@ -8922,7 +8606,7 @@ def difficulty_rules.median_time_loop0.body
     | some _ => ok (cont (iter1, found))
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 427:4-445:5
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 428:4-446:5
     Visibility: public -/
 @[rust_loop]
 def difficulty_rules.median_time_loop0
@@ -8936,7 +8620,7 @@ def difficulty_rules.median_time_loop0
     (iter, found)
 
 /-- [hayai_consensus_core::difficulty_rules::median_time]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 424:0-447:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 425:0-448:1
     Visibility: public -/
 def difficulty_rules.median_time
   (times : Slice Std.U32) : Result (Option Std.U32) := do
@@ -8952,7 +8636,7 @@ def difficulty_rules.median_time
 @[global_simps, irreducible] def MEDIAN_TIME_SPAN : Std.Usize := 11#usize
 
 /-- [hayai_consensus_core::difficulty_rules::median_time_past]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 451:0-453:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 452:0-454:1
     Visibility: public -/
 def difficulty_rules.median_time_past
   (times : Slice Std.U32) : Result (Option Std.U32) := do
@@ -8964,7 +8648,7 @@ def difficulty_rules.median_time_past
   difficulty_rules.median_time s
 
 /-- [hayai_consensus_core::difficulty_rules::needed]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 457:0-462:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 458:0-463:1 -/
 def difficulty_rules.needed
   (height : Std.U32) (span : Std.Usize) : Result Std.Usize := do
   let r ← Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from height
@@ -8974,7 +8658,7 @@ def difficulty_rules.needed
   | core.result.Result.Err _ => ok span
 
 /-- [hayai_consensus_core::difficulty_rules::averaging_window_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 552:0-557:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 553:0-558:1 -/
 def difficulty_rules.averaging_window_timespan
   (params : rule_sets.DifficultyParams) :
   Result (core.result.Result Std.U32 ConsensusError)
@@ -8986,7 +8670,7 @@ def difficulty_rules.averaging_window_timespan
   | some timespan => ok (core.result.Result.Ok timespan)
 
 /-- [hayai_consensus_core::difficulty_rules::bounded_timespan]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 596:0-633:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 597:0-634:1 -/
 def difficulty_rules.bounded_timespan
   (params : rule_sets.DifficultyParams) (actual : Std.I64) :
   Result (core.result.Result Std.U64 ConsensusError)
@@ -9050,7 +8734,7 @@ def difficulty_rules.bounded_timespan
       Std.U64 (core.convert.FromSame ConsensusError) residual
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop body 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 570:4-590:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 571:4-591:1 -/
 @[rust_loop_body]
 def difficulty_rules.mean_target_loop.body
   (bits : Slice Std.U32) (count : Std.U64)
@@ -9127,7 +8811,7 @@ def difficulty_rules.mean_target_loop.body
         ok (done r1)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]: loop 0:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 570:4-590:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 571:4-591:1 -/
 @[rust_loop]
 def difficulty_rules.mean_target_loop
   (iter : core.ops.range.Range Std.Usize) (bits : Slice Std.U32)
@@ -9143,7 +8827,7 @@ def difficulty_rules.mean_target_loop
     (iter, quotients, remainders)
 
 /-- [hayai_consensus_core::difficulty_rules::mean_target]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 564:0-590:1 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 565:0-591:1 -/
 def difficulty_rules.mean_target
   (bits : Slice Std.U32) :
   Result (core.result.Result difficulty_rules.Uint256
@@ -9164,7 +8848,7 @@ def difficulty_rules.mean_target
     ok (core.result.Result.Err de)
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits::{impl core::ops::function::Fn<(usize, usize), hayai_consensus_core::difficulty_rules::ContextTooShort> for hayai_consensus_core::difficulty_rules::expected_bits::{closure}<'_0, '_1>}::call]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 481:16-486:5 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 482:16-487:5 -/
 def
   difficulty_rules.expected_bits.closure.Insts.CoreOpsFunctionFnPairUsizeUsizeContextTooShort.call
   (c : difficulty_rules.expected_bits.closure)
@@ -9178,7 +8862,7 @@ def
   ok { times := i, needed_times, bits := i1, needed_bits }
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits]:
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 470:0-549:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 471:0-550:1
     Visibility: public -/
 def difficulty_rules.expected_bits
   (spec : chain_spec.CoreSpec) (rules : rule_sets.RuleSet) (time : Std.U32)

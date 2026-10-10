@@ -5,10 +5,12 @@ Bridge proofs for `hayai-consensus-core::header_rules`: the translation decides 
 import Hayai.Core
 import Hayai.Spec.Header
 import Hayai.Proofs.Scalars
+import Hayai.Proofs.Compact
 
 open Aeneas Aeneas.Std Result
 open HayaiCore HayaiCore.header_rules
-open Hayai.Spec.Header Hayai.Proofs.Scalars
+open Hayai.Spec.Header Hayai.Spec.Difficulty Hayai.Proofs.Scalars Hayai.Proofs.Bytes
+  Hayai.Proofs.Uint256 Hayai.Proofs.Compact
 
 namespace Hayai.Proofs.Header
 
@@ -62,5 +64,41 @@ theorem check_local_time_spec (time now : U32) :
     simp only [WP.spec_ok, true_iff, localTimeRule, maxFutureBlockTimeLocal, reduceCtorEq,
       false_implies, implies_true, and_true]
     scalar_tac
+
+/-- §7.7.2 and §7.7.3: `check_target` accepts `bits` exactly when its target is nonzero and
+at most `PoWLimit` (the little-endian value of `pow_limit`), and returns that target. It
+refuses `bits` that encode no target with `InvalidBits` and a target above the limit with
+`TargetAboveLimit`. -/
+theorem check_target_spec (bits : U32) (pow_limit : Array U8 32#usize) :
+    check_target bits pow_limit ⦃ r => match r with
+      | core.result.Result.Ok t =>
+        targetWithinLimit (bytesVal pow_limit.val) bits.val ∧ toNat t = toTarget bits.val
+      | core.result.Result.Err e =>
+        ¬ targetWithinLimit (bytesVal pow_limit.val) bits.val ∧
+        (e = HeaderError.InvalidBits bits ∨ e = HeaderError.TargetAboveLimit bits) ⦄ := by
+  unfold check_target
+  have hpl : bytesVal pow_limit.val < 2 ^ 256 := by
+    have := leVal_lt (pow_limit.val.map U8.bv); simpa using this
+  step with from_compact_spec as ⟨ o, ho ⟩
+  rcases o with _ | t
+  · simp only [WP.spec_ok, targetWithinLimit]
+    refine ⟨?_, Or.inl trivial⟩
+    rcases ho with h | h <;> omega
+  · obtain ⟨ht, hpos, hlt⟩ := ho
+    step with from_le_bytes_spec as ⟨ u, hu ⟩
+    step with gt_spec as ⟨ b, hb' ⟩
+    split
+    · rename_i hgt
+      simp only [WP.spec_ok, targetWithinLimit]
+      rw [hb'] at hgt
+      simp only [decide_eq_true_eq] at hgt
+      rw [← ht, ← hu]
+      exact ⟨by omega, Or.inr trivial⟩
+    · rename_i hgt
+      simp only [WP.spec_ok, targetWithinLimit]
+      rw [hb'] at hgt
+      simp only [decide_eq_true_eq, not_lt] at hgt
+      rw [← ht, ← hu]
+      exact ⟨⟨by omega, hgt⟩, rfl⟩
 
 end Hayai.Proofs.Header

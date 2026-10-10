@@ -309,7 +309,7 @@ structure founders.FoundersReward where
 def difficulty_rules.Uint256 := Array Std.U64 4#usize
 
 /-- [hayai_consensus_core::difficulty_rules::ParentChain]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 343:0-352:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 344:0-353:1
     Visibility: public -/
 structure difficulty_rules.ParentChain where
   height : Std.U32
@@ -317,7 +317,7 @@ structure difficulty_rules.ParentChain where
   bits : Slice Std.U32
 
 /-- [hayai_consensus_core::difficulty_rules::ContextTooShort]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 360:0-365:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 361:0-366:1
     Visibility: public -/
 structure difficulty_rules.ContextTooShort where
   times : Std.Usize
@@ -326,7 +326,7 @@ structure difficulty_rules.ContextTooShort where
   needed_bits : Std.Usize
 
 /-- [hayai_consensus_core::difficulty_rules::DifficultyError]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 368:0-379:1
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 369:0-380:1
     Visibility: public -/
 @[discriminant isize]
 inductive difficulty_rules.DifficultyError where
@@ -338,7 +338,7 @@ inductive difficulty_rules.DifficultyError where
 | InvalidContextBits : Std.U32 → difficulty_rules.DifficultyError
 
 /-- [hayai_consensus_core::difficulty_rules::expected_bits::{closure}]
-    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 481:16-486:5 -/
+    Source: 'crates/hayai-consensus-core/src/difficulty_rules.rs', lines 482:16-487:5 -/
 def difficulty_rules.expected_bits.closure := Slice Std.U32 × Slice Std.U32
 
 /-- [hayai_consensus_core::header_rules::HeaderFields]

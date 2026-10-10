@@ -9,3 +9,5 @@ import Hayai.Proofs.RuleSets
 import Hayai.Proofs.Header
 import Hayai.Proofs.Difficulty
 import Hayai.Proofs.Median
+import Hayai.Proofs.Bytes
+import Hayai.Proofs.Compact

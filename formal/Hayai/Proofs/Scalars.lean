@@ -56,4 +56,16 @@ theorem tdiv_bounds (x d : ℤ) : -(x.natAbs : ℤ) ≤ x.tdiv d ∧ x.tdiv d �
   have := Int.natAbs_tdiv_le_natAbs x d
   omega
 
+/-- `usize::try_from(u32)` (`FunsExternal.lean`) never fails: a `usize` has 32 bits or more. -/
+@[step] theorem usize_try_from_u32_spec (x : U32) :
+    Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from x ⦃ r =>
+      ∃ y : Usize, r = core.result.Result.Ok y ∧ y.val = x.val ⦄ := by
+  unfold Usize.Insts.CoreConvertTryFromU32TryFromIntError.try_from core.num.tryFromUScalar
+  have h : x.val ≤ UScalar.max .Usize := by scalar_tac
+  simp only [h, ↓reduceIte, WP.spec_ok, core.result.Result.Ok.injEq, exists_eq_left']
+  simp [UScalar.cast_val_eq]
+  apply Nat.mod_eq_of_lt
+  have := x.hBounds
+  cases System.Platform.numBits_eq <;> simp_all [UScalarTy.numBits] <;> omega
+
 end Hayai.Proofs.Scalars

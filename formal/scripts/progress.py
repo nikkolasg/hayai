@@ -21,7 +21,9 @@ linked to its line in `docs/consensus.md`.
 
 `formal/proven.tsv` has one line per rule: the heading of the section of `docs/consensus.md`
 (the text after `## `, up to the first `:`, without the link), a tab, the exact text of the
-Rule cell, a tab, and the Lean theorems that prove it, separated by spaces. A line whose rule
+Rule cell, a tab, the Lean theorems that prove it, separated by spaces, and optionally a tab
+and a note: what the proof does not cover (another implementation of the rule outside the
+core, for example). A line whose rule
 is not in `docs/consensus.md` is an error: the text of a rule changed, and the mapping must
 follow it.
 """
@@ -41,6 +43,7 @@ BLOB = "https://github.com/zodl-inc/hayai/blob/main/docs/consensus.md"
 CORE = "hayai-consensus-core/src/"
 
 PROVEN, IN_CORE, OUTSIDE = "proven", "in core", "outside"
+NOTES = {}
 MARK = {PROVEN: "✅ proven", IN_CORE: "🟡 in core, not yet proven", OUTSIDE: "⬜ outside the core"}
 
 
@@ -87,9 +90,11 @@ def read_map():
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
-            if len(parts) != 3 or not parts[2].split():
-                sys.exit(f"{MAP}:{number}: expected section<TAB>rule<TAB>theorems")
+            if len(parts) not in (3, 4) or not parts[2].split():
+                sys.exit(f"{MAP}:{number}: expected section<TAB>rule<TAB>theorems[<TAB>note]")
             mapping[(parts[0], parts[1])] = parts[2].split()
+            if len(parts) == 4:
+                NOTES[(parts[0], parts[1])] = parts[3]
     return mapping
 
 
@@ -165,6 +170,9 @@ def rows(rules, mapping, wanted=None):
         if wanted and r["status"] not in wanted:
             continue
         theorems = " ".join(f"`{t}`" for t in mapping.get((r["section"], r["rule"]), []))
+        note = NOTES.get((r["section"], r["rule"]))
+        if note:
+            theorems += f" ({note})"
         link = f"[L{r['line']}]({BLOB}#L{r['line']})"
         lines.append(f"| {r['section']} | {short(r['rule'])} ({link}) | {MARK[r['status']]} "
                      f"| {theorems} |")
