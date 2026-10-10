@@ -32,10 +32,9 @@
 //! The 256-bit arithmetic is [`Uint256`]: the operations of §7.7.3 to §7.7.5 only. The
 //! adapter compares it with `primitive_types::U256`.
 
-use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use crate::rules::{DifficultyParams, RuleSet};
+use crate::rule_sets::{DifficultyParams, RuleSet};
 use crate::{ConsensusError, CoreSpec, MEDIAN_TIME_SPAN};
 
 /// A 256-bit unsigned integer: 4 little-endian 64-bit limbs.
@@ -256,11 +255,12 @@ impl Uint256 {
         if negative || mantissa == 0 {
             return None;
         }
-        // Overflow condition of arith_uint256::SetCompact.
-        if exponent > 34
-            || (mantissa > 0xff && exponent > 33)
-            || (mantissa > 0xffff && exponent > 32)
-        {
+        // Overflow condition of arith_uint256::SetCompact: the target is 2^256 or more. The
+        // operators do not short-circuit, so the translation has one path.
+        let overflow = (exponent > 34)
+            | ((mantissa > 0xff) & (exponent > 33))
+            | ((mantissa > 0xffff) & (exponent > 32));
+        if overflow {
             return None;
         }
         let mut target = [0u8; 32];
@@ -418,20 +418,33 @@ pub fn block_work(bits: u32) -> Result<Option<Uint256>, ConsensusError> {
 /// `floor(len / 2)` of the sorted list. `None` for an empty list.
 ///
 /// Spec §7.7.3: `median(S)` is `sorted(S)` at the 1-based index `ceiling((len + 1) / 2)`.
-/// The callers give at most [`MEDIAN_TIME_SPAN`] times; the sort is an insertion sort.
+/// The element at index `k` of the sorted list is the time `t` with fewer than `k + 1`
+/// times below it and more than `k` times at or below it, so the function counts instead
+/// of sorting: no allocation, and at most `len²` comparisons. The callers give at most
+/// [`MEDIAN_TIME_SPAN`] times.
 pub fn median_time(times: &[u32]) -> Option<u32> {
-    let mut sorted: Vec<u32> = Vec::with_capacity(times.len());
+    let middle = times.len() / 2;
+    let mut found: Option<u32> = None;
     for i in 0..times.len() {
-        sorted.push(times[i]);
-    }
-    for i in 1..sorted.len() {
-        let mut j = i;
-        while j > 0 && sorted[j - 1] > sorted[j] {
-            sorted.swap(j - 1, j);
-            j -= 1;
+        if let Some(_) = found {
+            continue;
+        }
+        let candidate = times[i];
+        let mut below = 0usize;
+        let mut at_most = 0usize;
+        for j in 0..times.len() {
+            if times[j] < candidate {
+                below += 1;
+            }
+            if times[j] <= candidate {
+                at_most += 1;
+            }
+        }
+        if below <= middle && middle < at_most {
+            found = Some(candidate);
         }
     }
-    sorted.get(sorted.len() / 2).copied()
+    found
 }
 
 /// The median-time-past of the header after `times` (newest first): the median of the
@@ -450,7 +463,7 @@ pub(crate) fn needed(height: u32, span: usize) -> usize {
 }
 
 /// The `nBits` that the block at `chain.height` with time `time` must have on the chain of
-/// `spec`. `rules` is the rule set of that height ([`crate::rules::rules_at`]): the caller
+/// `spec`. `rules` is the rule set of that height ([`crate::rule_sets::rules_at`]): the caller
 /// selects it one time for every rule of the block.
 ///
 /// Regtest has no such rule in hayai (`CoreSpec::disable_pow`): the header rules do not
@@ -459,44 +472,69 @@ pub fn expected_bits(
     spec: &CoreSpec,
     rules: &RuleSet,
     time: u32,
-    chain: &ParentChain<'_>,
+    chain: ParentChain<'_>,
 ) -> Result<u32, DifficultyError> {
-    let height = chain.height;
-    if height == 0 {
+    if chain.height == 0 {
         return Err(DifficultyError::Genesis);
     }
     let params = &rules.difficulty;
-    let short = |needed_times: usize, needed_bits: usize| ContextTooShort {
+    if min_difficulty_block(spec, params, time, chain)? {
+        return Ok(spec.pow_limit_bits);
+    }
+    threshold_bits(spec, params, chain)
+}
+
+/// The context of `chain` and the times and `nBits` that a rule reads.
+fn context_too_short(
+    chain: ParentChain<'_>,
+    needed_times: usize,
+    needed_bits: usize,
+) -> ContextTooShort {
+    ContextTooShort {
         times: chain.times.len(),
         needed_times,
         bits: chain.bits.len(),
         needed_bits,
-    };
+    }
+}
 
-    // ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more
-    // than 6 target spacings (18 from NU7) after its parent has `nBits` =
-    // ToCompact(PoWLimit) (zcashd `nPowAllowMinDifficultyBlocksAfterHeight`).
-    let min_difficulty = match spec.min_difficulty_start_height {
-        Some(start) => height >= start,
+/// ZIP 205, ZIP 208, ZIP 218: from Testnet height 299,188, a block whose time is more than 6
+/// target spacings (18 from NU7) after its parent has `nBits` = ToCompact(PoWLimit) (zcashd
+/// `nPowAllowMinDifficultyBlocksAfterHeight`).
+fn min_difficulty_block(
+    spec: &CoreSpec,
+    params: &DifficultyParams,
+    time: u32,
+    chain: ParentChain<'_>,
+) -> Result<bool, DifficultyError> {
+    let applies = match spec.min_difficulty_start_height {
+        Some(start) => chain.height >= start,
         None => false,
     };
-    if min_difficulty {
-        if chain.times.len() == 0 {
-            return Err(short(1, 0).into());
-        }
-        let parent_time = chain.times[0];
-        let gap = i64::from(time) - i64::from(parent_time);
-        let Some(allowed) = params
-            .min_difficulty_gap_spacings
-            .checked_mul(params.target_spacing)
-        else {
-            return Err(ConsensusError::Overflow.into());
-        };
-        if gap > i64::from(allowed) {
-            return Ok(spec.pow_limit_bits);
-        }
+    if !applies {
+        return Ok(false);
     }
+    if chain.times.len() == 0 {
+        return Err(context_too_short(chain, 1, 0).into());
+    }
+    let parent_time = chain.times[0];
+    let gap = i64::from(time) - i64::from(parent_time);
+    let Some(allowed) = params
+        .min_difficulty_gap_spacings
+        .checked_mul(params.target_spacing)
+    else {
+        return Err(ConsensusError::Overflow.into());
+    };
+    Ok(gap > i64::from(allowed))
+}
 
+/// Spec §7.7.3: `ThresholdBits` of the block at `chain.height`, a height above 0.
+fn threshold_bits(
+    spec: &CoreSpec,
+    params: &DifficultyParams,
+    chain: ParentChain<'_>,
+) -> Result<u32, DifficultyError> {
+    let height = chain.height;
     // Spec §7.7.3: `MeanTarget` is `PoWLimit` up to `PoWAveragingWindow`. hayai gives
     // `PoWLimit` as the threshold there, as zcashd and Zakura do (`adjusted_difficulty.rs:
     // 227-235`): the specification leaves `ActualTimespan` without a value at these heights.
@@ -509,7 +547,7 @@ pub fn expected_bits(
 
     let needed_times = needed(height, window + MEDIAN_TIME_SPAN);
     if chain.times.len() < needed_times || chain.bits.len() < window {
-        return Err(short(needed_times, window).into());
+        return Err(context_too_short(chain, needed_times, window).into());
     }
     let times = &chain.times[..needed_times];
     // Spec §7.7.3: `MeanTarget` is the mean target of the `PoWAveragingWindow` blocks
@@ -519,7 +557,7 @@ pub fn expected_bits(
     // height is above the window, so both spans hold a time.
     let (Some(newer), Some(older)) = (median_time_past(times), median_time(&times[window..]))
     else {
-        return Err(short(needed_times, window).into());
+        return Err(context_too_short(chain, needed_times, window).into());
     };
     let timespan = bounded_timespan(params, i64::from(newer) - i64::from(older))?;
 
@@ -652,6 +690,31 @@ mod tests {
         assert_eq!(median_time_past(&times), Some(22));
         assert_eq!(median_time_past(&times[20..]), Some(4));
         assert_eq!(median_time_past(&[]), None);
+    }
+
+    /// The counting median equals the element at `len / 2` of the sorted list, with
+    /// repeated times and every length up to 13.
+    #[test]
+    fn median_equals_the_middle_of_the_sorted_list() {
+        let mut state = 0x9e37_79b9_u32;
+        for len in 0..14 {
+            for _ in 0..200 {
+                let mut times = Vec::new();
+                for _ in 0..len {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    times.push(state % 7);
+                }
+                let mut sorted = times.clone();
+                sorted.sort_unstable();
+                assert_eq!(
+                    median_time(&times),
+                    sorted.get(len / 2).copied(),
+                    "{times:?}"
+                );
+            }
+        }
     }
 
     #[test]

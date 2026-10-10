@@ -16,7 +16,7 @@ mod vectors;
 
 use std::collections::BTreeMap;
 
-use hayai_consensus::coinbase::{OutputKind, ShieldedBalances};
+use hayai_consensus::coinbase::{CoinbaseOutput, OutputKind, ShieldedBalances};
 use hayai_consensus::funding::Receiver;
 use hayai_wire::RawBlock;
 
@@ -36,12 +36,15 @@ fn coinbases_of_the_block_vectors_pass_the_coinbase_check() {
         let raw = RawBlock::parse(vector.bytes.clone(), rules.branch_id)
             .unwrap_or_else(|e| panic!("{}: {e}", vector.name));
         let coinbase = &raw.txs[0].tx;
-        let outputs: Vec<(u64, &[u8])> = coinbase
+        let outputs: Vec<CoinbaseOutput> = coinbase
             .transparent_bundle()
             .expect("a coinbase has a transparent bundle")
             .vout
             .iter()
-            .map(|out| (out.value().into_u64(), out.script_pubkey().0 .0.as_slice()))
+            .map(|out| CoinbaseOutput {
+                value: out.value().into_u64(),
+                script: out.script_pubkey().0 .0.to_vec(),
+            })
             .collect();
         let shielded = ShieldedBalances {
             sapling: coinbase
@@ -67,7 +70,9 @@ fn coinbases_of_the_block_vectors_pass_the_coinbase_check() {
         for required in &terms.required {
             let index = outputs
                 .iter()
-                .position(|output| *output == (required.value, required.script.as_slice()))
+                .position(|output| {
+                    output.value == required.value && output.script[..] == required.script[..]
+                })
                 .expect("the check passed");
             let mut short = outputs.clone();
             short.remove(index);

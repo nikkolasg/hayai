@@ -146,7 +146,11 @@ mod tests {
         };
         let third = 4_465_026 + 3 * (4_476_000 - 4_465_026);
         assert_eq!(
-            hayai_consensus_core::subsidy::halving_height(Network::Testnet.core(), 3, u32::MAX / 2),
+            hayai_consensus_core::subsidy_schedule::halving_height(
+                Network::Testnet.core(),
+                3,
+                u32::MAX / 2
+            ),
             Ok(Some(third))
         );
         assert_eq!(start, 7_305_222);

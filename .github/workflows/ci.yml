@@ -180,3 +180,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck scripts/*.sh
+
+  # The proofs of formal/: `lake build` checks the committed translation of
+  # hayai-consensus-core and the proofs against the pinned Aeneas library. The action
+  # installs elan and fetches the Mathlib cache.
+  formal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal
+      # formal/PROGRESS.md follows docs/consensus.md and formal/proven.tsv, and each theorem
+      # of proven.tsv exists and uses no sorry.
+      - run: python3 formal/scripts/progress.py --check
+
+  # The translation does not drift: the job regenerates formal/Hayai/Core with Charon
+  # and Aeneas at the commits of formal/TOOLCHAIN and fails when a generated file differs
+  # from the committed one. The Aeneas package of Nix carries Charon and its Rust
+  # nightly; the binary cache of the Aeneas project avoids the build.
+  formal-extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://hacl.cachix.org
+            extra-trusted-public-keys = hacl.cachix.org-1:FzsZ2xsByOwKwIWNPII7yMOelJNDZ12mDAj3d1eGX0c=
+      - run: nix build -L "github:AeneasVerif/aeneas/$(sed -n 's/^aeneas //p' formal/TOOLCHAIN)#aeneas" -o aeneas-bin
+      - run: PATH="$PWD/aeneas-bin/bin:$PATH" formal/scripts/extract.sh --check

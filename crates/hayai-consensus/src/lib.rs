@@ -51,7 +51,7 @@ pub mod subsidy;
 
 pub use address::address_of;
 pub use checkpoints::{Checkpoints, DuplicateCheckpoint};
-pub use hayai_consensus_core::rules::{
+pub use hayai_consensus_core::rule_sets::{
     CoinbaseRules, DifficultyParams, HistoryVersion, ShieldedPools, TxVersions,
 };
 pub use hayai_consensus_core::{

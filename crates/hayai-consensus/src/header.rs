@@ -11,7 +11,7 @@
 //!
 //! - [`check_contextual`]: the version, the target limit, the time rules against the
 //!   median-time-past, and `nBits` against the expected value
-//!   (`hayai_consensus_core::header::check_contextual`).
+//!   (`hayai_consensus_core::header_rules::check_contextual`).
 //! - [`check_local_time`]: the rule against the clock of the node. It is not a consensus
 //!   rule: its result changes with time. It runs only when the caller gives a clock. A
 //!   caller that validates a stored block again (a replay) must not give one.
@@ -28,8 +28,8 @@
 //! right length and a target at or below the limit. It has no hash filter, no Equihash
 //! verification and no expected `nBits`. The time rules apply.
 
-use hayai_consensus_core::header as core;
-pub use hayai_consensus_core::header::{
+use hayai_consensus_core::header_rules as core;
+pub use hayai_consensus_core::header_rules::{
     HeaderFields, HeaderVerdict, Unchecked, MAX_FUTURE_BLOCK_TIME_LOCAL, MAX_FUTURE_BLOCK_TIME_MTP,
     MIN_BLOCK_VERSION,
 };
@@ -146,14 +146,19 @@ pub fn check_contextual(
     // branch id its crypto backend knows: the expected `nBits` of another upgrade is not a
     // rule of this build. Regtest has no expected `nBits`, so every upgrade is valid there.
     let rules = match network.params().disable_pow {
-        true => hayai_consensus_core::rules::rules_at(spec, chain.height)?,
+        true => hayai_consensus_core::rule_sets::rules_at(spec, chain.height)?,
         false => core_rules_at(network, chain.height)?,
     };
-    Ok(core::check_contextual(spec, rules, fields(header), chain)?)
+    Ok(core::check_contextual(
+        spec,
+        &rules,
+        fields(header),
+        *chain,
+    )?)
 }
 
 /// The version rule: the version is at least [`MIN_BLOCK_VERSION`] as a signed 32-bit
-/// integer (`hayai_consensus_core::header::check_version`).
+/// integer (`hayai_consensus_core::header_rules::check_version`).
 pub fn check_version(header: &BlockHeader) -> Result<(), HeaderRuleError> {
     Ok(core::check_version(header.version)?)
 }
@@ -191,7 +196,7 @@ pub fn check_proof_of_work(network: Network, header: &BlockHeader) -> Result<(),
 }
 
 /// The local rule: the time of `header` is at most 2 h after `now`, the clock of the node
-/// in seconds (`hayai_consensus_core::header::check_local_time`). It is not a consensus
+/// in seconds (`hayai_consensus_core::header_rules::check_local_time`). It is not a consensus
 /// rule. A header that fails can pass later.
 pub fn check_local_time(header: &BlockHeader, now: u32) -> Result<(), HeaderRuleError> {
     Ok(core::check_local_time(header.time, now)?)

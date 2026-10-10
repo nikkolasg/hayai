@@ -296,8 +296,8 @@ uses this crate.
 
 - The consensus rules as pure functions, in the Rust subset that Charon and Aeneas
   translate to Lean. The crate has no IO, no clock, no threads, no locks, no `Arc`, no
-  `dyn`, no global state, no crypto, no parsing and no upstream type. It builds with
-  `#![no_std]` and `alloc`, and depends on `thiserror` only.
+  `dyn`, no global state, no crypto, no parsing and no upstream type. It depends on
+  `thiserror` only.
 - `CoreSpec` is the plain data that the rules read:
   - the activation heights at `Upgrade::index`;
   - the slow start and the halving interval;
@@ -310,11 +310,12 @@ uses this crate.
   `CoreSpec::checked` derives the first halving. It refuses each value that a rule would
   later meet as an error (`SpecError`, one variant for each check).
 - One module for each section of the protocol specification or ZIP:
-  - `spec` (§5.3, ZIP 200): `Upgrade`, `upgrade_at`, `next_upgrade`, `orchard_disabled`;
-  - `rules`: the `RuleSet` table with the branch id as `u32` and the script flags as bits,
-    and `rules_at`;
-  - `limits`: `BlockLimits`;
-  - `subsidy` (§7.8): `halving`, `scheduled_subsidy`, `scheduled_issuance`,
+  - `chain_spec` (§5.3, ZIP 200): `CoreSpec`, `Upgrade`, `upgrade_at`, `next_upgrade`,
+    `orchard_disabled`;
+  - `rule_sets`: the `RuleSet` table with the branch id as `u32` and the script flags as
+    bits, and `rules_at` (the rule set by value: a `Copy` of a few words per block);
+  - `block_limits`: `BlockLimits`;
+  - `subsidy_schedule` (§7.8): `halving`, `scheduled_subsidy`, `scheduled_issuance`,
     `halving_height`, `block_subsidy`;
   - `funding` (§7.10, ZIP 207, ZIP 214, ZIP 1015): `funding_streams`, `address_period`,
     `nu7_adjusted_end`, `check_sets`, `check_script_counts`;
@@ -322,12 +323,21 @@ uses this crate.
   - `founders` (§7.9): `founders_reward`;
   - `nsm` (ZIP 235, ZIP 237): `miner_fee_share`, `balance`, `check_balance`,
     `reissuance_height`, `reissuance_bonus`;
-  - `difficulty` (§7.7): `Uint256`, `target_from_compact`, `block_work`, `median_time`,
+  - `difficulty_rules` (§7.7): `Uint256`, `target_from_compact`, `block_work`, `median_time`,
     `expected_bits`;
-  - `header` (§7.6): `check_contextual`, `check_version`, `check_target`,
+  - `header_rules` (§7.6): `check_contextual`, `check_version`, `check_target`,
     `check_local_time`;
   - `coinbase_value` (§7.1.2, §7.10, ZIP 236): `CoinbaseTerms::at`, `CoinbaseTerms::after`,
     `CoinbaseTerms::check`.
+- The crate stays in the subset of Rust that Aeneas translates (`formal/README.md`, section
+  "The Rust subset"): owned tables (`Vec`) in `CoreSpec`, `ParentChain` by value, a loop
+  that stores its failure and `break`s instead of an early `return`, and no module named
+  as a local variable (`chain_spec`, `rule_sets`, `block_limits`, `subsidy_schedule`,
+  `header_rules`, `difficulty_rules`). `formal/scripts/extract.sh --check` and `lake build`
+  in `formal/` are the gate; CI runs both.
+- `hayai-consensus` builds the `CoreSpec` of each built-in network once (`OnceLock`) and
+  of each custom network at `ChainSpec::network` (`CheckedSpec` holds it): `Network::core()`
+  is one atomic load.
 
   The module paths are stable: Charon runs with `--start-from` at module paths, and the
   Lean specification uses these names.
@@ -427,7 +437,7 @@ uses this crate.
   versions (`TxVersions`), the upstream script flags, shielded pools (`ShieldedPools`), block
   limits (`BlockLimits`), history tree version (`HistoryVersion`), coinbase rules
   (`CoinbaseRules`) and the difficulty parameters (`DifficultyParams`). The rule sets are the
-  table of the core (`hayai_consensus_core::rules::RULE_SETS`), mapped one time to the types
+  table of the core (`hayai_consensus_core::rule_sets::RULE_SETS`), mapped one time to the types
   of the backend in a `LazyLock`. A new upgrade is one more entry of the core table.
 - `rules_at(network, height) -> Result<&'static RuleSet, ConsensusError>` is the one
   interface that selects a rule set. When the upgrade that is active at `height` has no rule

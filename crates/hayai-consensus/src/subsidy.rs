@@ -1,14 +1,14 @@
 //! The block subsidy schedule (protocol specification §7.8, ZIP 208, ZIP 218): the
-//! wrappers of `hayai_consensus_core::subsidy` for a caller with a [`Network`]. The
+//! wrappers of `hayai_consensus_core::subsidy_schedule` for a caller with a [`Network`]. The
 //! schedule is in the core.
 
-use hayai_consensus_core::subsidy as core;
-pub use hayai_consensus_core::subsidy::Subsidy;
+use hayai_consensus_core::subsidy_schedule as core;
+pub use hayai_consensus_core::subsidy_schedule::Subsidy;
 
 use crate::network::checked;
 use crate::{rules_at, ConsensusError, Network};
 
-/// The block subsidy at `height` on `network` (`hayai_consensus_core::subsidy::block_subsidy`).
+/// The block subsidy at `height` on `network` (`hayai_consensus_core::subsidy_schedule::block_subsidy`).
 ///
 /// It fails with [`ConsensusError::UnsupportedUpgrade`] when the upgrade that is active at
 /// `height` has no rule set, and with [`ConsensusError::IssuedSupplyUnknown`] from the NSM
@@ -18,19 +18,19 @@ pub fn block_subsidy(network: Network, height: u32) -> Result<Subsidy, Consensus
     core::block_subsidy(network.core(), height)
 }
 
-/// The halving index of `height` on `network` (`hayai_consensus_core::subsidy::halving`).
+/// The halving index of `height` on `network` (`hayai_consensus_core::subsidy_schedule::halving`).
 pub fn halving(network: Network, height: u32) -> u32 {
     checked(core::halving(network.core(), height))
 }
 
 /// The sum of the scheduled subsidies of the heights 0 to `height` on `network`
-/// (`hayai_consensus_core::subsidy::scheduled_issuance`).
+/// (`hayai_consensus_core::subsidy_schedule::scheduled_issuance`).
 pub fn scheduled_issuance(network: Network, height: u32) -> u128 {
     checked(core::scheduled_issuance(network.core(), height))
 }
 
 /// The subsidy of the halving schedule at `height` on `network`, without the NSM
-/// reissuance bonus (`hayai_consensus_core::subsidy::scheduled_subsidy`).
+/// reissuance bonus (`hayai_consensus_core::subsidy_schedule::scheduled_subsidy`).
 pub fn scheduled_subsidy(network: Network, height: u32) -> u64 {
     checked(core::scheduled_subsidy(network.core(), height))
 }
@@ -39,7 +39,7 @@ pub fn scheduled_subsidy(network: Network, height: u32) -> u64 {
 mod tests {
     use super::*;
     use crate::{nsm, RuleSet, Upgrade};
-    use hayai_consensus_core::subsidy::{halving_height, next_subsidy_change};
+    use hayai_consensus_core::subsidy_schedule::{halving_height, next_subsidy_change};
 
     const ZEC: u64 = 100_000_000;
 

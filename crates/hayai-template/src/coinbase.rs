@@ -186,7 +186,7 @@ mod tests {
     use super::*;
     use crate::test_support::coinbase_spec;
     use hayai_consensus::coinbase::{
-        CoinbaseError as ConsensusCoinbaseError, CoinbaseTerms, ShieldedBalances,
+        CoinbaseError as ConsensusCoinbaseError, CoinbaseOutput, CoinbaseTerms, ShieldedBalances,
     };
     use hayai_consensus::Upgrade;
     use hayai_crypto::zcash_primitives::transaction::Transaction;
@@ -233,9 +233,12 @@ mod tests {
         outputs: &[(u64, Vec<u8>)],
         fees: u64,
     ) -> Result<(), ConsensusCoinbaseError> {
-        let outputs: Vec<(u64, &[u8])> = outputs
+        let outputs: Vec<CoinbaseOutput> = outputs
             .iter()
-            .map(|(value, script)| (*value, script.as_slice()))
+            .map(|(value, script)| CoinbaseOutput {
+                value: *value,
+                script: script.clone(),
+            })
             .collect();
         terms.check(&outputs, ShieldedBalances::default(), fees)
     }

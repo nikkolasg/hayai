@@ -1,7 +1,7 @@
 //! The rule set of each upgrade with the upstream types, and the selection of the rule set
 //! of a height.
 //!
-//! The rules are the table of `hayai_consensus_core::rules`. This module maps each entry to
+//! The rules are the table of `hayai_consensus_core::rule_sets`. This module maps each entry to
 //! the branch id and the script flags of the crypto backend. An upgrade whose branch id
 //! the backend does not know has no entry: NU7 on the upstream backend
 //! (`hayai_crypto::nu7_branch`), so [`rules_at`] fails at every height at which NU7 is
@@ -9,7 +9,7 @@
 
 use std::sync::LazyLock;
 
-use hayai_consensus_core::rules as core;
+use hayai_consensus_core::rule_sets as core;
 use hayai_crypto::zcash_protocol::consensus::BranchId;
 use hayai_crypto::zcash_script::interpreter::Flags;
 
@@ -96,7 +96,7 @@ static RULE_SETS: LazyLock<[Option<RuleSet>; ORCHARD_DISABLED + 1]> = LazyLock::
 ///
 /// A rule that depends on the height inside one upgrade is a rule set of its own: from the
 /// Orchard soft fork until the NU6.2 activation the result is the NU6.1 rule set with the
-/// Orchard pool off (`hayai_consensus_core::rules::rules_at`). A caller that checks a block
+/// Orchard pool off (`hayai_consensus_core::rule_sets::rules_at`). A caller that checks a block
 /// must take the rule set from this function, not from the branch id of the block.
 ///
 /// ZIP 200: a block of a known height is validated under the rules of the consensus
@@ -104,7 +104,7 @@ static RULE_SETS: LazyLock<[Option<RuleSet>; ORCHARD_DISABLED + 1]> = LazyLock::
 /// upgrade.
 pub fn rules_at(network: Network, height: u32) -> Result<&'static RuleSet, ConsensusError> {
     let rules = core::rules_at(network.core(), height)?;
-    RULE_SETS[slot(rules)]
+    RULE_SETS[slot(&rules)]
         .as_ref()
         .ok_or(ConsensusError::UnsupportedUpgrade {
             upgrade: rules.upgrade,
@@ -119,9 +119,9 @@ pub fn rules_at(network: Network, height: u32) -> Result<&'static RuleSet, Conse
 pub(crate) fn core_rules_at(
     network: Network,
     height: u32,
-) -> Result<&'static core::RuleSet, ConsensusError> {
+) -> Result<core::RuleSet, ConsensusError> {
     let rules = core::rules_at(network.core(), height)?;
-    match &RULE_SETS[slot(rules)] {
+    match &RULE_SETS[slot(&rules)] {
         Some(_) => Ok(rules),
         None => Err(ConsensusError::UnsupportedUpgrade {
             upgrade: rules.upgrade,

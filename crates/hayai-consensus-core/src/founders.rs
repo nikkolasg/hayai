@@ -9,7 +9,7 @@
 //! with a configured checkpoint list.
 
 use crate::{
-    subsidy, ConsensusError, CoreSpec, P2shScript, Upgrade, POST_BLOSSOM_TARGET_SPACING,
+    subsidy_schedule, ConsensusError, CoreSpec, P2shScript, Upgrade, POST_BLOSSOM_TARGET_SPACING,
     PRE_BLOSSOM_TARGET_SPACING,
 };
 
@@ -40,13 +40,13 @@ pub fn founders_reward(
     spec: &CoreSpec,
     height: u32,
 ) -> Result<Option<FoundersReward>, ConsensusError> {
-    let scripts = spec.founders_scripts;
+    let scripts = &spec.founders_scripts;
     if scripts.len() == 0 {
         return Ok(None);
     }
     if height == 0
         || spec.upgrade_at(height)? >= Upgrade::Canopy
-        || subsidy::halving(spec, height)? >= 1
+        || subsidy_schedule::halving(spec, height)? >= 1
     {
         return Ok(None);
     }
@@ -90,7 +90,7 @@ pub fn founders_reward(
         return Err(ConsensusError::UncheckedSpec);
     };
     Ok(Some(FoundersReward {
-        value: subsidy::scheduled_subsidy(spec, height)? / FOUNDERS_FRACTION_DIVISOR,
+        value: subsidy_schedule::scheduled_subsidy(spec, height)? / FOUNDERS_FRACTION_DIVISOR,
         script: *script,
     }))
 }
@@ -98,8 +98,8 @@ pub fn founders_reward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_spec::tests::{heights, regtest};
     use crate::funding::tests::{SCRIPT_A, SCRIPT_B};
-    use crate::spec::tests::{heights, regtest};
 
     /// A chain with the schedule of Mainnet and 2 founders' scripts: the change interval is
     /// `ceiling((10,000 + 840,000) / 2)` = 425,000 adjusted blocks.
@@ -114,7 +114,7 @@ mod tests {
         ]);
         spec.slow_start_interval = 20_000;
         spec.pre_blossom_halving_interval = 840_000;
-        spec.founders_scripts = &[SCRIPT_A, SCRIPT_B];
+        spec.founders_scripts = vec![SCRIPT_A, SCRIPT_B];
         spec.first_halving = Some(1_046_400);
         spec
     }

@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use hayai_coins::{Coin, CoinsView, OutPoint, Pool};
-use hayai_consensus::coinbase::{CoinbaseError, CoinbaseTerms, ShieldedBalances};
+use hayai_consensus::coinbase::{CoinbaseError, CoinbaseOutput, CoinbaseTerms, ShieldedBalances};
 use hayai_consensus::{
     nsm, BlockLimits, Network, RuleSet, ShieldedPools, COINBASE_MATURITY, LOCKTIME_THRESHOLD,
 };
@@ -771,10 +771,13 @@ fn check_coinbase_value(
     terms: &CoinbaseTerms,
 ) -> Result<(), ContextError> {
     let tx = &coinbase.raw.tx;
-    let outputs: Vec<(u64, &[u8])> = tx.transparent_bundle().map_or_else(Vec::new, |b| {
+    let outputs: Vec<CoinbaseOutput> = tx.transparent_bundle().map_or_else(Vec::new, |b| {
         b.vout
             .iter()
-            .map(|o| (o.value().into_u64(), o.script_pubkey().0 .0.as_slice()))
+            .map(|o| CoinbaseOutput {
+                value: o.value().into_u64(),
+                script: o.script_pubkey().0 .0.to_vec(),
+            })
             .collect()
     });
     let shielded = ShieldedBalances {

@@ -324,7 +324,7 @@ pub const RULE_SETS: [RuleSet; UPGRADES] = [
 
 impl RuleSet {
     /// The rule set of `upgrade` at its activation.
-    pub const fn of(upgrade: Upgrade) -> &'static RuleSet {
+    pub fn of(upgrade: Upgrade) -> &'static RuleSet {
         &RULE_SETS[upgrade.index()]
     }
 }
@@ -340,21 +340,21 @@ impl RuleSet {
 /// ZIP 200: a block of a known height is validated under the rules of the consensus
 /// branch of that height. The block at `ACTIVATION_HEIGHT - 1` has the rules before the
 /// upgrade.
-pub fn rules_at(spec: &CoreSpec, height: u32) -> Result<&'static RuleSet, ConsensusError> {
+pub fn rules_at(spec: &CoreSpec, height: u32) -> Result<RuleSet, ConsensusError> {
     let upgrade = spec.upgrade_at(height)?;
     if spec.orchard_disabled(height) {
         if upgrade != Upgrade::Nu6_1 {
             return Err(ConsensusError::UncheckedSpec);
         }
-        return Ok(&NU6_1_ORCHARD_DISABLED);
+        return Ok(NU6_1_ORCHARD_DISABLED);
     }
-    Ok(RuleSet::of(upgrade))
+    Ok(RULE_SETS[upgrade.index()])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec::tests::regtest;
+    use crate::chain_spec::tests::regtest;
 
     #[test]
     fn each_rule_set_is_at_the_index_of_its_upgrade() {
@@ -374,8 +374,8 @@ mod tests {
 
     #[test]
     fn tx_versions_hold_the_versions_one_to_six() {
-        let versions = |set: TxVersions| -> alloc::vec::Vec<u32> {
-            let mut allowed = alloc::vec::Vec::new();
+        let versions = |set: TxVersions| -> Vec<u32> {
+            let mut allowed = Vec::new();
             for v in 0..=8 {
                 if set.allows(v) {
                     allowed.push(v);
@@ -446,9 +446,9 @@ mod tests {
 
     #[test]
     fn the_rules_of_each_upgrade() {
-        let versions = |upgrade: Upgrade| -> alloc::vec::Vec<u32> {
+        let versions = |upgrade: Upgrade| -> Vec<u32> {
             let rules = RuleSet::of(upgrade);
-            let mut allowed = alloc::vec::Vec::new();
+            let mut allowed = Vec::new();
             for v in 0..=7 {
                 if rules.tx_versions.allows(v) {
                     allowed.push(v);
@@ -531,27 +531,27 @@ mod tests {
         spec.activation_heights[Upgrade::Nu6_1.index()] = Some(20);
         spec.activation_heights[Upgrade::Nu6_2.index()] = Some(40);
         spec.orchard_disabled_start_height = Some(30);
-        assert_eq!(rules_at(&spec, 0), Ok(&SPROUT));
-        assert_eq!(rules_at(&spec, 1), Ok(&NU5));
-        assert_eq!(rules_at(&spec, 10), Ok(&NU6));
-        assert_eq!(rules_at(&spec, 29), Ok(&NU6_1));
+        assert_eq!(rules_at(&spec, 0), Ok(SPROUT));
+        assert_eq!(rules_at(&spec, 1), Ok(NU5));
+        assert_eq!(rules_at(&spec, 10), Ok(NU6));
+        assert_eq!(rules_at(&spec, 29), Ok(NU6_1));
         for height in [30, 31, 39] {
             let rules = rules_at(&spec, height).unwrap();
-            assert_eq!(rules, &NU6_1_ORCHARD_DISABLED, "{height}");
+            assert_eq!(rules, NU6_1_ORCHARD_DISABLED, "{height}");
             assert!(!rules.pools.orchard && !rules.coinbase.orchard_bundle);
             assert_eq!(
                 RuleSet {
                     pools: NU6_1.pools,
                     coinbase: NU6_1.coinbase,
-                    ..*rules
+                    ..rules
                 },
                 NU6_1
             );
         }
-        assert_eq!(rules_at(&spec, 40), Ok(&NU6_2));
-        assert_eq!(rules_at(&spec, u32::MAX), Ok(&NU6_2));
+        assert_eq!(rules_at(&spec, 40), Ok(NU6_2));
+        assert_eq!(rules_at(&spec, u32::MAX), Ok(NU6_2));
         spec.orchard_disabled_start_height = Some(15);
         assert_eq!(rules_at(&spec, 15), Err(ConsensusError::UncheckedSpec));
-        assert_eq!(rules_at(&regtest(), u32::MAX), Ok(&NU5));
+        assert_eq!(rules_at(&regtest(), u32::MAX), Ok(NU5));
     }
 }

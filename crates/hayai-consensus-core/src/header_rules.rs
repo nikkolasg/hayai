@@ -18,10 +18,10 @@
 //! Regtest follows Zakura's Regtest (`disable_pow`): a header needs a target at or below
 //! the limit and has no expected `nBits`. The time rules apply.
 
-use crate::difficulty::{
+use crate::difficulty_rules::{
     expected_bits, median_time_past, needed, ContextTooShort, DifficultyError, Uint256,
 };
-use crate::rules::RuleSet;
+use crate::rule_sets::RuleSet;
 use crate::{ConsensusError, CoreSpec, ParentChain, MEDIAN_TIME_SPAN};
 
 /// Lowest block version (zcashd `MIN_BLOCK_VERSION`).
@@ -97,13 +97,13 @@ pub enum HeaderVerdict {
 /// The rules that read no hash and no solution: the version, the target against the
 /// proof-of-work limit, the time against the median-time-past, and `nBits` against the
 /// expected value of [`expected_bits`]. `rules` is the rule set of `chain.height`
-/// ([`crate::rules::rules_at`]): the caller selects it one time for every rule of the
+/// ([`crate::rule_sets::rules_at`]): the caller selects it one time for every rule of the
 /// block.
 pub fn check_contextual(
     spec: &CoreSpec,
     rules: &RuleSet,
     header: HeaderFields,
-    chain: &ParentChain<'_>,
+    chain: ParentChain<'_>,
 ) -> Result<HeaderVerdict, HeaderError> {
     let height = chain.height;
     if height == 0 {
@@ -116,9 +116,10 @@ pub fn check_contextual(
     // Spec §7.6: the median-time-past reads the 11 blocks before the header, or all of
     // them when fewer exist.
     let needed_times = needed(height, MEDIAN_TIME_SPAN);
-    let median = match median_time_past(chain.times) {
-        Some(median) if chain.times.len() >= needed_times => Some(median),
-        _ => None,
+    let median = if chain.times.len() >= needed_times {
+        median_time_past(chain.times)
+    } else {
+        None
     };
     let time_unchecked = match median {
         Some(median_time_past) => {
@@ -224,16 +225,17 @@ pub fn check_local_time(time: u32, now: u32) -> Result<(), HeaderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::rules_at;
-    use crate::spec::tests::regtest;
+    use crate::chain_spec::tests::regtest;
+    use crate::rule_sets::rules_at;
 
     /// `check_contextual` with the rule set of `chain.height`.
     fn contextual(
         spec: &CoreSpec,
         header: HeaderFields,
-        chain: &ParentChain<'_>,
+        chain: ParentChain<'_>,
     ) -> Result<HeaderVerdict, HeaderError> {
-        check_contextual(spec, rules_at(spec, chain.height)?, header, chain)
+        let rules = rules_at(spec, chain.height)?;
+        check_contextual(spec, &rules, header, chain)
     }
 
     #[test]
@@ -299,29 +301,29 @@ mod tests {
             bits,
         };
         assert_eq!(
-            contextual(&spec, header(951, 0x200f_0f0f), &chain),
+            contextual(&spec, header(951, 0x200f_0f0f), chain),
             Ok(HeaderVerdict::Checked)
         );
         assert_eq!(
-            contextual(&spec, header(950, 0x200f_0f0f), &chain),
+            contextual(&spec, header(950, 0x200f_0f0f), chain),
             Err(HeaderError::TimeTooEarly {
                 time: 950,
                 median_time_past: 950
             })
         );
         assert_eq!(
-            contextual(&spec, header(950 + 5_401, 0x200f_0f0f), &chain),
+            contextual(&spec, header(950 + 5_401, 0x200f_0f0f), chain),
             Err(HeaderError::TimeTooLate {
                 time: 6_351,
                 limit: 6_350
             })
         );
         assert_eq!(
-            contextual(&spec, header(951, 0x2010_0000), &chain),
+            contextual(&spec, header(951, 0x2010_0000), chain),
             Err(HeaderError::TargetAboveLimit(0x2010_0000))
         );
         assert_eq!(
-            contextual(&spec, header(951, 0), &chain),
+            contextual(&spec, header(951, 0), chain),
             Err(HeaderError::InvalidBits(0))
         );
         assert_eq!(
@@ -331,13 +333,13 @@ mod tests {
                     version: 3,
                     ..header(951, 0x200f_0f0f)
                 },
-                &chain
+                chain
             ),
             Err(HeaderError::Version(3))
         );
         let genesis = ParentChain { height: 0, ..chain };
         assert_eq!(
-            contextual(&spec, header(951, 0x200f_0f0f), &genesis),
+            contextual(&spec, header(951, 0x200f_0f0f), genesis),
             Err(HeaderError::Genesis)
         );
         // A context of 10 times at height 11: the time rules did not run.
@@ -346,7 +348,7 @@ mod tests {
             ..chain
         };
         assert_eq!(
-            contextual(&spec, header(1, 0x200f_0f0f), &short),
+            contextual(&spec, header(1, 0x200f_0f0f), short),
             Ok(HeaderVerdict::ContextTooShort(Unchecked {
                 time: true,
                 bits: false,
@@ -395,11 +397,11 @@ mod tests {
             bits,
         };
         assert_eq!(
-            contextual(&spec, header(0x1f07_fffe), &chain),
+            contextual(&spec, header(0x1f07_fffe), chain),
             Ok(HeaderVerdict::Checked)
         );
         assert_eq!(
-            contextual(&spec, header(0x1f07_ffff), &chain),
+            contextual(&spec, header(0x1f07_ffff), chain),
             Err(HeaderError::WrongBits {
                 expected: 0x1f07_fffe,
                 got: 0x1f07_ffff
@@ -410,7 +412,7 @@ mod tests {
             ..chain
         };
         assert_eq!(
-            contextual(&spec, header(0x1f07_ffff), &short),
+            contextual(&spec, header(0x1f07_ffff), short),
             Ok(HeaderVerdict::ContextTooShort(Unchecked {
                 time: false,
                 bits: true,
@@ -429,7 +431,7 @@ mod tests {
             ..chain
         };
         assert_eq!(
-            contextual(&spec, header(0x1f07_ffff), &invalid),
+            contextual(&spec, header(0x1f07_ffff), invalid),
             Err(HeaderError::InvalidContextBits(0x1f80_0001))
         );
     }

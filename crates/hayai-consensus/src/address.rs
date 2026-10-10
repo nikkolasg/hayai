@@ -181,11 +181,11 @@ mod tests {
             let spec = network.spec();
             let core = network.core();
             assert_eq!(spec.funding_streams.len(), core.funding_streams.len());
-            for (set, core_set) in spec.funding_streams.iter().zip(core.funding_streams) {
+            for (set, core_set) in spec.funding_streams.iter().zip(&core.funding_streams) {
                 assert_eq!((set.start, set.end), (core_set.start, core_set.end));
                 assert_eq!(set.ends_at_third_halving, core_set.ends_at_third_halving);
                 assert_eq!(set.streams.len(), core_set.streams.len());
-                for (stream, core_stream) in set.streams.iter().zip(core_set.streams) {
+                for (stream, core_stream) in set.streams.iter().zip(&core_set.streams) {
                     assert_eq!(stream.receiver, core_stream.receiver);
                     assert_eq!(stream.numerator, core_stream.numerator);
                     let scripts: Vec<P2shScript> = stream
@@ -203,7 +203,7 @@ mod tests {
             for (disbursement, core_disbursement) in spec
                 .lockbox_disbursements
                 .iter()
-                .zip(core.lockbox_disbursements)
+                .zip(&core.lockbox_disbursements)
             {
                 assert_eq!(disbursement.count, core_disbursement.count);
                 assert_eq!(disbursement.value, core_disbursement.value);

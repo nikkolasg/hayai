@@ -1861,3 +1861,96 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
 - Lesson: `systemctl enable` on a unit without an `[Install]` section only warns, and the
   unit does not start at the next boot. A unit that must survive a reboot has
   `WantedBy=multi-user.target`.
+
+## 2026-10-09 — Formal verification, stage A: the core translates to Lean (hayai-7yq.1, M14)
+
+- `formal/` is a Lake project. A reader checks the proofs with `elan` and `lake build`
+  only: the translation of `hayai-consensus-core` is committed (`formal/Hayai/Core`), and
+  Charon and Aeneas (pinned by commit in `formal/TOOLCHAIN`) only regenerate it
+  (`formal/scripts/extract.sh`). The CI job `formal-extract` regenerates and diffs; the job
+  `formal` builds the proofs. Decision of the owner: the pins do not drive the design and a
+  reader never builds the tools.
+- The whole core is in the Aeneas subset. The first extraction refused 89 sites; each form
+  was reduced to a probe crate and the core rewritten (`docs/formal-verification.md`,
+  section "The subset in practice"). The forms with a cost in the hot path:
+  - `CoreSpec` owns its tables (`Vec`), so `hayai-consensus` builds the core of each
+    built-in network once (`OnceLock`) and of a custom network at `ChainSpec::network`.
+    `Network::core()` is one atomic load; before, the tables were `&'static` slices.
+  - `CoinbaseTerms::check` takes `&[CoinbaseOutput]` with an owned script: one small
+    `Vec<u8>` per coinbase output per block check (a coinbase has 2 to 6 outputs).
+  - `rules_at` returns the `RuleSet` by value (a `Copy` of about 100 bytes) once per
+    block-level call; the adapter keeps its `&'static` rule sets.
+  - `ParentChain` by value: it is `Copy`, three words.
+  - A loop keeps its failure in a local and `break`s; the number of operations is the same.
+- Six modules of the core are renamed, because Lean reads `spec.CoreSpec.checked` as a field
+  of a local variable `spec`: `chain_spec`, `rule_sets`, `block_limits`,
+  `subsidy_schedule`, `header_rules`, `difficulty_rules`. Rule: a module of the core has no
+  name that a local variable would have (`tests/subset.rs`).
+- The `Display`, `Debug` and `Error::source` bodies of `thiserror` are excluded from the
+  extraction (their bodies use `dyn` and the formatter); no rule reads them. The
+  standard-library items without a model in the Aeneas library are defined by hand in
+  `formal/Hayai/Core/FunsExternal.lean` (13 definitions; 17 axioms for hashing and
+  formatting).
+- Lesson: `charon --exclude` matches an impl method with the pattern
+  `{core::error::Error<_>}::source`, not with `core::error::Error::source`; and
+  `--start-from-pub` is the way to leave the derived impls of private items out.
+- Lesson: Aeneas refuses a function that borrows an argument and returns a `&'static`
+  (the two lifetimes do not unify in its borrow model), but accepts the same function with
+  a by-value result, and a function without borrowed arguments that returns `&TABLE[i]`.
+
+## 2026-10-10 — Formal verification, stage B starts: specs, first proofs, progress table (hayai-ncv)
+
+- `formal/Hayai/Spec/Difficulty.lean` and `Header.lean` transcribe §7.6 and §7.7 from the
+  LaTeX source of the protocol specification (`zcash/zips`, `protocol/protocol.tex`), one
+  definition per item, each named after it. They are the trusted part of a proof: a reader
+  checks them against the document. Where the specification is not an integer formula
+  (`256^(e−3)` for `e < 3`, the percentages of `PoWMaxAdjust*`) the file says how it reads it.
+- `formal/proven.tsv` maps each proven rule of `docs/consensus.md` to its theorems;
+  `formal/scripts/progress.py` generates `formal/PROGRESS.md` (the status of each of the 763
+  rules) and checks with `#print axioms` that each theorem exists and uses no `sorryAx`. The
+  CI job `formal` fails on a stale file. A theorem with a `sorry` never counts as a proof.
+- First proofs: `check_version` and `check_local_time` decide their §7.6 rules exactly
+  (the saturating addition of the code does not change the local-time rule), and
+  `Uint256::checked_add` returns the sum or `None` at `2^256` and above.
+- Lesson: a loop of the translation is `loop body x`; `loop.spec_decr_nat` with an invariant
+  over the state tuple and the measure `4 - start` proves a limb loop without unrolling it.
+- Lesson: `partial` is a keyword of Lean; and the `lean_lib` glob `.submodules` leaves out the
+  root module, so `import Hayai` needs `.andSubmodules`.
+
+## 2026-10-10 — The median of the core counts instead of sorting (hayai-ncv)
+
+- `median_time` returns the time `t` with `#{x < t} ≤ len / 2 < #{x ≤ t}`: the element at
+  index `len / 2` of the sorted list, with no copy and no sort. The old version copied the
+  times into a `Vec` and sorted it by swaps. For the at most 11 times of a call, the new one
+  makes no allocation and at most 121 comparisons. The proof (`formal/Hayai/Proofs/Median.lean`)
+  needs one fact about sorted lists, where a proof of the swap sort needs an invariant of each
+  swap. A test compares the result with a real sort on repeated values and lengths 0 to 13.
+- Proven: `median_time` is `median` of §7.7.3, `median_time_past` is `MedianTime`; ZIP 200
+  epochs (`upgrade_at`); every rule set that `rules_at` selects has the constants of §5.3;
+  `bounded_timespan` is `ActualTimespanBounded`.
+- Lesson: in this Aeneas version `Result` is a coinductive tree, so `x = ok v` cannot be split
+  by cases; a fact about a constant of the translation is a weakest-precondition theorem
+  (`RULE_SETS ⦃ a => … ⦄`), which also shows that the constant evaluates without error.
+
+## 2026-10-11 — Formal: the §7.6 and §7.7 header and difficulty rules proven (hayai-ncv)
+
+- Proven against the specification: `check_contextual` (§7.6: version, target at most
+  `PoWLimit`, `nTime` above the median-time-past and at most 90 minutes after it,
+  `nBits = ThresholdBits`), `expected_bits`, `threshold_bits` (§7.7.3), `mean_target`,
+  `min_difficulty_block` (ZIP 205, ZIP 208, ZIP 218), `rules_at` (the difficulty parameters
+  of the epoch of the height), `from_compact` and `to_compact` (§7.7.4), and the 256-bit
+  arithmetic they use. `formal/PROGRESS.md` lists 30 rules of `docs/consensus.md` as proven.
+- `expected_bits` is two functions, `min_difficulty_block` and `threshold_bits`, with the same
+  behaviour: Aeneas copied the rest of the function into both branches of the Testnet rule,
+  and the proof would have had to follow each copy. The overflow test of `from_compact` uses
+  `|` and `&` on booleans for the same reason.
+- `CoreSpec::checked` refuses a compact proof-of-work limit other than ToCompact(PoWLimit)
+  (`SpecError::PowLimitBits`). The minimum-difficulty and low-height rules return
+  `pow_limit_bits`; the specification says ToCompact(PoWLimit). The built-in networks pass.
+- The proofs take as hypotheses what the shell gives: a context that holds the times and
+  `nBits` the rules read, `nBits` of the context that encode a target (the parents passed
+  their own header check), and the checks of `CoreSpec::checked`. The values of the network
+  data in `hayai-consensus` (Testnet start heights, the max-time start heights) are not
+  covered; `formal/proven.tsv` notes each.
+- Lesson: on a loaded machine, a change to a large proof file rebuilds it in minutes. New
+  theorems go into a file that imports the proven ones, checked with `lake env lean`.
