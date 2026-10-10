@@ -12,4 +12,4 @@ package «hayai-formal» where
 /-- The translation of `hayai-consensus-core` (generated, `scripts/extract.sh`), the
 specification of the consensus rules, and the proofs that the translation satisfies it. -/
 @[default_target] lean_lib «Hayai» where
-  globs := #[.submodules `Hayai]
+  globs := #[.andSubmodules `Hayai]

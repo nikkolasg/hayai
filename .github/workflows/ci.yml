@@ -192,6 +192,9 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: formal
+      # formal/PROGRESS.md follows docs/consensus.md and formal/proven.tsv, and each theorem
+      # of proven.tsv exists and uses no sorry.
+      - run: python3 formal/scripts/progress.py --check
 
   # The translation does not drift: the job regenerates formal/Hayai/Core with Charon
   # and Aeneas at the commits of formal/TOOLCHAIN and fails when a generated file differs

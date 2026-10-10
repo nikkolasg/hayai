@@ -1897,3 +1897,22 @@ Design decisions and lessons, at the level of behaviour. The file does not recor
 - Lesson: Aeneas refuses a function that borrows an argument and returns a `&'static`
   (the two lifetimes do not unify in its borrow model), but accepts the same function with
   a by-value result, and a function without borrowed arguments that returns `&TABLE[i]`.
+
+## 2026-10-10 — Formal verification, stage B starts: specs, first proofs, progress table (hayai-ncv)
+
+- `formal/Hayai/Spec/Difficulty.lean` and `Header.lean` transcribe §7.6 and §7.7 from the
+  LaTeX source of the protocol specification (`zcash/zips`, `protocol/protocol.tex`), one
+  definition per item, each named after it. They are the trusted part of a proof: a reader
+  checks them against the document. Where the specification is not an integer formula
+  (`256^(e−3)` for `e < 3`, the percentages of `PoWMaxAdjust*`) the file says how it reads it.
+- `formal/proven.tsv` maps each proven rule of `docs/consensus.md` to its theorems;
+  `formal/scripts/progress.py` generates `formal/PROGRESS.md` (the status of each of the 763
+  rules) and checks with `#print axioms` that each theorem exists and uses no `sorryAx`. The
+  CI job `formal` fails on a stale file. A theorem with a `sorry` never counts as a proof.
+- First proofs: `check_version` and `check_local_time` decide their §7.6 rules exactly
+  (the saturating addition of the code does not change the local-time rule), and
+  `Uint256::checked_add` returns the sum or `None` at `2^256` and above.
+- Lesson: a loop of the translation is `loop body x`; `loop.spec_decr_nat` with an invariant
+  over the state tuple and the measure `4 - start` proves a limb loop without unrolling it.
+- Lesson: `partial` is a keyword of Lean; and the `lean_lib` glob `.submodules` leaves out the
+  root module, so `import Hayai` needs `.andSubmodules`.

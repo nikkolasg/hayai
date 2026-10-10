@@ -1,0 +1,4 @@
+# section	rule	theorems (full Lean names). See formal/scripts/progress.py.
+Protocol specification §7.6	The block version, read as a signed 32-bit integer, is at least 4.	Hayai.Proofs.Header.check_version_spec
+Protocol specification §7.6	A block with a version above 4 has the rules of a version 4 block.	Hayai.Proofs.Header.check_version_spec
+Protocol specification §7.6	A full validator does not accept a block whose `nTime` is more than 2 h after the clock of the node.	Hayai.Proofs.Header.check_local_time_spec
