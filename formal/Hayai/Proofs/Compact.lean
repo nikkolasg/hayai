@@ -325,3 +325,287 @@ theorem from_compact_spec (bits : U32) :
         rw [h]; norm_num; omega
 
 end Hayai.Proofs.Compact
+
+namespace Hayai.Proofs.Compact
+
+/-- A number below `256^m` with only zero digits is zero. -/
+theorem digits_zero : ∀ (m x : ℕ), x < 256 ^ m → (∀ n < m, x / 256 ^ n % 256 = 0) → x = 0
+  | 0, x, h, _ => by simpa using h
+  | m + 1, x, h, hd => by
+    have h0 := hd 0 (by omega)
+    simp at h0
+    have hy : x / 256 = 0 := digits_zero m (x / 256) (by rw [pow_succ] at h; omega)
+      (fun n hn => by
+        have := hd (n + 1) (by omega)
+        rwa [pow_succ, mul_comm, ← Nat.div_div_eq_div_mul] at this)
+    omega
+
+/-- The digits above `t` are zero: the number is below `256^(t+1)`. -/
+theorem lt_of_high_zero (x t : ℕ) (hx : x < 256 ^ 32) (ht : t < 32)
+    (hd : ∀ n, t < n → n < 32 → x / 256 ^ n % 256 = 0) : x < 256 ^ (t + 1) := by
+  have hy : x / 256 ^ (t + 1) = 0 := by
+    apply digits_zero (31 - t)
+    · rw [Nat.div_lt_iff_lt_mul (by positivity), ← pow_add]
+      rwa [show 31 - t + (t + 1) = 32 by omega]
+    · intro n hn
+      rw [Nat.div_div_eq_div_mul, ← pow_add]
+      exact hd _ (by omega) (by omega)
+  rwa [Nat.div_eq_zero_iff_lt (by positivity)] at hy
+
+/-- A nonzero digit `t`: the number is at least `256^t`. -/
+theorem le_of_digit_ne (x t : ℕ) (hd : x / 256 ^ t % 256 ≠ 0) : 256 ^ t ≤ x := by
+  by_contra h
+  apply hd
+  rw [Nat.div_eq_of_lt (by omega)]
+
+/-- `size(x)` of §7.7.4 is `t + 1` for `256^t ≤ x < 256^(t+1)`. -/
+theorem size_eq (x t : ℕ) (h1 : 256 ^ t ≤ x) (h2 : x < 256 ^ (t + 1)) : size x = t + 1 := by
+  have hx : x ≠ 0 := by have := Nat.one_le_pow t 256 (by norm_num); omega
+  have e : ∀ k, (256 : ℕ) ^ k = 2 ^ (8 * k) := fun k => by rw [pow_mul]; norm_num
+  rw [e] at h1 h2
+  have l1 : 8 * t ≤ Nat.log2 x := (Nat.le_log2 hx).mpr h1
+  have l2 : Nat.log2 x < 8 * (t + 1) := (Nat.log2_lt hx).mpr h2
+  simp only [size, bitLength, hx, ↓reduceIte]
+  omega
+
+/-- The three top bytes, as the code combines them with shifts and `|`. -/
+theorem or3 (a b c : ℕ) (ha : a < 256) (hb : b < 256) (hc : c < 256) :
+    (a <<< 16 ||| b <<< 8) ||| c = a * 65536 + b * 256 + c := by
+  rw [Nat.lor_assoc, ← Nat.shiftLeft_add_eq_or_of_lt (by omega : c < 2 ^ 8)]
+  rw [← Nat.shiftLeft_add_eq_or_of_lt (by rw [Nat.shiftLeft_eq]; omega : b <<< 8 + c < 2 ^ 16)]
+  simp only [Nat.shiftLeft_eq]; ring
+
+/-- `mantissa(x)` of §7.7.4 from the digits `t`, `t − 1` and `t − 2` of `x`. -/
+theorem mantissa_eq (x t : ℕ) (h1 : 256 ^ t ≤ x) (h2 : x < 256 ^ (t + 1)) :
+    mantissa x = x / 256 ^ t % 256 * 65536 +
+      (if 1 ≤ t then x / 256 ^ (t - 1) % 256 * 256 else 0) +
+      (if 2 ≤ t then x / 256 ^ (t - 2) % 256 else 0) := by
+  have hs := size_eq x t h1 h2
+  simp only [mantissa, hs]
+  rcases (show t = 0 ∨ t = 1 ∨ t = 2 ∨ 3 ≤ t by omega) with h | h | h | h
+  · subst h; simp at h2 ⊢; omega
+  · subst h; simp at h2 ⊢; omega
+  · subst h; simp at h2 ⊢; omega
+  · rw [if_neg (by omega), if_pos (by omega), if_pos (by omega)]
+    have ey : x / 256 ^ (t + 1 - 3) < 256 ^ 3 := by
+      rw [Nat.div_lt_iff_lt_mul (by positivity), ← pow_add, show 3 + (t + 1 - 3) = t + 1 by omega]
+      exact h2
+    have e1 : x / 256 ^ t = x / 256 ^ (t + 1 - 3) / 65536 := by
+      rw [Nat.div_div_eq_div_mul, show (65536 : ℕ) = 256 ^ 2 by norm_num, ← pow_add]
+      congr 2; omega
+    have e2 : x / 256 ^ (t - 1) = x / 256 ^ (t + 1 - 3) / 256 := by
+      rw [Nat.div_div_eq_div_mul, ← pow_succ]; congr 2; omega
+    have e3 : t - 2 = t + 1 - 3 := by omega
+    rw [e1, e2, e3]
+    generalize x / 256 ^ (t + 1 - 3) = y at ey ⊢
+    norm_num at ey
+    omega
+
+/-- The loop of `to_compact` finds the most significant nonzero byte. -/
+theorem top_loop_spec (bytes : Array U8 32#usize) (iter : core.ops.range.Range Usize)
+    (top : Option Usize) (hend : iter.end.val = 32) (hs : iter.start.val ≤ 32)
+    (hnone : top = none → ∀ n < iter.start.val, bytes.val[n]!.val = 0)
+    (hsome : ∀ t, top = some t → t.val < iter.start.val ∧ bytes.val[t.val]!.val ≠ 0 ∧
+      ∀ n, t.val < n → n < iter.start.val → bytes.val[n]!.val = 0) :
+    Uint256.to_compact_loop iter bytes top ⦃ r =>
+      (r = none → ∀ n < 32, bytes.val[n]!.val = 0) ∧
+      (∀ t, r = some t → t.val < 32 ∧ bytes.val[t.val]!.val ≠ 0 ∧
+        ∀ n, t.val < n → n < 32 → bytes.val[n]!.val = 0) ⦄ := by
+  unfold Uint256.to_compact_loop
+  apply loop.spec_decr_nat
+    (measure := fun (s : core.ops.range.Range Usize × Option Usize) => 32 - s.1.start.val)
+    (inv := fun (s : core.ops.range.Range Usize × Option Usize) =>
+      s.1.end.val = 32 ∧ s.1.start.val ≤ 32 ∧
+      (s.2 = none → ∀ n < s.1.start.val, bytes.val[n]!.val = 0) ∧
+      (∀ t, s.2 = some t → t.val < s.1.start.val ∧ bytes.val[t.val]!.val ≠ 0 ∧
+        ∀ n, t.val < n → n < s.1.start.val → bytes.val[n]!.val = 0))
+  · rintro ⟨it, tp⟩ ⟨hend', hs', hn', hs''⟩
+    simp only at hend' hs' hn' hs''
+    unfold Uint256.to_compact_loop.body
+    step as ⟨ o, it1, ho, hit1 ⟩
+    by_cases hlt : it.start.val < it.end.val
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only
+      have he1 : it1.end.val = 32 := by rw [hit1]; exact hend'
+      step as ⟨ x, hx ⟩
+      have hl : it.start.val < bytes.val.length := by simp; omega
+      have hxv : x.val = bytes.val[it.start.val]!.val := by rw [hx, getElem!_pos bytes.val _ hl]
+      split
+      · rename_i hne
+        have hne' : x.val ≠ 0 := by
+          intro h; apply absurd hne; simp [bne_iff_ne, ne_eq, UScalar.eq_equiv, h]
+        simp only [WP.spec_ok]
+        refine ⟨he1, by omega, by simp, ?_, by omega⟩
+        intro t ht
+        simp only [Option.some.injEq] at ht
+        subst ht
+        refine ⟨by omega, by rw [← hxv]; exact hne', fun n h1 h2 => by omega⟩
+      · rename_i heq
+        have h0 : x.val = 0 := by
+          by_contra h; apply heq; simp [bne_iff_ne, ne_eq, UScalar.eq_equiv, h]
+        simp only [WP.spec_ok]
+        refine ⟨he1, by omega, ?_, ?_, by omega⟩
+        · intro hn n hnl
+          by_cases hne : n = it.start.val
+          · subst hne; rw [← hxv]; exact h0
+          · exact hn' hn n (by omega)
+        · intro t ht
+          obtain ⟨h1, h2, h3⟩ := hs'' t ht
+          refine ⟨by omega, h2, fun n hn1 hn2 => ?_⟩
+          by_cases hne : n = it.start.val
+          · subst hne; rw [← hxv]; exact h0
+          · exact h3 n hn1 (by omega)
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only [WP.spec_ok]
+      have h32 : it.start.val = 32 := by omega
+      rw [h32] at hn' hs''
+      exact ⟨hn', hs''⟩
+  · exact ⟨hend, hs, hnone, hsome⟩
+
+end Hayai.Proofs.Compact
+
+namespace Hayai.Proofs.Compact
+
+theorem from_u32_u8_val (x : U8) : (core.convert.num.FromU32U8.from x).val = x.val := by
+  simp only [core.convert.num.FromU32U8.from, UScalar.val, BitVec.toNat_setWidth]
+  apply Nat.mod_eq_of_lt
+  have := x.bv.isLt
+  simp only [UScalarTy.numBits] at *
+  omega
+
+theorem toCompact_zero : toCompact 0 = 0 := by
+  simp [toCompact, mantissa, size, bitLength]
+
+/-- §7.7.4, `ToCompact`: `to_compact` returns the compact form of the integer. -/
+theorem to_compact_spec (a : Array U64 4#usize) :
+    Uint256.to_compact a ⦃ r => ∃ c : U32, r = core.result.Result.Ok c ∧
+      c.val = toCompact (toNat a) ⦄ := by
+  unfold Uint256.to_compact
+  have hx := toNat_lt a
+  step with to_le_bytes_spec as ⟨ bytes, hbytes ⟩
+  step with top_loop_spec as ⟨ top, hnone, hsome ⟩
+  have hd : ∀ n < 32, toNat a / 256 ^ n % 256 = bytes.val[n]!.val := fun n hn => (hbytes n hn).symm
+  have hx32 : toNat a < 256 ^ 32 := by norm_num at hx ⊢; omega
+  rcases top with _ | t
+  · simp only [WP.spec_ok]
+    refine ⟨0#u32, rfl, ?_⟩
+    have : toNat a = 0 := digits_zero 32 _ hx32
+      (fun n hn => by rw [hd n hn]; exact hnone rfl n hn)
+    rw [this, toCompact_zero]; rfl
+  obtain ⟨ht32, htne, hthigh⟩ := hsome t rfl
+  have hlo : 256 ^ t.val ≤ toNat a := le_of_digit_ne _ _ (by rw [hd _ ht32]; exact htne)
+  have hhi : toNat a < 256 ^ (t.val + 1) := lt_of_high_zero _ _ hx32 ht32
+    (fun n h1 h2 => by rw [hd n h2]; exact hthigh n h1 h2)
+  have hsz := size_eq _ _ hlo hhi
+  have hmt := mantissa_eq _ _ hlo hhi
+  simp only
+  step as ⟨ i, hi ⟩
+  step as ⟨ r, hr ⟩
+  obtain ⟨sz, hrsz, hszv⟩ := hr (by scalar_tac)
+  rw [hrsz]
+  simp only
+  -- The digits of the integer, read from the bytes.
+  have hdig : ∀ (j : Usize) (hj : j.val < 32) (b : U8), b = bytes.val[j.val]'(by simp; omega) →
+      (core.convert.num.FromU32U8.from b).val = toNat a / 256 ^ j.val % 256 := by
+    intro j hj b hb
+    rw [from_u32_u8_val, hb, ← getElem!_pos bytes.val j.val (by simp; omega), hbytes _ hj]
+  have hdlt : ∀ n, toNat a / 256 ^ n % 256 < 256 := fun n => Nat.mod_lt _ (by norm_num)
+  have h32 : U32.size = 2 ^ 32 := by simp [U32.size, U32.numBits]
+  step as ⟨ b0, hb0 ⟩
+  have hv0 := hdig t ht32 b0 hb0
+  try simp only [lift, Std.bind_ok]
+  step as ⟨ m0, hm0 ⟩
+  have a0 := hdlt t.val; have a1 := hdlt (t.val - 1); have a2 := hdlt (t.val - 2)
+  have hm0v : m0.val = toNat a / 256 ^ t.val % 256 * 65536 := by
+    rw [hm0, hv0, h32, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega)]
+  -- `mantissa1`: the digit `t − 1` when `t ≥ 1`.
+  apply WP.spec_bind (Pₘ := fun (m1 : U32) => m1.val = toNat a / 256 ^ t.val % 256 * 65536 +
+      (if 1 ≤ t.val then toNat a / 256 ^ (t.val - 1) % 256 * 256 else 0))
+  · split
+    · rename_i h1
+      have h1' : 1 ≤ t.val := by scalar_tac
+      step as ⟨ j, hj ⟩
+      step as ⟨ b1, hb1 ⟩
+      have hv1 := hdig j (by omega) b1 hb1
+      try simp only [lift, Std.bind_ok]
+      step as ⟨ i6, hi6 ⟩
+      have hi6v : i6.val = toNat a / 256 ^ (t.val - 1) % 256 * 256 := by
+        rw [hi6, hv1, hj, h32, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega)]
+      simp only [WP.spec_ok, UScalar.val_or, hm0v, hi6v, if_pos h1']
+      have := or3 _ _ 0 a0 a1 (by norm_num)
+      simp only [Nat.or_zero, add_zero, Nat.shiftLeft_eq, Nat.reducePow] at this
+      exact this
+    · rename_i h1
+      have h1' : ¬ 1 ≤ t.val := by scalar_tac
+      simp only [WP.spec_ok, hm0v, if_neg h1', add_zero]
+  intro m1 hm1
+  -- `mantissa2`: the digit `t − 2` when `t ≥ 2`.
+  apply WP.spec_bind (Pₘ := fun (m2 : U32) => m2.val = m1.val +
+      (if 2 ≤ t.val then toNat a / 256 ^ (t.val - 2) % 256 else 0))
+  · split
+    · rename_i h2
+      have h2' : 2 ≤ t.val := by scalar_tac
+      step as ⟨ j, hj ⟩
+      step as ⟨ b2, hb2 ⟩
+      have hv2 := hdig j (by omega) b2 hb2
+      simp only [lift, Std.bind_ok, WP.spec_ok, UScalar.val_or, hv2, hj, if_pos h2']
+      obtain ⟨k, hk⟩ : ∃ k, m1.val = k * 256 := ⟨m1.val / 256, by
+        rw [hm1]; split <;> omega⟩
+      have := Nat.shiftLeft_add_eq_or_of_lt (i := 8) (b := toNat a / 256 ^ (t.val - 2) % 256)
+        (by norm_num; exact a2) k
+      simp only [Nat.shiftLeft_eq, Nat.reducePow] at this
+      rw [hk, ← this]
+    · rename_i h2
+      have h2' : ¬ 2 ≤ t.val := by scalar_tac
+      simp only [WP.spec_ok, if_neg h2', add_zero]
+  intro m2 hm2
+  have hm2v : m2.val = mantissa (toNat a) := by rw [hm2, hm1, hmt]
+  have hmlt : m2.val < 2 ^ 24 := by
+    rw [hm2, hm1]; split <;> split <;> omega
+  have hszv' : sz.val = size (toNat a) := by rw [hszv, hi, hsz]
+  have hi3v : (m2 &&& 8388608#u32).val = (decide (2 ^ 23 ≤ m2.val)).toNat * 2 ^ 23 := by
+    rw [UScalar.val_and, show (8388608#u32 : U32).val = 2 ^ 23 from rfl, Nat.and_two_pow]
+    congr 2
+    rw [Nat.testBit_eq_decide_div_mod_eq]
+    by_cases h' : 2 ^ 23 ≤ m2.val <;> simp <;> omega
+  unfold toCompact
+  rw [← hm2v, ← hszv']
+  split
+  · rename_i h0
+    have hne : (m2 &&& 8388608#u32).val ≠ 0 := by
+      intro h; apply absurd h0; simp [bne_iff_ne, ne_eq, UScalar.eq_equiv, h]
+    have hge : 2 ^ 23 ≤ m2.val := by
+      by_contra h
+      have e := hi3v
+      rw [decide_eq_false (by omega : ¬ 2 ^ 23 ≤ m2.val)] at e
+      exact hne (by simpa using e)
+    simp only [show ¬ m2.val < 2 ^ 23 by omega, ↓reduceIte]
+    step as ⟨ m3, hm3 ⟩
+    step as ⟨ s1, hs1 ⟩
+    step as ⟨ i4, hi4 ⟩
+    try simp only [WP.spec_ok]
+    refine ⟨_, rfl, ?_⟩
+    have hm3v : m3.val = m2.val / 256 := by rw [hm3, Nat.shiftRight_eq_div_pow]
+    have hm3lt : m3.val < 2 ^ 24 := by omega
+    rw [UScalar.val_or, hi4, h32, hs1, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega),
+      ← Nat.shiftLeft_eq, ← Nat.shiftLeft_add_eq_or_of_lt hm3lt, Nat.shiftLeft_eq, hm3v]
+    ring
+  · rename_i h0
+    have h0' : (m2 &&& 8388608#u32).val = 0 := by
+      by_contra h; apply h0; rw [bne_iff_ne]; intro he; apply h; rw [he]; rfl
+    have hlt : m2.val < 2 ^ 23 := by
+      by_contra h
+      have e := hi3v
+      rw [decide_eq_true (by omega : 2 ^ 23 ≤ m2.val), h0'] at e
+      simp at e
+    simp only [hlt, ↓reduceIte]
+    step as ⟨ i4, hi4 ⟩
+    try simp only [WP.spec_ok]
+    refine ⟨_, rfl, ?_⟩
+    rw [UScalar.val_or, hi4, h32, Nat.shiftLeft_eq, Nat.mod_eq_of_lt (by omega),
+      ← Nat.shiftLeft_eq, ← Nat.shiftLeft_add_eq_or_of_lt hmlt, Nat.shiftLeft_eq]
+    ring
+
+end Hayai.Proofs.Compact

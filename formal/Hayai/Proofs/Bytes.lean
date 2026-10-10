@@ -76,4 +76,27 @@ theorem bytesVal_eq_sum : ∀ l : List U8, bytesVal l = ∑ k ∈ Finset.range l
     rw [add_comm]; congr 1
     apply Finset.sum_congr rfl; intro k _; ring
 
+/-- Byte `k` of a byte list is digit `k` of its value in base 256. -/
+theorem leVal_digit : ∀ (l : List Byte) (k : ℕ), (leVal l / 256 ^ k) % 256 = (l[k]?.map BitVec.toNat).getD 0
+  | [], k => by simp [leVal]
+  | b :: l, 0 => by
+    have := b.isLt
+    simp [leVal]; omega
+  | b :: l, k + 1 => by
+    have := b.isLt
+    rw [pow_succ, ← Nat.div_div_eq_div_mul]
+    have : (leVal (b :: l)) / 256 = leVal l := by simp only [leVal]; omega
+    rw [Nat.div_div_eq_div_mul, mul_comm, ← Nat.div_div_eq_div_mul, this]
+    simpa using leVal_digit l k
+
+/-- Byte `k` of `x.to_le_bytes()` (a `u64`) is digit `k` of `x`. -/
+theorem u64_to_le_bytes_digit (x : U64) (k : ℕ) (hk : k < 8) :
+    (core.num.U64.to_le_bytes x).val[k]!.val = x.val / 256 ^ k % 256 := by
+  have h := leVal_digit x.bv.toLEBytes k
+  rw [leVal_toLEBytes (by simp)] at h
+  have hl : k < x.bv.toLEBytes.length := by simp [BitVec.toLEBytes_length]; omega
+  simp only [core.num.U64.to_le_bytes, Array.from_val, List.getElem!_eq_getElem?_getD,
+    List.getElem?_map, List.getElem?_eq_getElem hl, Option.map_some, Option.getD_some] at h ⊢
+  exact h.symm
+
 end Hayai.Proofs.Bytes

@@ -384,4 +384,132 @@ theorem ge_spec (a b : Array U64 4#usize) :
   · simp [h]
   · simp [(compare_gt_iff_gt).mpr h, le_of_lt h]
 
+theorem limb_of_toNat (a : Array U64 4#usize) (i : ℕ) (hi : i < 4) :
+    toNat a / 2 ^ (64 * i) % 2 ^ 64 = a.val[i]!.val := by
+  have h0 := a.val[0]!.hBounds; have h1 := a.val[1]!.hBounds
+  have h2 := a.val[2]!.hBounds; have h3 := a.val[3]!.hBounds
+  simp only [UScalarTy.numBits] at *
+  unfold toNat
+  interval_cases i <;> simp only [Nat.mul_zero, Nat.mul_one, Nat.reduceMul, Nat.reducePow, Nat.div_one] <;> omega
+
+theorem digit_of_toNat (a : Array U64 4#usize) (i k : ℕ) (hi : i < 4) (hk : k < 8) :
+    toNat a / 256 ^ (8 * i + k) % 256 = a.val[i]!.val / 256 ^ k % 256 := by
+  have e1 : (256 : ℕ) ^ (8 * i + k) = 2 ^ (64 * i) * 256 ^ k := by
+    rw [pow_add, show (256 : ℕ) = 2 ^ 8 by norm_num, ← pow_mul, ← pow_mul]; ring_nf
+  rw [e1, ← Nat.div_div_eq_div_mul, ← limb_of_toNat a i hi]
+  generalize toNat a / 2 ^ (64 * i) = y
+  interval_cases k <;> simp only [pow_zero, Nat.div_one, Nat.reducePow] <;> omega
+
+open Hayai.Proofs.Bytes in
+theorem to_le_bytes_inner_spec (i : Usize) (hi : i.val < 4) (limb : Array U8 8#usize)
+    (iter : core.ops.range.Range Usize) (b0 bytes : Array U8 32#usize)
+    (hend : iter.end.val = 8) (hs : iter.start.val ≤ 8)
+    (hb : ∀ n < 32, bytes.val[n]! =
+      if 8 * i.val ≤ n ∧ n < 8 * i.val + iter.start.val then limb.val[n - 8 * i.val]! else b0.val[n]!) :
+    Uint256.to_le_bytes_loop0_loop0 iter bytes i limb ⦃ bytes1 =>
+      ∀ n < 32, bytes1.val[n]! =
+        if 8 * i.val ≤ n ∧ n < 8 * i.val + 8 then limb.val[n - 8 * i.val]! else b0.val[n]! ⦄ := by
+  unfold Uint256.to_le_bytes_loop0_loop0
+  apply loop.spec_decr_nat
+    (measure := fun (s : core.ops.range.Range Usize × Array U8 32#usize) => 8 - s.1.start.val)
+    (inv := fun (s : core.ops.range.Range Usize × Array U8 32#usize) =>
+      s.1.end.val = 8 ∧ s.1.start.val ≤ 8 ∧
+      ∀ n < 32, s.2.val[n]! =
+        if 8 * i.val ≤ n ∧ n < 8 * i.val + s.1.start.val then limb.val[n - 8 * i.val]!
+        else b0.val[n]!)
+  · rintro ⟨it, bt⟩ ⟨hend', hs', hb'⟩
+    simp only at hend' hs' hb'
+    unfold Uint256.to_le_bytes_loop0_loop0.body
+    step as ⟨ o, it1, ho, hit1 ⟩
+    by_cases hlt : it.start.val < it.end.val
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only
+      have he1 : it1.end.val = 8 := by rw [hit1]; exact hend'
+      step as ⟨ x, hx ⟩
+      step as ⟨ p1, hp1 ⟩
+      step as ⟨ p2, hp2 ⟩
+      step as ⟨ bt1, hbt1 ⟩
+      refine ⟨he1, by omega, ?_, by omega⟩
+      intro n hn
+      rw [hbt1, Array.set_val_eq]
+      by_cases hne : n = p2.val
+      · subst hne
+        have hlen : p2.val < bt.val.length := by simp; omega
+        simp only [List.getElem!_eq_getElem?_getD, List.getElem?_set_self hlen, Option.getD_some]
+        rw [if_pos (by omega), hx, show p2.val - 8 * i.val = it.start.val by omega]
+        have : it.start.val < limb.val.length := by simp; omega
+        simp [List.getElem?_eq_getElem this]
+      · have hne' : p2.val ≠ n := fun h => hne h.symm
+        simp only [List.getElem!_eq_getElem?_getD, List.getElem?_set_ne hne']
+        rw [← List.getElem!_eq_getElem?_getD, hb' n hn]
+        by_cases hl : 8 * i.val ≤ n ∧ n < 8 * i.val + it.start.val
+        · rw [if_pos hl, if_pos (by omega)]; exact List.getElem!_eq_getElem?_getD
+        · rw [if_neg hl, if_neg (by omega)]; exact List.getElem!_eq_getElem?_getD
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only [WP.spec_ok]
+      intro n hn
+      rw [hb' n hn, show it.start.val = 8 by omega]
+  · exact ⟨hend, hs, hb⟩
+
+open Hayai.Proofs.Bytes in
+theorem to_le_bytes_outer_spec (a : Array U64 4#usize) (iter : core.ops.range.Range Usize)
+    (bytes : Array U8 32#usize) (hend : iter.end.val = 4) (hs : iter.start.val ≤ 4)
+    (hb : ∀ n < 32, bytes.val[n]!.val =
+      if n < 8 * iter.start.val then toNat a / 256 ^ n % 256 else 0) :
+    Uint256.to_le_bytes_loop0 iter a bytes ⦃ bytes1 =>
+      ∀ n < 32, bytes1.val[n]!.val = toNat a / 256 ^ n % 256 ⦄ := by
+  unfold Uint256.to_le_bytes_loop0
+  apply loop.spec_decr_nat
+    (measure := fun (s : core.ops.range.Range Usize × Array U64 4#usize × Array U8 32#usize) =>
+      4 - s.1.start.val)
+    (inv := fun (s : core.ops.range.Range Usize × Array U64 4#usize × Array U8 32#usize) =>
+      s.1.end.val = 4 ∧ s.1.start.val ≤ 4 ∧ s.2.1 = a ∧
+      ∀ n < 32, s.2.2.val[n]!.val = if n < 8 * s.1.start.val then toNat a / 256 ^ n % 256 else 0)
+  · rintro ⟨it, a', bt⟩ ⟨hend', hs', rfl, hb'⟩
+    simp only at hend' hs' hb'
+    unfold Uint256.to_le_bytes_loop0.body
+    step as ⟨ o, it1, ho, hit1 ⟩
+    by_cases hlt : it.start.val < it.end.val
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only
+      have he1 : it1.end.val = 4 := by rw [hit1]; exact hend'
+      have hi4 : it.start.val < 4 := by omega
+      step as ⟨ x, hx ⟩
+      simp only [lift, Std.bind_ok]
+      step with to_le_bytes_inner_spec (b0 := bt) as ⟨ bt1, hbt1 ⟩
+      case hb => intro n hn; rw [if_neg (by simp)]
+      try simp only [WP.spec_ok]
+      refine ⟨he1, by omega, ?_, by omega⟩
+      intro n hn
+      rw [hbt1 n hn]
+      by_cases hl : 8 * it.start.val ≤ n ∧ n < 8 * it.start.val + 8
+      · rw [if_pos hl, if_pos (by omega)]
+        have hk : n - 8 * it.start.val < 8 := by omega
+        rw [u64_to_le_bytes_digit x _ hk, hx]
+        have hl4 : it.start.val < a'.val.length := by simp; omega
+        rw [← getElem!_pos a'.val it.start.val hl4, ← digit_of_toNat a' _ _ hi4 hk,
+          show 8 * it.start.val + (n - 8 * it.start.val) = n by omega]
+      · rw [if_neg hl, hb' n hn]
+        by_cases hn' : n < 8 * it.start.val
+        · rw [if_pos hn', if_pos (by omega)]
+        · rw [if_neg hn', if_neg (by omega)]
+    · simp only [hlt, ↓reduceIte] at ho
+      obtain ⟨rfl, hstart1⟩ := ho
+      simp only [WP.spec_ok]
+      intro n hn
+      rw [hb' n hn, if_pos (by omega)]
+  · exact ⟨hend, hs, rfl, hb⟩
+
+/-- `to_le_bytes`: byte `n` is digit `n` of the integer in base 256. -/
+@[step]
+theorem to_le_bytes_spec (a : Array U64 4#usize) :
+    Uint256.to_le_bytes a ⦃ bytes => ∀ n < 32, bytes.val[n]!.val = toNat a / 256 ^ n % 256 ⦄ := by
+  unfold Uint256.to_le_bytes
+  step with to_le_bytes_outer_spec
+  case hb => intro n hn; simp [Array.repeat_val, hn]; interval_cases n <;> rfl
+  exact bytes_post n n_post
+
 end Hayai.Proofs.Uint256

@@ -7,3 +7,4 @@ Protocol specification §7.7	`ActualTimespanDamped` truncates with `PoWDampingFa
 Protocol specification §7.7	`median(S)` is the element of `sorted(S)` at the 1-based index ceiling((len + 1) / 2).	Hayai.Proofs.Median.median_time_spec
 Protocol specification §7.7	`MedianTime(h)` is the median of the `nTime` values of the 11 blocks before `h`, or of all of them when fewer exist.	Hayai.Proofs.Median.median_time_past_spec
 Protocol specification §7.7	`ToTarget(x)` is 0 when the sign bit is set, else the mantissa times 256^(exponent − 3).	Hayai.Proofs.Compact.from_compact_spec	the core path; `expand_target` of hayai-wire, which the hash check uses, is not covered (hayai-gvf)
+Protocol specification §7.7	`ToCompact(x)` gives the compact form of a target.	Hayai.Proofs.Compact.to_compact_spec	the core path; `compact_from_target` of hayai-wire is not covered (hayai-gvf)
